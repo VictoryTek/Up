@@ -31,20 +31,31 @@ def main():
     distro, version = detect_distro()
     print(f"Detected distro: {distro} (version: {version})")
     print("Welcome to Up!")
-    print("Select an option:")
-    print("1. Update system")
-    print("2. Upgrade system")
-    print("3. Setup system")
-    choice = input("Enter your choice (1/2/3): ")
+    while True:
+        print("Select an option:")
+        print("1. Update system")
+        print("2. Upgrade system")
+        print("3. Setup system")
+        print("4. Restart system")
+        print("5. Exit")
+        choice = input("Enter your choice (1/2/3/4/5): ")
 
-    if choice == '1':
-        update.update_system()
-    elif choice == '2':
-        upgrade.upgrade_system()
-    elif choice == '3':
-        setup.setup_system()
-    else:
-        print("Invalid choice.")
+        if choice == '1':
+            update.update_system()
+        elif choice == '2':
+            upgrade.upgrade_system()
+        elif choice == '3':
+            setup.setup_system()
+        elif choice == '4':
+            print("Restarting system...")
+            import subprocess
+            subprocess.run(["sudo", "reboot"])
+            break
+        elif choice == '5':
+            print("Exiting Up. Goodbye!")
+            break
+        else:
+            print("Invalid choice.")
 
 if __name__ == "__main__":
     main()

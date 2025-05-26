@@ -10,7 +10,7 @@ git clone https://github.com/VictoryTek/Up
 ```
 Change Directory:
 ```
-cd Nobara
+cd Up
 ```
 Run the app:
 ```

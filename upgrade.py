@@ -25,6 +25,15 @@ def upgrade_system():
         else:
             subprocess.run(["sudo", "apt", "upgrade", "-y"], check=True)
         print("System upgrade complete.")
+        # Ask if user wants to restart
+        restart = input("Upgrade complete. Would you like to restart now? (y/N): ").strip().lower()
+        if restart == 'y':
+            print("Restarting system...")
+            subprocess.run(["sudo", "reboot"])
+        else:
+            # Loop back to main menu
+            import up as up_main
+            up_main.main()
     except subprocess.CalledProcessError as e:
         print(f"Upgrade failed: {e}")
 
