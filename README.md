@@ -7,7 +7,6 @@ A linux Utility
 Clone the Repo:
 ```
 git clone https://github.com/VictoryTek/Up
-
 ```
 Change Directory:
 ```
