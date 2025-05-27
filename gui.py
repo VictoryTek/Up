@@ -329,8 +329,16 @@ class UpWindow(Gtk.ApplicationWindow):
         except Exception as e:
             self.show_error(f"Failed to run update: {e}")
     def on_upgrade(self, btn):
-        # TODO: Integrate with upgrade.py backend
-        self.run_in_thread("Upgrade", lambda: print("Upgrade logic here"))
+        # Integrate with upgrade.py backend
+        try:
+            import importlib.util
+            upgrade_path = os.path.join(os.path.dirname(__file__), 'upgrade.py')
+            spec = importlib.util.spec_from_file_location('upgrade', upgrade_path)
+            upgrade_mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(upgrade_mod)
+            self.run_in_thread("Upgrade", lambda: upgrade_mod.run_upgrade(self.distro))
+        except Exception as e:
+            self.show_error(f"Failed to run upgrade: {e}")
     def on_setup(self, btn):
         # TODO: Integrate with setup.py backend
         self.run_in_thread("Setup", lambda: print("Setup logic here"))
