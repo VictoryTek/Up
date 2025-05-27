@@ -12,7 +12,7 @@ def detect_distro():
                     break
     return distro
 
-def run_upgrade(distro):
+def run_upgrade(distro, version=None):
     """Run the appropriate upgrade logic for the detected distro."""
     if not distro:
         print("Could not detect Linux distribution.")
@@ -20,7 +20,7 @@ def run_upgrade(distro):
     if distro in ['fedora', 'rhel', 'centos']:
         # Detect if it's an rpm-ostree system (Silverblue/Kinoite/etc)
         if os.path.exists('/usr/bin/rpm-ostree'):
-            upgrade_silverblue()
+            upgrade_silverblue(version)
         else:
             upgrade_fedora()
     elif distro == 'bazzite':
@@ -32,7 +32,7 @@ def run_upgrade(distro):
     elif distro in ['opensuse', 'suse']:
         upgrade_opensuse()
     elif distro == 'nixos':
-        upgrade_nixos()
+        upgrade_nixos(version)
     else:
         upgrade_other(distro)
 
@@ -70,7 +70,7 @@ def upgrade_opensuse():
     except subprocess.CalledProcessError as e:
         print(f"Error upgrading openSUSE: {e}")
 
-def upgrade_silverblue():
+def upgrade_silverblue(version=None):
     print("Detected Fedora Silverblue/Kinoite (rpm-ostree). Running system version upgrade...")
     # Detect current ref for template
     try:
@@ -86,10 +86,11 @@ def upgrade_silverblue():
     if match:
         base, cur_ver, tail = match.groups()
         print(f"Current ref: {ref}")
-        print(f"To rebase, enter the new version number you wish to rebase to (e.g., 42):")
-        new_ver = input("Enter new version number (or leave blank to skip): ").strip()
-        if new_ver:
-            new_ref = f"{base}{new_ver}{tail}"
+        if version is None:
+            print(f"To rebase, enter the new version number you wish to rebase to (e.g., 42):")
+            version = input("Enter new version number (or leave blank to skip): ").strip()
+        if version:
+            new_ref = f"{base}{version}{tail}"
             try:
                 subprocess.run(['rpm-ostree', 'rebase', new_ref], check=True)
                 print(f"Rebased to {new_ref} successfully.")
@@ -99,7 +100,10 @@ def upgrade_silverblue():
             print("No version entered. Skipping rebase.")
     else:
         print("Could not parse current ref. Please enter the full ref as before.")
-        new_ref = input("Enter new rpm-ostree ref (or leave blank to skip): ").strip()
+        if version is None:
+            new_ref = input("Enter new rpm-ostree ref (or leave blank to skip): ").strip()
+        else:
+            new_ref = version
         if new_ref:
             try:
                 subprocess.run(['rpm-ostree', 'rebase', new_ref], check=True)
@@ -117,9 +121,10 @@ def upgrade_bazzite():
     except subprocess.CalledProcessError as e:
         print(f"Error upgrading Bazzite: {e}")
 
-def upgrade_nixos():
+def upgrade_nixos(version=None):
     print("Detected NixOS. Running system version upgrade...")
-    version = input("Enter the NixOS version/channel to upgrade to (e.g., nixos-24.05): ").strip()
+    if version is None:
+        version = input("Enter the NixOS version/channel to upgrade to (e.g., nixos-24.05): ").strip()
     if not version:
         print("No version entered. Aborting NixOS upgrade.")
         return
