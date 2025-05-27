@@ -72,16 +72,42 @@ def upgrade_opensuse():
 
 def upgrade_silverblue():
     print("Detected Fedora Silverblue/Kinoite (rpm-ostree). Running system version upgrade...")
-    print("To rebase to a new version, enter the new ref (e.g., fedora:fedora/40/x86_64/silverblue):")
-    new_ref = input("Enter new rpm-ostree ref (or leave blank to skip): ").strip()
-    if new_ref:
-        try:
-            subprocess.run(['rpm-ostree', 'rebase', new_ref], check=True)
-            print(f"Rebased to {new_ref} successfully.")
-        except subprocess.CalledProcessError as e:
-            print(f"Error rebasing Silverblue/Kinoite: {e}")
+    # Detect current ref for template
+    try:
+        current_ref = subprocess.check_output(['rpm-ostree', 'status', '--json'], text=True)
+        import json
+        ref = json.loads(current_ref)["deployments"][0]["base-commit-meta"]["ostree.ref"]
+    except Exception:
+        # Fallback to default template if detection fails
+        ref = "fedora:fedora/40/x86_64/silverblue"
+    # Extract base ref up to version number
+    import re
+    match = re.match(r"(.*/)(\d+)(/.*)", ref)
+    if match:
+        base, cur_ver, tail = match.groups()
+        print(f"Current ref: {ref}")
+        print(f"To rebase, enter the new version number you wish to rebase to (e.g., 42):")
+        new_ver = input("Enter new version number (or leave blank to skip): ").strip()
+        if new_ver:
+            new_ref = f"{base}{new_ver}{tail}"
+            try:
+                subprocess.run(['rpm-ostree', 'rebase', new_ref], check=True)
+                print(f"Rebased to {new_ref} successfully.")
+            except subprocess.CalledProcessError as e:
+                print(f"Error rebasing Silverblue/Kinoite: {e}")
+        else:
+            print("No version entered. Skipping rebase.")
     else:
-        print("No ref entered. Skipping rebase.")
+        print("Could not parse current ref. Please enter the full ref as before.")
+        new_ref = input("Enter new rpm-ostree ref (or leave blank to skip): ").strip()
+        if new_ref:
+            try:
+                subprocess.run(['rpm-ostree', 'rebase', new_ref], check=True)
+                print(f"Rebased to {new_ref} successfully.")
+            except subprocess.CalledProcessError as e:
+                print(f"Error rebasing Silverblue/Kinoite: {e}")
+        else:
+            print("No ref entered. Skipping rebase.")
 
 def upgrade_bazzite():
     print("Detected Bazzite. Running system version upgrade with Topgrade...")

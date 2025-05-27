@@ -92,7 +92,7 @@ class ProgressDialog(Gtk.Window):
 
 # --- Log Viewer ---
 class LogWindow(Gtk.Window):
-    def __init__(self, parent):
+    def __init__(self, parent, log_file=None):
         super().__init__()
         self.set_title("Up Logs")
         self.set_transient_for(parent)
@@ -122,12 +122,12 @@ class LogWindow(Gtk.Window):
         self.text.set_monospace(True)
         self.buf = self.text.get_buffer()
         scrolled.set_child(self.text)
+        self.log_file = log_file or os.path.join(os.path.dirname(__file__), 'up-error.log')
         self.load_logs()
     def load_logs(self, btn=None):
         try:
-            log_file = os.path.join(os.path.dirname(__file__), 'maintenance.log')
-            if os.path.exists(log_file):
-                with open(log_file, 'r') as f:
+            if os.path.exists(self.log_file):
+                with open(self.log_file, 'r') as f:
                     lines = f.readlines()
                 display = ''.join(lines[-100:]) if len(lines) > 100 else ''.join(lines)
                 self.buf.set_text(display)
@@ -267,7 +267,9 @@ class UpWindow(Gtk.ApplicationWindow):
         opts.append(view_log_btn)
 
     def on_view_log_clicked(self, btn):
-        logwin = LogWindow(self)
+        # Show the error log (up-error.log or up.log)
+        log_path = os.path.join(os.path.dirname(__file__), 'up-error.log')
+        logwin = LogWindow(self, log_file=log_path)
         logwin.present()
 
     def update_distro_info(self):
@@ -328,17 +330,48 @@ class UpWindow(Gtk.ApplicationWindow):
             self.run_in_thread("Update", lambda: update_mod.run_update(self.distro))
         except Exception as e:
             self.show_error(f"Failed to run update: {e}")
+    def prompt_for_version(self, prompt_text, callback):
+        dialog = Gtk.Dialog(title="Upgrade Version/Ref", transient_for=self, modal=True)
+        dialog.set_default_size(400, 100)
+        box = dialog.get_content_area()
+        label = Gtk.Label(label=prompt_text)
+        entry = Gtk.Entry()
+        entry.set_hexpand(True)
+        box.append(label)
+        box.append(entry)
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("OK", Gtk.ResponseType.OK)
+        def response_handler(dlg, response):
+            if response == Gtk.ResponseType.OK:
+                value = entry.get_text().strip()
+                dlg.destroy()
+                callback(value)
+            else:
+                dlg.destroy()
+        dialog.connect("response", response_handler)
+        dialog.present()
     def on_upgrade(self, btn):
-        # Integrate with upgrade.py backend
-        try:
-            import importlib.util
-            upgrade_path = os.path.join(os.path.dirname(__file__), 'upgrade.py')
-            spec = importlib.util.spec_from_file_location('upgrade', upgrade_path)
-            upgrade_mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(upgrade_mod)
-            self.run_in_thread("Upgrade", lambda: upgrade_mod.run_upgrade(self.distro))
-        except Exception as e:
-            self.show_error(f"Failed to run upgrade: {e}")
+        # Integrate with upgrade.py backend, prompt for version/ref if needed
+        def do_upgrade(version=None):
+            try:
+                import importlib.util
+                upgrade_path = os.path.join(os.path.dirname(__file__), 'upgrade.py')
+                spec = importlib.util.spec_from_file_location('upgrade', upgrade_path)
+                upgrade_mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(upgrade_mod)
+                # If version is provided, pass it as an argument if supported
+                if version:
+                    self.run_in_thread("Upgrade", lambda: upgrade_mod.run_upgrade(self.distro, version))
+                else:
+                    self.run_in_thread("Upgrade", lambda: upgrade_mod.run_upgrade(self.distro))
+            except Exception as e:
+                self.show_error(f"Failed to run upgrade: {e}")
+        # Only prompt for version/ref for distros that need it
+        if self.distro in ["nixos"] or (self.distro in ["fedora", "rhel", "centos"] and os.path.exists('/usr/bin/rpm-ostree')):
+            prompt = "Enter the version/channel/ref to upgrade to (leave blank to skip):"
+            self.prompt_for_version(prompt, do_upgrade)
+        else:
+            do_upgrade()
     def on_setup(self, btn):
         # TODO: Integrate with setup.py backend
         self.run_in_thread("Setup", lambda: print("Setup logic here"))
