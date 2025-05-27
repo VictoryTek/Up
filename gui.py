@@ -376,21 +376,22 @@ class UpWindow(Gtk.ApplicationWindow):
         # TODO: Integrate with setup.py backend
         self.run_in_thread("Setup", lambda: print("Setup logic here"))
     def on_restart(self, btn):
+        # Actually perform a system restart
+        import platform
         dialog = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO, text="Restart System")
         dialog.set_secondary_text("Are you sure you want to restart the system?")
-        dialog.connect("response", self._on_restart_response)
+        def on_response(dlg, response):
+            dlg.destroy()
+            if response == Gtk.ResponseType.YES:
+                try:
+                    if os.name == 'nt' or platform.system() == 'Windows':
+                        os.system('shutdown /r /t 0')
+                    else:
+                        os.system('sudo reboot')
+                except Exception as e:
+                    self.show_error(f"Failed to restart: {e}")
+        dialog.connect("response", on_response)
         dialog.present()
-    def _on_restart_response(self, dialog, response):
-        dialog.destroy()
-        if response == Gtk.ResponseType.YES:
-            try:
-                if os.name == 'nt':
-                    os.system('shutdown /r /t 0')
-                else:
-                    import subprocess
-                    subprocess.run(['sudo', 'reboot'], check=True)
-            except Exception as e:
-                self.show_error(f"Failed to restart: {e}")
     def show_error(self, msg):
         dialog = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.OK, text="Error")
         dialog.set_secondary_text(msg)

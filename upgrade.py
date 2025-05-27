@@ -92,10 +92,11 @@ def upgrade_silverblue(version=None):
         if version:
             new_ref = f"{base}{version}{tail}"
             try:
-                subprocess.run(['rpm-ostree', 'rebase', new_ref], check=True)
+                result = subprocess.run(['rpm-ostree', 'rebase', new_ref], check=True, text=True, capture_output=True)
+                print(result.stdout)
                 print(f"Rebased to {new_ref} successfully.")
             except subprocess.CalledProcessError as e:
-                print(f"Error rebasing Silverblue/Kinoite: {e}")
+                print(e.stdout if hasattr(e, 'stdout') and e.stdout else f"Error rebasing Silverblue/Kinoite: {e}")
         else:
             print("No version entered. Skipping rebase.")
     else:
@@ -106,10 +107,11 @@ def upgrade_silverblue(version=None):
             new_ref = version
         if new_ref:
             try:
-                subprocess.run(['rpm-ostree', 'rebase', new_ref], check=True)
+                result = subprocess.run(['rpm-ostree', 'rebase', new_ref], check=True, text=True, capture_output=True)
+                print(result.stdout)
                 print(f"Rebased to {new_ref} successfully.")
             except subprocess.CalledProcessError as e:
-                print(f"Error rebasing Silverblue/Kinoite: {e}")
+                print(e.stdout if hasattr(e, 'stdout') and e.stdout else f"Error rebasing Silverblue/Kinoite: {e}")
         else:
             print("No ref entered. Skipping rebase.")
 
