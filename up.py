@@ -182,4 +182,6 @@ def main_menu():
             print("Invalid choice. Please select a valid option.")
 
 if __name__ == "__main__":
-    main_menu()
+    # If this is the GUI version, launch the GTK GUI
+    import gui
+    gui.main()
