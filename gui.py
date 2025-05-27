@@ -261,6 +261,15 @@ class UpWindow(Gtk.ApplicationWindow):
         opts.append(self.auto_restart)
         self.verbose = Gtk.CheckButton(label="Show verbose output")
         opts.append(self.verbose)
+        # Add View Log button
+        view_log_btn = Gtk.Button(label="View Log")
+        view_log_btn.connect("clicked", self.on_view_log_clicked)
+        opts.append(view_log_btn)
+
+    def on_view_log_clicked(self, btn):
+        logwin = LogWindow(self)
+        logwin.present()
+
     def update_distro_info(self):
         if self.distro:
             text = f"Distribution: {self.distro.title()}"
@@ -309,8 +318,16 @@ class UpWindow(Gtk.ApplicationWindow):
                 progress.finish(False, f"Error during {op_name.lower()}: {e}")
         threading.Thread(target=run, daemon=True).start()
     def on_update(self, btn):
-        # TODO: Integrate with update.py backend
-        self.run_in_thread("Update", lambda: print("Update logic here"))
+        # Integrate with update.py backend
+        try:
+            import importlib.util
+            update_path = os.path.join(os.path.dirname(__file__), 'update.py')
+            spec = importlib.util.spec_from_file_location('update', update_path)
+            update_mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(update_mod)
+            self.run_in_thread("Update", lambda: update_mod.run_update(self.distro))
+        except Exception as e:
+            self.show_error(f"Failed to run update: {e}")
     def on_upgrade(self, btn):
         # TODO: Integrate with upgrade.py backend
         self.run_in_thread("Upgrade", lambda: print("Upgrade logic here"))
