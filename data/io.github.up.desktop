@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Up
+Comment=Update and upgrade your Linux system
+Exec=up
+Icon=io.github.up
+Terminal=false
+Type=Application
+Categories=System;PackageManager;
+Keywords=update;upgrade;system;flatpak;brew;nix;
+StartupNotify=true

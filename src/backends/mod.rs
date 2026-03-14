@@ -1,0 +1,79 @@
+pub mod os_package_manager;
+pub mod flatpak;
+pub mod homebrew;
+pub mod nix;
+
+use crate::runner::CommandRunner;
+use serde::{Deserialize, Serialize};
+use std::fmt;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BackendKind {
+    Apt,
+    Dnf,
+    Pacman,
+    Zypper,
+    Flatpak,
+    Homebrew,
+    Nix,
+}
+
+impl fmt::Display for BackendKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Apt => write!(f, "APT"),
+            Self::Dnf => write!(f, "DNF"),
+            Self::Pacman => write!(f, "Pacman"),
+            Self::Zypper => write!(f, "Zypper"),
+            Self::Flatpak => write!(f, "Flatpak"),
+            Self::Homebrew => write!(f, "Homebrew"),
+            Self::Nix => write!(f, "Nix"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum UpdateResult {
+    Success { updated_count: usize },
+    Error(String),
+    Skipped(String),
+}
+
+pub trait Backend: Send + Sync {
+    fn kind(&self) -> BackendKind;
+    fn display_name(&self) -> &str;
+    fn description(&self) -> &str;
+    fn icon_name(&self) -> &str;
+
+    fn run_update(
+        &self,
+        runner: &CommandRunner,
+    ) -> impl std::future::Future<Output = UpdateResult> + Send;
+}
+
+/// Detect all available backends on the current system.
+pub fn detect_backends() -> Vec<Box<dyn Backend>> {
+    let mut backends: Vec<Box<dyn Backend>> = Vec::new();
+
+    // Detect OS package manager
+    if let Some(os_backend) = os_package_manager::detect() {
+        backends.push(os_backend);
+    }
+
+    // Flatpak
+    if flatpak::is_available() {
+        backends.push(Box::new(flatpak::FlatpakBackend));
+    }
+
+    // Homebrew
+    if homebrew::is_available() {
+        backends.push(Box::new(homebrew::HomebrewBackend));
+    }
+
+    // Nix
+    if nix::is_available() {
+        backends.push(Box::new(nix::NixBackend));
+    }
+
+    backends
+}

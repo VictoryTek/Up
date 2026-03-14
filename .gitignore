@@ -1,0 +1,8 @@
+/target/
+/result
+*.swp
+*.swo
+*~
+.flatpak-builder/
+.cache/
+builddir/

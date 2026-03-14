@@ -1,0 +1,26 @@
+[package]
+name = "up"
+version = "0.1.0"
+edition = "2021"
+description = "A modern system update & upgrade app for Linux"
+license = "GPL-3.0-or-later"
+authors = ["Up Contributors"]
+repository = "https://github.com/user/up"
+
+[dependencies]
+gtk = { version = "0.9", package = "gtk4", features = ["v4_12"] }
+adw = { version = "0.7", package = "libadwaita", features = ["v1_4"] }
+glib = "0.20"
+gio = "0.20"
+tokio = { version = "1", features = ["full"] }
+async-channel = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+env_logger = "0.11"
+which = "7"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

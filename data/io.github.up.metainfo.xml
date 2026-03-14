@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.up</id>
+  <name>Up</name>
+  <summary>Update and upgrade your Linux system</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <description>
+    <p>
+      Up is a modern system update and upgrade application for Linux.
+      It detects your OS package manager, Flatpak, Homebrew, and Nix,
+      and updates them all with a single click. It also supports
+      upgrading your distribution to the next major version with
+      guided prerequisite checks and one-click execution.
+    </p>
+  </description>
+  <categories>
+    <category>System</category>
+    <category>PackageManager</category>
+  </categories>
+  <url type="homepage">https://github.com/user/up</url>
+  <url type="bugtracker">https://github.com/user/up/issues</url>
+  <launchable type="desktop-id">io.github.up.desktop</launchable>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.0" date="2026-03-14">
+      <description>
+        <p>Initial release.</p>
+      </description>
+    </release>
+  </releases>
+</component>
