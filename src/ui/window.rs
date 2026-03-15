@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::backends::{self, Backend, BackendKind, UpdateResult};
+use crate::backends::{self, BackendKind, UpdateResult};
 use crate::runner::CommandRunner;
 use crate::ui::log_panel::LogPanel;
 use crate::ui::update_row::UpdateRow;
@@ -59,7 +59,7 @@ impl UpWindow {
         view_switcher_title.connect_title_visible_notify({
             let bar = view_switcher_bar.clone();
             move |switcher| {
-                bar.set_reveal(switcher.is_title_visible());
+                bar.set_reveal(switcher.title_visible());
             }
         });
 
@@ -174,7 +174,7 @@ impl UpWindow {
 
                 // Process log output
                 let log_ref2 = log_ref.clone();
-                let rows_ref2 = rows_ref.clone();
+                let _rows_ref2 = rows_ref.clone();
 
                 glib::spawn_future_local(async move {
                     while let Ok((kind, line)) = rx.recv().await {
