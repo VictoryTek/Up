@@ -4,6 +4,7 @@ project('up',
 )
 
 cargo = find_program('cargo')
+fs = import('fs')
 
 builddir = meson.current_build_dir()
 srcdir = meson.current_source_dir()
@@ -36,6 +37,15 @@ install_data('data/io.github.up.metainfo.xml',
   install_dir: join_paths(datadir, 'metainfo'),
 )
 
-install_data('data/io.github.up.svg',
+install_data('data/icons/hicolor/scalable/apps/io.github.up.svg',
   install_dir: join_paths(datadir, 'icons', 'hicolor', 'scalable', 'apps'),
 )
+
+foreach size : ['256x256', '128x128', '48x48']
+  png = 'data/icons/hicolor' / size / 'apps/io.github.up.png'
+  if fs.exists(png)
+    install_data(png,
+      install_dir: join_paths(datadir, 'icons', 'hicolor', size, 'apps'),
+    )
+  endif
+endforeach
