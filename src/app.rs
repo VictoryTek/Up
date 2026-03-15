@@ -1,6 +1,6 @@
 use adw::prelude::*;
-use gtk::prelude::*;
 use gtk::gio;
+use gtk::prelude::*;
 
 use crate::ui::window::UpWindow;
 use crate::APP_ID;
@@ -11,9 +11,7 @@ pub struct UpApplication {
 
 impl UpApplication {
     pub fn new() -> Self {
-        let app = adw::Application::builder()
-            .application_id(APP_ID)
-            .build();
+        let app = adw::Application::builder().application_id(APP_ID).build();
 
         app.connect_activate(Self::on_activate);
 

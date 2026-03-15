@@ -17,9 +17,7 @@ impl UpdateRow {
             .css_classes(vec!["dim-label"])
             .build();
 
-        let spinner = gtk::Spinner::builder()
-            .visible(false)
-            .build();
+        let spinner = gtk::Spinner::builder().visible(false).build();
 
         let icon = gtk::Image::from_icon_name(backend.icon_name());
 

@@ -29,10 +29,7 @@ impl Backend for NixBackend {
         let use_flakes = runner.run("nix", &["profile", "list"]).await.is_ok();
 
         if use_flakes {
-            match runner
-                .run("nix", &["profile", "upgrade", ".*"])
-                .await
-            {
+            match runner.run("nix", &["profile", "upgrade", ".*"]).await {
                 Ok(output) => {
                     let count = output.lines().filter(|l| !l.is_empty()).count();
                     UpdateResult::Success {
@@ -44,10 +41,7 @@ impl Backend for NixBackend {
         } else {
             match runner.run("nix-env", &["-u"]).await {
                 Ok(output) => {
-                    let count = output
-                        .lines()
-                        .filter(|l| l.contains("upgrading"))
-                        .count();
+                    let count = output.lines().filter(|l| l.contains("upgrading")).count();
                     UpdateResult::Success {
                         updated_count: count,
                     }

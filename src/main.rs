@@ -1,8 +1,8 @@
 mod app;
-mod ui;
 mod backends;
-mod upgrade;
 mod runner;
+mod ui;
+mod upgrade;
 
 use app::UpApplication;
 

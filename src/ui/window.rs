@@ -1,15 +1,13 @@
-use adw::prelude::*;
-use gtk::prelude::*;
-use gtk::{gio, glib};
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::Arc;
-
 use crate::backends::{self, BackendKind, UpdateResult};
 use crate::runner::CommandRunner;
 use crate::ui::log_panel::LogPanel;
 use crate::ui::update_row::UpdateRow;
 use crate::ui::upgrade_page::UpgradePage;
+use adw::prelude::*;
+use gtk::glib;
+use gtk::prelude::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 pub struct UpWindow {
     pub window: adw::ApplicationWindow,
@@ -97,6 +95,13 @@ impl UpWindow {
             .build();
         content_box.append(&status_label);
 
+        // Progress bar
+        let progress_bar = gtk::ProgressBar::builder()
+            .visible(false)
+            .show_text(true)
+            .build();
+        content_box.append(&progress_bar);
+
         // Backend rows group
         let backends_group = adw::PreferencesGroup::builder()
             .title("Sources")
@@ -131,26 +136,40 @@ impl UpWindow {
         let rows_clone = rows.clone();
         let log_clone = log_panel.clone();
         let detected_clone = detected.clone();
+        let progress_clone = progress_bar.clone();
 
         update_button.connect_clicked(move |button| {
             button.set_sensitive(false);
             status_clone.set_label("Updating...");
+            progress_clone.set_visible(true);
+            progress_clone.set_fraction(0.0);
+            progress_clone.set_text(Some("Starting..."));
             log_clone.clear();
+
+            // Set all rows to "Updating..." state
+            {
+                let rows_borrowed = rows_clone.borrow();
+                for (_, row) in rows_borrowed.iter() {
+                    row.set_status_running();
+                }
+            }
 
             let rows_ref = rows_clone.clone();
             let log_ref = log_clone.clone();
             let status_ref = status_clone.clone();
+            let progress_ref = progress_clone.clone();
             let button_ref = button.clone();
             let backends = detected_clone.clone();
+            let total_backends = backends.len() as f64;
 
             glib::spawn_future_local(async move {
                 let (tx, rx) = async_channel::unbounded::<(BackendKind, String)>();
                 let (result_tx, result_rx) =
                     async_channel::unbounded::<(BackendKind, UpdateResult)>();
 
-                // Spawn blocking update work on a thread
-                let tx_clone = tx.clone();
-                let result_tx_clone = result_tx.clone();
+                // Clone senders for the worker thread
+                let tx_thread = tx.clone();
+                let result_tx_thread = result_tx.clone();
                 let backends_thread = backends.clone();
 
                 std::thread::spawn(move || {
@@ -162,20 +181,22 @@ impl UpWindow {
                     rt.block_on(async {
                         for backend in &backends_thread {
                             let kind = backend.kind();
-                            let runner = CommandRunner::new(tx_clone.clone(), kind);
+                            let runner = CommandRunner::new(tx_thread.clone(), kind);
                             let result = backend.run_update(&runner).await;
-                            let _ = result_tx_clone.send((kind, result)).await;
+                            let _ = result_tx_thread.send((kind, result)).await;
                         }
                     });
 
-                    drop(tx_clone);
-                    drop(result_tx_clone);
+                    drop(tx_thread);
+                    drop(result_tx_thread);
                 });
 
-                // Process log output
-                let log_ref2 = log_ref.clone();
-                let _rows_ref2 = rows_ref.clone();
+                // Drop the original senders so channels close when the thread finishes
+                drop(tx);
+                drop(result_tx);
 
+                // Process log output in a separate future
+                let log_ref2 = log_ref.clone();
                 glib::spawn_future_local(async move {
                     while let Ok((kind, line)) = rx.recv().await {
                         log_ref2.append_line(&format!("[{kind}] {line}"));
@@ -183,7 +204,17 @@ impl UpWindow {
                 });
 
                 // Process results
+                let mut completed: f64 = 0.0;
+                let mut has_error = false;
                 while let Ok((kind, result)) = result_rx.recv().await {
+                    completed += 1.0;
+                    let fraction = completed / total_backends;
+                    progress_ref.set_fraction(fraction);
+                    progress_ref.set_text(Some(&format!(
+                        "{}/{} complete",
+                        completed as usize, total_backends as usize
+                    )));
+
                     let rows_borrowed = rows_ref.borrow();
                     if let Some((_, row)) = rows_borrowed.iter().find(|(k, _)| *k == kind) {
                         match &result {
@@ -192,6 +223,7 @@ impl UpWindow {
                             }
                             UpdateResult::Error(msg) => {
                                 row.set_status_error(msg);
+                                has_error = true;
                             }
                             UpdateResult::Skipped(msg) => {
                                 row.set_status_skipped(msg);
@@ -200,7 +232,13 @@ impl UpWindow {
                     }
                 }
 
-                status_ref.set_label("Update complete.");
+                if has_error {
+                    status_ref.set_label("Update completed with errors.");
+                } else {
+                    status_ref.set_label("Update complete.");
+                }
+                progress_ref.set_fraction(1.0);
+                progress_ref.set_text(Some("Done"));
                 button_ref.set_sensitive(true);
             });
         });

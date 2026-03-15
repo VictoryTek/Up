@@ -2,7 +2,6 @@ use crate::backends::{Backend, BackendKind, UpdateResult};
 use crate::runner::CommandRunner;
 use std::sync::Arc;
 
-
 /// Detect the OS package manager.
 pub fn detect() -> Option<Arc<dyn Backend>> {
     if which::which("apt").is_ok() {
@@ -132,7 +131,10 @@ impl Backend for PacmanBackend {
     }
 
     async fn run_update(&self, runner: &CommandRunner) -> UpdateResult {
-        match runner.run("pkexec", &["pacman", "-Syu", "--noconfirm"]).await {
+        match runner
+            .run("pkexec", &["pacman", "-Syu", "--noconfirm"])
+            .await
+        {
             Ok(output) => {
                 let count = output
                     .lines()
@@ -169,15 +171,9 @@ impl Backend for ZypperBackend {
         if let Err(e) = runner.run("pkexec", &["zypper", "refresh"]).await {
             return UpdateResult::Error(e);
         }
-        match runner
-            .run("pkexec", &["zypper", "update", "-y"])
-            .await
-        {
+        match runner.run("pkexec", &["zypper", "update", "-y"]).await {
             Ok(output) => {
-                let count = output
-                    .lines()
-                    .filter(|l| l.contains("done"))
-                    .count();
+                let count = output.lines().filter(|l| l.contains("done")).count();
                 UpdateResult::Success {
                     updated_count: count,
                 }

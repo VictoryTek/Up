@@ -1,7 +1,7 @@
-pub mod os_package_manager;
 pub mod flatpak;
 pub mod homebrew;
 pub mod nix;
+pub mod os_package_manager;
 
 use crate::runner::CommandRunner;
 use serde::{Deserialize, Serialize};

@@ -1,11 +1,9 @@
 use adw::prelude::*;
-use gtk::prelude::*;
 use gtk::glib;
-use std::rc::Rc;
+use gtk::prelude::*;
 use std::cell::RefCell;
+use std::rc::Rc;
 
-use crate::backends;
-use crate::runner::CommandRunner;
 use crate::ui::log_panel::LogPanel;
 use crate::upgrade;
 
@@ -67,6 +65,27 @@ impl UpgradePage {
             })
             .build();
         info_group.add(&upgrade_available_row);
+
+        // Spawn async task to check upgrade availability
+        if distro_info.upgrade_supported {
+            let upgrade_row_clone = upgrade_available_row.clone();
+            let distro_check = distro_info.clone();
+            glib::spawn_future_local(async move {
+                let (tx, rx) = async_channel::unbounded::<String>();
+
+                std::thread::spawn(move || {
+                    let result = upgrade::check_upgrade_available(&distro_check);
+                    let _ = tx.send_blocking(result);
+                    drop(tx);
+                });
+
+                if let Ok(result_msg) = rx.recv().await {
+                    upgrade_row_clone.set_subtitle(&result_msg);
+                } else {
+                    upgrade_row_clone.set_subtitle("Could not determine upgrade availability");
+                }
+            });
+        }
 
         if distro_info.id == "nixos" {
             let config_type = upgrade::detect_nixos_config_type();
@@ -192,11 +211,12 @@ impl UpgradePage {
                     drop(tx_clone);
                 });
 
+                drop(tx);
+
                 let mut all_passed = true;
                 while let Ok(msg) = rx.recv().await {
                     if let Some(json) = msg.strip_prefix("__RESULTS__:") {
-                        if let Ok(results) =
-                            serde_json::from_str::<Vec<upgrade::CheckResult>>(json)
+                        if let Ok(results) = serde_json::from_str::<Vec<upgrade::CheckResult>>(json)
                         {
                             let rows = check_rows_ref.borrow();
                             for (i, result) in results.iter().enumerate() {
@@ -271,6 +291,8 @@ impl UpgradePage {
                             upgrade::execute_upgrade(&distro2, &tx_clone);
                             drop(tx_clone);
                         });
+
+                        drop(tx);
 
                         while let Ok(line) = rx.recv().await {
                             log_ref2.append_line(&line);

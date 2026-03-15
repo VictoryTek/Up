@@ -5,6 +5,7 @@ project('up',
 
 cargo = find_program('cargo')
 fs = import('fs')
+gnome = import('gnome')
 
 builddir = meson.current_build_dir()
 srcdir = meson.current_source_dir()
@@ -49,3 +50,8 @@ foreach size : ['256x256', '128x128', '48x48']
     )
   endif
 endforeach
+
+gnome.post_install(
+  gtk_update_icon_cache: true,
+  update_desktop_database: true,
+)
