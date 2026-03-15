@@ -3,6 +3,7 @@ use gtk::prelude::*;
 use gtk::{gio, glib};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::backends::{self, Backend, BackendKind, UpdateResult};
 use crate::runner::CommandRunner;
@@ -107,7 +108,7 @@ impl UpWindow {
         let rows: Rc<RefCell<Vec<(BackendKind, UpdateRow)>>> = Rc::new(RefCell::new(Vec::new()));
 
         for backend in &detected {
-            let row = UpdateRow::new(backend);
+            let row = UpdateRow::new(backend.as_ref());
             backends_group.add(&row.row);
             rows.borrow_mut().push((backend.kind(), row));
         }

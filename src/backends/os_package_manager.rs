@@ -1,17 +1,18 @@
 use crate::backends::{Backend, BackendKind, UpdateResult};
 use crate::runner::CommandRunner;
+use std::sync::Arc;
 
 
 /// Detect the OS package manager.
-pub fn detect() -> Option<Box<dyn Backend>> {
+pub fn detect() -> Option<Arc<dyn Backend>> {
     if which::which("apt").is_ok() {
-        Some(Box::new(AptBackend))
+        Some(Arc::new(AptBackend))
     } else if which::which("dnf").is_ok() {
-        Some(Box::new(DnfBackend))
+        Some(Arc::new(DnfBackend))
     } else if which::which("pacman").is_ok() {
-        Some(Box::new(PacmanBackend))
+        Some(Arc::new(PacmanBackend))
     } else if which::which("zypper").is_ok() {
-        Some(Box::new(ZypperBackend))
+        Some(Arc::new(ZypperBackend))
     } else {
         None
     }

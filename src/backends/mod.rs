@@ -6,6 +6,7 @@ pub mod nix;
 use crate::runner::CommandRunner;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BackendKind {
@@ -50,8 +51,8 @@ pub trait Backend: Send + Sync {
 }
 
 /// Detect all available backends on the current system.
-pub fn detect_backends() -> Vec<Box<dyn Backend>> {
-    let mut backends: Vec<Box<dyn Backend>> = Vec::new();
+pub fn detect_backends() -> Vec<Arc<dyn Backend>> {
+    let mut backends: Vec<Arc<dyn Backend>> = Vec::new();
 
     // Detect OS package manager
     if let Some(os_backend) = os_package_manager::detect() {
@@ -60,17 +61,17 @@ pub fn detect_backends() -> Vec<Box<dyn Backend>> {
 
     // Flatpak
     if flatpak::is_available() {
-        backends.push(Box::new(flatpak::FlatpakBackend));
+        backends.push(Arc::new(flatpak::FlatpakBackend));
     }
 
     // Homebrew
     if homebrew::is_available() {
-        backends.push(Box::new(homebrew::HomebrewBackend));
+        backends.push(Arc::new(homebrew::HomebrewBackend));
     }
 
     // Nix
     if nix::is_available() {
-        backends.push(Box::new(nix::NixBackend));
+        backends.push(Arc::new(nix::NixBackend));
     }
 
     backends
