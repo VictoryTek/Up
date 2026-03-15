@@ -129,18 +129,20 @@ impl UpgradePage {
         };
 
         let check_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
+        let check_icons: Rc<RefCell<Vec<gtk::Image>>> = Rc::new(RefCell::new(Vec::new()));
         for (label, icon) in &checks {
             let row = adw::ActionRow::builder()
                 .title(*label)
-                .subtitle("Not checked")
+                .subtitle("Checking...")
                 .build();
             row.add_prefix(&gtk::Image::from_icon_name(*icon));
 
-            let status_icon = gtk::Image::from_icon_name("emblem-important-symbolic");
+            let status_icon = gtk::Image::from_icon_name("content-loading-symbolic");
             row.add_suffix(&status_icon);
 
             prereq_group.add(&row);
             check_rows.borrow_mut().push(row);
+            check_icons.borrow_mut().push(status_icon);
         }
 
         content_box.append(&prereq_group);
@@ -181,6 +183,7 @@ impl UpgradePage {
 
         // Wire up check button
         let check_rows_clone = check_rows.clone();
+        let check_icons_clone = check_icons.clone();
         let upgrade_btn_clone = upgrade_button.clone();
         let log_clone = log_panel.clone();
         let backup_clone = backup_check.clone();
@@ -191,6 +194,7 @@ impl UpgradePage {
             log_clone.clear();
 
             let check_rows_ref = check_rows_clone.clone();
+            let check_icons_ref = check_icons_clone.clone();
             let upgrade_ref = upgrade_btn_clone.clone();
             let log_ref = log_clone.clone();
             let button_ref = button.clone();
@@ -219,11 +223,16 @@ impl UpgradePage {
                         if let Ok(results) = serde_json::from_str::<Vec<upgrade::CheckResult>>(json)
                         {
                             let rows = check_rows_ref.borrow();
+                            let icons = check_icons_ref.borrow();
                             for (i, result) in results.iter().enumerate() {
                                 if let Some(row) = rows.get(i) {
                                     row.set_subtitle(&result.message);
-                                    // We can't easily swap icons, so update subtitle
-                                    if !result.passed {
+                                }
+                                if let Some(icon) = icons.get(i) {
+                                    if result.passed {
+                                        icon.set_icon_name(Some("emblem-ok-symbolic"));
+                                    } else {
+                                        icon.set_icon_name(Some("dialog-error-symbolic"));
                                         all_passed = false;
                                     }
                                 }
@@ -248,6 +257,11 @@ impl UpgradePage {
                 button_ref.set_sensitive(true);
             });
         });
+
+        // Auto-trigger prerequisite checks for supported distros
+        if distro_info.upgrade_supported {
+            check_button.emit_clicked();
+        }
 
         // Wire up upgrade button
         let log_clone2 = log_panel.clone();
