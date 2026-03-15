@@ -59,7 +59,7 @@ impl UpWindow {
         view_switcher_title.connect_title_visible_notify({
             let bar = view_switcher_bar.clone();
             move |switcher| {
-                bar.set_reveal(switcher.title_visible());
+                bar.set_reveal(switcher.is_title_visible());
             }
         });
 
