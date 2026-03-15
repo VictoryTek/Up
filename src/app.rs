@@ -23,11 +23,13 @@ impl UpApplication {
     }
 
     fn on_activate(app: &adw::Application) {
-        #[cfg(debug_assertions)]
-        {
+        // Add local icon search path when running from the project root (development mode).
+        // CARGO_MANIFEST_DIR is a compile-time absolute path; we only add it if the directory
+        // still exists at runtime, so installed/Flatpak builds are unaffected.
+        let dev_icons = concat!(env!("CARGO_MANIFEST_DIR"), "/data/icons");
+        if std::path::Path::new(dev_icons).exists() {
             if let Some(display) = gtk::gdk::Display::default() {
-                let theme = gtk::IconTheme::for_display(&display);
-                theme.add_search_path(concat!(env!("CARGO_MANIFEST_DIR"), "/data/icons"));
+                gtk::IconTheme::for_display(&display).add_search_path(dev_icons);
             }
         }
 

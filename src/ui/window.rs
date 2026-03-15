@@ -44,7 +44,6 @@ impl UpWindow {
 
         let view_switcher_bar = adw::ViewSwitcherBar::builder()
             .stack(&view_stack)
-            .reveal(true)
             .build();
 
         let header = adw::HeaderBar::new();
