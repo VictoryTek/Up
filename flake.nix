@@ -23,8 +23,6 @@
 
           nativeBuildInputs = with pkgs; [
             pkg-config
-            meson
-            ninja
             wrapGAppsHook4
           ];
 
@@ -34,6 +32,17 @@
             glib
             dbus
           ];
+
+          postInstall = ''
+            install -Dm644 data/io.github.up.desktop \
+              $out/share/applications/io.github.up.desktop
+            install -Dm644 data/io.github.up.metainfo.xml \
+              $out/share/metainfo/io.github.up.metainfo.xml
+            install -Dm644 data/icons/hicolor/scalable/apps/io.github.up.svg \
+              $out/share/icons/hicolor/scalable/apps/io.github.up.svg
+            install -Dm644 data/icons/hicolor/256x256/apps/io.github.up.png \
+              $out/share/icons/hicolor/256x256/apps/io.github.up.png
+          '';
 
           meta = with pkgs.lib; {
             description = "A modern Linux system update & upgrade app";
