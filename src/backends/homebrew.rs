@@ -39,4 +39,14 @@ impl Backend for HomebrewBackend {
             Err(e) => UpdateResult::Error(e),
         }
     }
+
+    async fn count_available(&self) -> Result<usize, String> {
+        let out = tokio::process::Command::new("brew")
+            .args(["outdated"])
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        Ok(text.lines().filter(|l| !l.is_empty()).count())
+    }
 }

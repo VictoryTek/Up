@@ -50,4 +50,15 @@ impl Backend for NixBackend {
             }
         }
     }
+
+    async fn count_available(&self) -> Result<usize, String> {
+        let out = tokio::process::Command::new("nix-env")
+            .args(["-u", "--dry-run"])
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+        // nix-env dry-run writes "upgrading..." lines to stderr
+        let text = String::from_utf8_lossy(&out.stderr);
+        Ok(text.lines().filter(|l| l.contains("upgrading")).count())
+    }
 }

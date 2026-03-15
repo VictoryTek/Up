@@ -49,6 +49,16 @@ impl Backend for AptBackend {
             Err(e) => UpdateResult::Error(e),
         }
     }
+
+    async fn count_available(&self) -> Result<usize, String> {
+        let out = tokio::process::Command::new("apt")
+            .args(["list", "--upgradable"])
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        Ok(text.lines().filter(|l| l.contains('/')).count())
+    }
 }
 
 fn count_apt_upgraded(output: &str) -> usize {
@@ -93,6 +103,23 @@ impl Backend for DnfBackend {
             }
             Err(e) => UpdateResult::Error(e),
         }
+    }
+
+    async fn count_available(&self) -> Result<usize, String> {
+        let out = tokio::process::Command::new("dnf")
+            .args(["check-update"])
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+        if out.status.code() == Some(0) {
+            return Ok(0);
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let count = text
+            .lines()
+            .filter(|l| !l.is_empty() && !l.starts_with("Last") && !l.starts_with("Obsoleting"))
+            .count();
+        Ok(count)
     }
 }
 
@@ -147,6 +174,16 @@ impl Backend for PacmanBackend {
             Err(e) => UpdateResult::Error(e),
         }
     }
+
+    async fn count_available(&self) -> Result<usize, String> {
+        let out = tokio::process::Command::new("pacman")
+            .args(["-Qu"])
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        Ok(text.lines().filter(|l| !l.is_empty()).count())
+    }
 }
 
 // --- Zypper ---
@@ -180,5 +217,15 @@ impl Backend for ZypperBackend {
             }
             Err(e) => UpdateResult::Error(e),
         }
+    }
+
+    async fn count_available(&self) -> Result<usize, String> {
+        let out = tokio::process::Command::new("zypper")
+            .args(["list-updates"])
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        Ok(text.lines().filter(|l| l.starts_with("v ")).count())
     }
 }

@@ -95,13 +95,6 @@ impl UpWindow {
             .build();
         content_box.append(&status_label);
 
-        // Progress bar
-        let progress_bar = gtk::ProgressBar::builder()
-            .visible(false)
-            .show_text(true)
-            .build();
-        content_box.append(&progress_bar);
-
         // Backend rows group
         let backends_group = adw::PreferencesGroup::builder()
             .title("Sources")
@@ -116,6 +109,40 @@ impl UpWindow {
             let row = UpdateRow::new(backend.as_ref());
             backends_group.add(&row.row);
             rows.borrow_mut().push((backend.kind(), row));
+        }
+
+        // Auto-check for available updates on launch
+        for (idx, backend) in detected.iter().enumerate() {
+            {
+                let borrowed = rows.borrow();
+                borrowed[idx].1.set_status_checking();
+            }
+
+            let backend_clone = backend.clone();
+            let rows_ref = rows.clone();
+
+            glib::spawn_future_local(async move {
+                let (tx, rx) = async_channel::bounded::<Result<usize, String>>(1);
+
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
+                    rt.block_on(async {
+                        let result = backend_clone.count_available().await;
+                        let _ = tx.send(result).await;
+                    });
+                });
+
+                if let Ok(result) = rx.recv().await {
+                    let row = rows_ref.borrow()[idx].1.clone();
+                    match result {
+                        Ok(count) => row.set_status_available(count),
+                        Err(_) => row.set_status_available(0),
+                    }
+                }
+            });
         }
 
         content_box.append(&backends_group);
@@ -136,14 +163,10 @@ impl UpWindow {
         let rows_clone = rows.clone();
         let log_clone = log_panel.clone();
         let detected_clone = detected.clone();
-        let progress_clone = progress_bar.clone();
 
         update_button.connect_clicked(move |button| {
             button.set_sensitive(false);
             status_clone.set_label("Updating...");
-            progress_clone.set_visible(true);
-            progress_clone.set_fraction(0.0);
-            progress_clone.set_text(Some("Starting..."));
             log_clone.clear();
 
             // Set all rows to "Updating..." state
@@ -157,10 +180,8 @@ impl UpWindow {
             let rows_ref = rows_clone.clone();
             let log_ref = log_clone.clone();
             let status_ref = status_clone.clone();
-            let progress_ref = progress_clone.clone();
             let button_ref = button.clone();
             let backends = detected_clone.clone();
-            let total_backends = backends.len() as f64;
 
             glib::spawn_future_local(async move {
                 let (tx, rx) = async_channel::unbounded::<(BackendKind, String)>();
@@ -197,24 +218,20 @@ impl UpWindow {
 
                 // Process log output in a separate future
                 let log_ref2 = log_ref.clone();
+                let rows_for_log = rows_ref.clone();
                 glib::spawn_future_local(async move {
                     while let Ok((kind, line)) = rx.recv().await {
                         log_ref2.append_line(&format!("[{kind}] {line}"));
+                        let borrowed = rows_for_log.borrow();
+                        if let Some((_, row)) = borrowed.iter().find(|(k, _)| *k == kind) {
+                            row.pulse_progress();
+                        }
                     }
                 });
 
                 // Process results
-                let mut completed: f64 = 0.0;
                 let mut has_error = false;
                 while let Ok((kind, result)) = result_rx.recv().await {
-                    completed += 1.0;
-                    let fraction = completed / total_backends;
-                    progress_ref.set_fraction(fraction);
-                    progress_ref.set_text(Some(&format!(
-                        "{}/{} complete",
-                        completed as usize, total_backends as usize
-                    )));
-
                     let rows_borrowed = rows_ref.borrow();
                     if let Some((_, row)) = rows_borrowed.iter().find(|(k, _)| *k == kind) {
                         match &result {
@@ -237,8 +254,6 @@ impl UpWindow {
                 } else {
                     status_ref.set_label("Update complete.");
                 }
-                progress_ref.set_fraction(1.0);
-                progress_ref.set_text(Some("Done"));
                 button_ref.set_sensitive(true);
             });
         });

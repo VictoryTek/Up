@@ -48,6 +48,13 @@ pub trait Backend: Send + Sync {
     fn icon_name(&self) -> &str;
 
     async fn run_update(&self, runner: &CommandRunner) -> UpdateResult;
+
+    /// Count packages available for update (read-only, no privilege required).
+    /// Returns Ok(0) if up to date, Ok(N) if N updates available, Err(_) on failure.
+    /// Default implementation returns Ok(0) for backends that do not support checking.
+    async fn count_available(&self) -> Result<usize, String> {
+        Ok(0)
+    }
 }
 
 /// Detect all available backends on the current system.
