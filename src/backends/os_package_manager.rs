@@ -1,6 +1,7 @@
 use crate::backends::{Backend, BackendKind, UpdateResult};
 use crate::runner::CommandRunner;
 
+
 /// Detect the OS package manager.
 pub fn detect() -> Option<Box<dyn Backend>> {
     if which::which("apt").is_ok() {
@@ -19,6 +20,7 @@ pub fn detect() -> Option<Box<dyn Backend>> {
 // --- APT ---
 pub struct AptBackend;
 
+#[async_trait::async_trait]
 impl Backend for AptBackend {
     fn kind(&self) -> BackendKind {
         BackendKind::Apt
@@ -66,6 +68,7 @@ fn count_apt_upgraded(output: &str) -> usize {
 // --- DNF ---
 pub struct DnfBackend;
 
+#[async_trait::async_trait]
 impl Backend for DnfBackend {
     fn kind(&self) -> BackendKind {
         BackendKind::Dnf
@@ -112,6 +115,7 @@ fn count_dnf_upgraded(output: &str) -> usize {
 // --- Pacman ---
 pub struct PacmanBackend;
 
+#[async_trait::async_trait]
 impl Backend for PacmanBackend {
     fn kind(&self) -> BackendKind {
         BackendKind::Pacman
@@ -145,6 +149,7 @@ impl Backend for PacmanBackend {
 // --- Zypper ---
 pub struct ZypperBackend;
 
+#[async_trait::async_trait]
 impl Backend for ZypperBackend {
     fn kind(&self) -> BackendKind {
         BackendKind::Zypper

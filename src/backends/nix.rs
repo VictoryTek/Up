@@ -7,6 +7,7 @@ pub fn is_available() -> bool {
 
 pub struct NixBackend;
 
+#[async_trait::async_trait]
 impl Backend for NixBackend {
     fn kind(&self) -> BackendKind {
         BackendKind::Nix

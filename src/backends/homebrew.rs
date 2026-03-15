@@ -7,6 +7,7 @@ pub fn is_available() -> bool {
 
 pub struct HomebrewBackend;
 
+#[async_trait::async_trait]
 impl Backend for HomebrewBackend {
     fn kind(&self) -> BackendKind {
         BackendKind::Homebrew

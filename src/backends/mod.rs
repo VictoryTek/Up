@@ -39,16 +39,14 @@ pub enum UpdateResult {
     Skipped(String),
 }
 
+#[async_trait::async_trait]
 pub trait Backend: Send + Sync {
     fn kind(&self) -> BackendKind;
     fn display_name(&self) -> &str;
     fn description(&self) -> &str;
     fn icon_name(&self) -> &str;
 
-    fn run_update(
-        &self,
-        runner: &CommandRunner,
-    ) -> impl std::future::Future<Output = UpdateResult> + Send;
+    async fn run_update(&self, runner: &CommandRunner) -> UpdateResult;
 }
 
 /// Detect all available backends on the current system.

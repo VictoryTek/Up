@@ -7,6 +7,7 @@ pub fn is_available() -> bool {
 
 pub struct FlatpakBackend;
 
+#[async_trait::async_trait]
 impl Backend for FlatpakBackend {
     fn kind(&self) -> BackendKind {
         BackendKind::Flatpak

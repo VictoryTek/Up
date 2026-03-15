@@ -5,7 +5,6 @@ mod upgrade;
 mod runner;
 
 use app::UpApplication;
-use gtk::prelude::*;
 
 const APP_ID: &str = "io.github.up";
 
