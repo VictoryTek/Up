@@ -107,4 +107,13 @@ impl UpdateRow {
         self.status_label.set_label(msg);
         self.status_label.set_css_classes(&["dim-label"]);
     }
+
+    /// Used when the count cannot be determined without running the update (e.g. NixOS).
+    pub fn set_status_unknown(&self, msg: &str) {
+        self.spinner.set_visible(false);
+        self.spinner.set_spinning(false);
+        self.progress_bar.set_visible(false);
+        self.status_label.set_label(msg);
+        self.status_label.set_css_classes(&["dim-label"]);
+    }
 }

@@ -25,7 +25,7 @@ impl UpWindow {
         let view_stack = adw::ViewStack::new();
 
         // --- Update Page ---
-        let update_page = Self::build_update_page();
+        let (update_page, run_checks) = Self::build_update_page();
         view_stack.add_titled_with_icon(
             &update_page,
             Some("update"),
@@ -53,6 +53,14 @@ impl UpWindow {
             .build();
         header.set_title_widget(Some(&view_switcher_title));
 
+        let refresh_button = gtk::Button::builder()
+            .icon_name("view-refresh-symbolic")
+            .tooltip_text("Check for updates")
+            .build();
+        let run_checks_btn = run_checks.clone();
+        refresh_button.connect_clicked(move |_| (*run_checks_btn)());
+        header.pack_start(&refresh_button);
+
         view_switcher_title.connect_title_visible_notify({
             let bar = view_switcher_bar.clone();
             move |switcher| {
@@ -66,10 +74,12 @@ impl UpWindow {
         main_box.append(&view_switcher_bar);
 
         window.set_content(Some(&main_box));
+        // Trigger availability checks now that the window is fully assembled.
+        (*run_checks)();
         window
     }
 
-    fn build_update_page() -> gtk::Box {
+    fn build_update_page() -> (gtk::Box, Rc<dyn Fn()>) {
         let page_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
         let scrolled = gtk::ScrolledWindow::builder()
@@ -108,40 +118,6 @@ impl UpWindow {
             let row = UpdateRow::new(backend.as_ref());
             backends_group.add(&row.row);
             rows.borrow_mut().push((backend.kind(), row));
-        }
-
-        // Auto-check for available updates on launch
-        for (idx, backend) in detected.iter().enumerate() {
-            {
-                let borrowed = rows.borrow();
-                borrowed[idx].1.set_status_checking();
-            }
-
-            let backend_clone = backend.clone();
-            let rows_ref = rows.clone();
-
-            glib::spawn_future_local(async move {
-                let (tx, rx) = async_channel::bounded::<Result<usize, String>>(1);
-
-                std::thread::spawn(move || {
-                    let rt = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .unwrap();
-                    rt.block_on(async {
-                        let result = backend_clone.count_available().await;
-                        let _ = tx.send(result).await;
-                    });
-                });
-
-                if let Ok(result) = rx.recv().await {
-                    let row = rows_ref.borrow()[idx].1.clone();
-                    match result {
-                        Ok(count) => row.set_status_available(count),
-                        Err(_) => row.set_status_available(0),
-                    }
-                }
-            });
         }
 
         content_box.append(&backends_group);
@@ -263,6 +239,42 @@ impl UpWindow {
         scrolled.set_child(Some(&clamp));
         page_box.append(&scrolled);
 
-        page_box
+        // Build the availability-check closure. Shared with the header refresh button.
+        let run_checks: Rc<dyn Fn()> = {
+            let rows = rows.clone();
+            let detected = detected.clone();
+            Rc::new(move || {
+                for (idx, backend) in detected.iter().enumerate() {
+                    {
+                        let borrowed = rows.borrow();
+                        borrowed[idx].1.set_status_checking();
+                    }
+                    let backend_clone = backend.clone();
+                    let rows_ref = rows.clone();
+                    glib::spawn_future_local(async move {
+                        let (tx, rx) = async_channel::bounded::<Result<usize, String>>(1);
+                        std::thread::spawn(move || {
+                            let rt = tokio::runtime::Builder::new_current_thread()
+                                .enable_all()
+                                .build()
+                                .unwrap();
+                            rt.block_on(async {
+                                let result = backend_clone.count_available().await;
+                                let _ = tx.send(result).await;
+                            });
+                        });
+                        if let Ok(result) = rx.recv().await {
+                            let row = rows_ref.borrow()[idx].1.clone();
+                            match result {
+                                Ok(count) => row.set_status_available(count),
+                                Err(msg) => row.set_status_unknown(&msg),
+                            }
+                        }
+                    });
+                }
+            })
+        };
+
+        (page_box, run_checks)
     }
 }
