@@ -96,9 +96,25 @@ impl Backend for NixBackend {
 
     async fn count_available(&self) -> Result<usize, String> {
         if is_nixos() {
-            // NixOS system updates require `nix flake update` which modifies the lock file.
-            // We can't check without running it, so tell the UI to prompt the user.
-            Err("Run Update to check".to_string())
+            if is_nixos_flake() {
+                // nix flake update --dry-run (Nix >= 2.19) checks for available input
+                // updates without writing the lock file.
+                let out = tokio::process::Command::new("nix")
+                    .args(["flake", "update", "--dry-run", "/etc/nixos"])
+                    .output()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if out.status.success() {
+                    let text = String::from_utf8_lossy(&out.stderr);
+                    Ok(text.lines().filter(|l| l.contains("Updated input")).count())
+                } else {
+                    // Older Nix without --dry-run support.
+                    Err("Run update to check".to_string())
+                }
+            } else {
+                // Legacy NixOS channels have no dry-run check mechanism.
+                Err("Run update to check".to_string())
+            }
         } else {
             let out = tokio::process::Command::new("nix-env")
                 .args(["-u", "--dry-run"])
