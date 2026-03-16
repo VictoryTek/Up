@@ -6,3 +6,4 @@
 .flatpak-builder/
 .cache/
 builddir/
+screenshots/
