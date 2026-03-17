@@ -5,13 +5,10 @@ use crate::ui::update_row::UpdateRow;
 use crate::ui::upgrade_page::UpgradePage;
 use adw::prelude::*;
 use gtk::glib;
-use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-pub struct UpWindow {
-    pub window: adw::ApplicationWindow,
-}
+pub struct UpWindow;
 
 impl UpWindow {
     pub fn new(app: &adw::Application) -> adw::ApplicationWindow {
@@ -44,14 +41,10 @@ impl UpWindow {
 
         let view_switcher_bar = adw::ViewSwitcherBar::builder()
             .stack(&view_stack)
+            .reveal(true)
             .build();
 
         let header = adw::HeaderBar::new();
-        let view_switcher_title = adw::ViewSwitcherTitle::builder()
-            .stack(&view_stack)
-            .title("Up")
-            .build();
-        header.set_title_widget(Some(&view_switcher_title));
 
         let refresh_button = gtk::Button::builder()
             .icon_name("view-refresh-symbolic")
@@ -60,13 +53,6 @@ impl UpWindow {
         let run_checks_btn = run_checks.clone();
         refresh_button.connect_clicked(move |_| (*run_checks_btn)());
         header.pack_start(&refresh_button);
-
-        view_switcher_title.connect_title_visible_notify({
-            let bar = view_switcher_bar.clone();
-            move |switcher| {
-                bar.set_reveal(switcher.is_title_visible());
-            }
-        });
 
         let main_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
         main_box.append(&header);

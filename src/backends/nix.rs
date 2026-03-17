@@ -51,8 +51,11 @@ impl Backend for NixBackend {
             if is_nixos_flake() {
                 // Flake-based NixOS: update the flake inputs then rebuild.
                 let hostname = nixos_hostname();
+                // Export the NixOS binary paths explicitly: pkexec resets PATH
+                // to standard directories that typically do not include Nix
+                // tooling on NixOS.
                 let cmd = format!(
-                    "nix flake update /etc/nixos && nixos-rebuild switch --flake /etc/nixos#{}",
+                    "export PATH=/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin:$PATH && cd /etc/nixos && nix flake update && nixos-rebuild switch --flake /etc/nixos#{}",
                     hostname
                 );
                 match runner.run("pkexec", &["sh", "-c", &cmd]).await {
@@ -97,23 +100,42 @@ impl Backend for NixBackend {
     async fn count_available(&self) -> Result<usize, String> {
         if is_nixos() {
             if is_nixos_flake() {
-                // nix flake update --dry-run (Nix >= 2.19) checks for available input
-                // updates without writing the lock file.
-                let out = tokio::process::Command::new("nix")
-                    .args(["flake", "update", "--dry-run", "/etc/nixos"])
+                // Copy flake.nix (and lock if present) to a temp dir and run
+                // `nix flake update` there.  This avoids needing root and does
+                // not touch /etc/nixos, while still fetching the latest input
+                // revisions from the network to produce an accurate count.
+                let tmpdir = std::env::temp_dir().join("up-nix-check");
+                let _ = tokio::fs::remove_dir_all(&tmpdir).await;
+                if tokio::fs::create_dir_all(&tmpdir).await.is_err()
+                    || tokio::fs::copy("/etc/nixos/flake.nix", tmpdir.join("flake.nix"))
+                        .await
+                        .is_err()
+                {
+                    return Err("Cannot read /etc/nixos/flake.nix".to_string());
+                }
+                // Bring the existing lock so nix can diff against it.
+                let _ =
+                    tokio::fs::copy("/etc/nixos/flake.lock", tmpdir.join("flake.lock")).await;
+                let result = tokio::process::Command::new("nix")
+                    .args(["flake", "update"])
+                    .current_dir(&tmpdir)
                     .output()
-                    .await
-                    .map_err(|e| e.to_string())?;
-                if out.status.success() {
-                    let text = String::from_utf8_lossy(&out.stderr);
-                    Ok(text.lines().filter(|l| l.contains("Updated input")).count())
-                } else {
-                    // Older Nix without --dry-run support.
-                    Err("Run update to check".to_string())
+                    .await;
+                let _ = tokio::fs::remove_dir_all(&tmpdir).await;
+                match result {
+                    Ok(out) => {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        let count = stderr
+                            .lines()
+                            .filter(|l| l.contains("Updated input"))
+                            .count();
+                        Ok(count)
+                    }
+                    Err(e) => Err(format!("nix: {e}")),
                 }
             } else {
-                // Legacy NixOS channels have no dry-run check mechanism.
-                Err("Run update to check".to_string())
+                // Legacy NixOS channels have no unprivileged check mechanism.
+                Err("Click Update All to check".to_string())
             }
         } else {
             let out = tokio::process::Command::new("nix-env")

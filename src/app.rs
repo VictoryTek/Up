@@ -1,6 +1,4 @@
 use adw::prelude::*;
-use gtk::gio;
-use gtk::prelude::*;
 
 use crate::ui::window::UpWindow;
 use crate::APP_ID;

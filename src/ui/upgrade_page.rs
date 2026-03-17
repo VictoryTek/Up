@@ -1,6 +1,5 @@
 use adw::prelude::*;
 use gtk::glib;
-use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
