@@ -65,26 +65,7 @@ impl UpgradePage {
             .build();
         info_group.add(&upgrade_available_row);
 
-        // Spawn async task to check upgrade availability
-        if distro_info.upgrade_supported {
-            let upgrade_row_clone = upgrade_available_row.clone();
-            let distro_check = distro_info.clone();
-            glib::spawn_future_local(async move {
-                let (tx, rx) = async_channel::unbounded::<String>();
 
-                std::thread::spawn(move || {
-                    let result = upgrade::check_upgrade_available(&distro_check);
-                    let _ = tx.send_blocking(result);
-                    drop(tx);
-                });
-
-                if let Ok(result_msg) = rx.recv().await {
-                    upgrade_row_clone.set_subtitle(&result_msg);
-                } else {
-                    upgrade_row_clone.set_subtitle("Could not determine upgrade availability");
-                }
-            });
-        }
 
         if distro_info.id == "nixos" {
             let config_type = upgrade::detect_nixos_config_type();
@@ -169,6 +150,40 @@ impl UpgradePage {
             .sensitive(false)
             .build();
 
+        // Tracks whether a distro upgrade is actually available.
+        // The Start Upgrade button must not be enabled unless this is true.
+        let upgrade_available: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+
+        // Spawn async task to check upgrade availability now that the button exists.
+        if distro_info.upgrade_supported {
+            let upgrade_row_clone = upgrade_available_row.clone();
+            let distro_check = distro_info.clone();
+            let upgrade_available_clone = upgrade_available.clone();
+            let upgrade_btn_for_avail = upgrade_button.clone();
+            glib::spawn_future_local(async move {
+                let (tx, rx) = async_channel::unbounded::<String>();
+
+                std::thread::spawn(move || {
+                    let result = upgrade::check_upgrade_available(&distro_check);
+                    let _ = tx.send_blocking(result);
+                    drop(tx);
+                });
+
+                if let Ok(result_msg) = rx.recv().await {
+                    let is_available = result_msg.starts_with("Yes");
+                    *upgrade_available_clone.borrow_mut() = is_available;
+                    upgrade_row_clone.set_subtitle(&result_msg);
+                    // If the button was already enabled by prerequisite checks but
+                    // there is no upgrade, disable it now.
+                    if !is_available {
+                        upgrade_btn_for_avail.set_sensitive(false);
+                    }
+                } else {
+                    upgrade_row_clone.set_subtitle("Could not determine upgrade availability");
+                }
+            });
+        }
+
         button_box.append(&check_button);
         button_box.append(&upgrade_button);
         content_box.append(&button_box);
@@ -187,6 +202,7 @@ impl UpgradePage {
         let log_clone = log_panel.clone();
         let backup_clone = backup_check.clone();
         let distro_clone = distro_info.clone();
+        let upgrade_available_clone = upgrade_available.clone();
 
         check_button.connect_clicked(move |button| {
             button.set_sensitive(false);
@@ -199,6 +215,7 @@ impl UpgradePage {
             let button_ref = button.clone();
             let backup_ref = backup_clone.clone();
             let distro = distro_clone.clone();
+            let upgrade_available_ref = upgrade_available_clone.clone();
 
             glib::spawn_future_local(async move {
                 let (tx, rx) = async_channel::unbounded::<String>();
@@ -242,11 +259,18 @@ impl UpgradePage {
                     }
                 }
 
-                if all_passed {
+                let upgrade_is_available = *upgrade_available_ref.borrow();
+                if all_passed && upgrade_is_available {
                     // Enable upgrade button only if backup is confirmed
                     let upgrade_ref2 = upgrade_ref.clone();
+                    let upgrade_available_ref2 = upgrade_available_ref.clone();
                     backup_ref.connect_toggled(move |check| {
-                        upgrade_ref2.set_sensitive(check.is_active());
+                        // Re-check availability in case the async check finished late.
+                        if check.is_active() && *upgrade_available_ref2.borrow() {
+                            upgrade_ref2.set_sensitive(true);
+                        } else {
+                            upgrade_ref2.set_sensitive(false);
+                        }
                     });
                     if backup_ref.is_active() {
                         upgrade_ref.set_sensitive(true);
