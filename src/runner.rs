@@ -29,27 +29,42 @@ impl CommandRunner {
 
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
-        let mut full_output = String::new();
 
-        // Read stdout
-        if let Some(out) = stdout {
-            let mut reader = BufReader::new(out).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                full_output.push_str(&line);
-                full_output.push('\n');
-                self.send(line).await;
+        // Read stdout and stderr concurrently to avoid pipe-buffer deadlocks.
+        // If one pipe fills its kernel buffer while we are draining the other,
+        // the child process blocks and we never reach EOF on either pipe.
+        let tx_stdout = self.tx.clone();
+        let kind_stdout = self.kind;
+        let stdout_task = async move {
+            let mut out = String::new();
+            if let Some(pipe) = stdout {
+                let mut reader = BufReader::new(pipe).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    out.push_str(&line);
+                    out.push('\n');
+                    let _ = tx_stdout.send((kind_stdout, line)).await;
+                }
             }
-        }
+            out
+        };
 
-        // Read stderr
-        if let Some(err) = stderr {
-            let mut reader = BufReader::new(err).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                full_output.push_str(&line);
-                full_output.push('\n');
-                self.send(format!("stderr: {line}")).await;
+        let tx_stderr = self.tx.clone();
+        let kind_stderr = self.kind;
+        let stderr_task = async move {
+            let mut out = String::new();
+            if let Some(pipe) = stderr {
+                let mut reader = BufReader::new(pipe).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    out.push_str(&line);
+                    out.push('\n');
+                    let _ = tx_stderr.send((kind_stderr, line)).await;
+                }
             }
-        }
+            out
+        };
+
+        let (stdout_output, stderr_output) = tokio::join!(stdout_task, stderr_task);
+        let full_output = stdout_output + &stderr_output;
 
         let status = child
             .wait()
