@@ -1,5 +1,6 @@
 mod app;
 mod backends;
+mod reboot;
 mod runner;
 mod ui;
 mod upgrade;

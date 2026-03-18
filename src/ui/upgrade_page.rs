@@ -65,8 +65,6 @@ impl UpgradePage {
             .build();
         info_group.add(&upgrade_available_row);
 
-
-
         if distro_info.id == "nixos" {
             let config_type = upgrade::detect_nixos_config_type();
             let config_label: String = match config_type {
@@ -319,14 +317,17 @@ impl UpgradePage {
                     let log_ref2 = log_ref.clone();
                     let distro2 = distro.clone();
                     let button_ref2 = button_ref.clone();
+                    let button_ref3 = button_ref.clone();
 
                     glib::spawn_future_local(async move {
                         let (tx, rx) = async_channel::unbounded::<String>();
                         let tx_clone = tx.clone();
+                        let (result_tx, result_rx) = async_channel::bounded::<bool>(1);
 
                         std::thread::spawn(move || {
-                            upgrade::execute_upgrade(&distro2, &tx_clone);
+                            let success = upgrade::execute_upgrade(&distro2, &tx_clone);
                             drop(tx_clone);
+                            let _ = result_tx.send_blocking(success);
                         });
 
                         drop(tx);
@@ -335,7 +336,12 @@ impl UpgradePage {
                             log_ref2.append_line(&line);
                         }
 
+                        let success = result_rx.recv().await.unwrap_or(false);
                         button_ref2.set_sensitive(true);
+
+                        if success {
+                            crate::ui::reboot_dialog::show_reboot_dialog(&button_ref3);
+                        }
                     });
                 }
             });

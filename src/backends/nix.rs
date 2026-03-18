@@ -114,8 +114,7 @@ impl Backend for NixBackend {
                     return Err("Cannot read /etc/nixos/flake.nix".to_string());
                 }
                 // Bring the existing lock so nix can diff against it.
-                let _ =
-                    tokio::fs::copy("/etc/nixos/flake.lock", tmpdir.join("flake.lock")).await;
+                let _ = tokio::fs::copy("/etc/nixos/flake.lock", tmpdir.join("flake.lock")).await;
                 let result = tokio::process::Command::new("nix")
                     .args(["flake", "update"])
                     .current_dir(&tmpdir)

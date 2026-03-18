@@ -216,6 +216,10 @@ impl UpWindow {
                     status_ref.set_label("Update complete.");
                 }
                 button_ref.set_sensitive(true);
+
+                if !has_error {
+                    crate::ui::reboot_dialog::show_reboot_dialog(&button_ref);
+                }
             });
         });
 

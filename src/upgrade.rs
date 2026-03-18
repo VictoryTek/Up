@@ -323,7 +323,8 @@ fn check_nixos_upgrade(current_version_id: &str) -> String {
 }
 
 /// Execute the actual distro upgrade.
-pub fn execute_upgrade(distro: &DistroInfo, tx: &async_channel::Sender<String>) {
+/// Returns `true` if all upgrade steps completed successfully, `false` otherwise.
+pub fn execute_upgrade(distro: &DistroInfo, tx: &async_channel::Sender<String>) -> bool {
     let _ = tx.send_blocking(format!(
         "Starting upgrade for {} {}...",
         distro.name, distro.version
@@ -339,28 +340,31 @@ pub fn execute_upgrade(distro: &DistroInfo, tx: &async_channel::Sender<String>) 
                 "Upgrade is not yet supported for '{}'. Supported: Ubuntu, Fedora, openSUSE Leap, NixOS.",
                 distro.name
             ));
+            false
         }
     }
 }
 
-fn upgrade_ubuntu(tx: &async_channel::Sender<String>) {
+fn upgrade_ubuntu(tx: &async_channel::Sender<String>) -> bool {
     let _ = tx.send_blocking("Running: do-release-upgrade -f DistUpgradeViewNonInteractive".into());
 
     run_streaming_command(
         "pkexec",
         &["do-release-upgrade", "-f", "DistUpgradeViewNonInteractive"],
         tx,
-    );
+    )
 }
 
-fn upgrade_fedora(tx: &async_channel::Sender<String>) {
+fn upgrade_fedora(tx: &async_channel::Sender<String>) -> bool {
     // Step 1: Install upgrade plugin
     let _ = tx.send_blocking("Installing system-upgrade plugin...".into());
-    run_streaming_command(
+    if !run_streaming_command(
         "pkexec",
         &["dnf", "install", "-y", "dnf-plugin-system-upgrade"],
         tx,
-    );
+    ) {
+        return false;
+    }
 
     // Step 2: Download upgrade packages (next version)
     let _ = tx.send_blocking("Downloading upgrade packages...".into());
@@ -368,7 +372,7 @@ fn upgrade_fedora(tx: &async_channel::Sender<String>) {
     // Detect next version
     let next_version = detect_next_fedora_version();
     let ver_str = next_version.to_string();
-    run_streaming_command(
+    if !run_streaming_command(
         "pkexec",
         &[
             "dnf",
@@ -379,37 +383,43 @@ fn upgrade_fedora(tx: &async_channel::Sender<String>) {
             "-y",
         ],
         tx,
-    );
+    ) {
+        return false;
+    }
 
     // Step 3: Trigger reboot into upgrade
     let _ =
         tx.send_blocking("Download complete. The system will reboot to apply the upgrade.".into());
-    run_streaming_command("pkexec", &["dnf", "system-upgrade", "reboot"], tx);
+    run_streaming_command("pkexec", &["dnf", "system-upgrade", "reboot"], tx)
 }
 
-fn upgrade_opensuse(tx: &async_channel::Sender<String>) {
+fn upgrade_opensuse(tx: &async_channel::Sender<String>) -> bool {
     let _ = tx.send_blocking("Running zypper distribution upgrade...".into());
-    run_streaming_command("pkexec", &["zypper", "dup", "-y"], tx);
+    run_streaming_command("pkexec", &["zypper", "dup", "-y"], tx)
 }
 
-fn upgrade_nixos(tx: &async_channel::Sender<String>) {
+fn upgrade_nixos(tx: &async_channel::Sender<String>) -> bool {
     let config_type = detect_nixos_config_type();
     match config_type {
         NixOsConfigType::LegacyChannel => {
             let _ = tx.send_blocking("Detected: legacy channel-based NixOS config".into());
             let _ = tx.send_blocking("Updating NixOS channel...".into());
-            run_streaming_command("sudo", &["nix-channel", "--update"], tx);
+            if !run_streaming_command("sudo", &["nix-channel", "--update"], tx) {
+                return false;
+            }
             let _ = tx.send_blocking("Rebuilding NixOS (switch --upgrade)...".into());
-            run_streaming_command("pkexec", &["nixos-rebuild", "switch", "--upgrade"], tx);
+            run_streaming_command("pkexec", &["nixos-rebuild", "switch", "--upgrade"], tx)
         }
         NixOsConfigType::Flake => {
             let _ = tx.send_blocking("Detected: flake-based NixOS config".into());
             let _ = tx.send_blocking("Updating flake inputs in /etc/nixos...".into());
-            run_streaming_command(
+            if !run_streaming_command(
                 "sudo",
                 &["nix", "flake", "update", "--flake", "/etc/nixos"],
                 tx,
-            );
+            ) {
+                return false;
+            }
             let hostname = detect_hostname();
             let flake_target = format!("/etc/nixos#{}", hostname);
             let _ = tx.send_blocking(format!("Rebuilding NixOS configuration: {flake_target}"));
@@ -417,7 +427,7 @@ fn upgrade_nixos(tx: &async_channel::Sender<String>) {
                 "pkexec",
                 &["nixos-rebuild", "switch", "--flake", &flake_target],
                 tx,
-            );
+            )
         }
     }
 }
@@ -453,7 +463,7 @@ fn detect_next_fedora_version() -> u32 {
     }
 }
 
-fn run_streaming_command(program: &str, args: &[&str], tx: &async_channel::Sender<String>) {
+fn run_streaming_command(program: &str, args: &[&str], tx: &async_channel::Sender<String>) -> bool {
     use std::io::{BufRead, BufReader};
     use std::process::Stdio;
 
@@ -483,18 +493,22 @@ fn run_streaming_command(program: &str, args: &[&str], tx: &async_channel::Sende
                 Ok(status) => {
                     if status.success() {
                         let _ = tx.send_blocking("Command completed successfully.".into());
+                        true
                     } else {
                         let code = status.code().unwrap_or(-1);
                         let _ = tx.send_blocking(format!("Command exited with code {code}"));
+                        false
                     }
                 }
                 Err(e) => {
                     let _ = tx.send_blocking(format!("Failed to wait for process: {e}"));
+                    false
                 }
             }
         }
         Err(e) => {
             let _ = tx.send_blocking(format!("Failed to start {program}: {e}"));
+            false
         }
     }
 }
