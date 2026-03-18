@@ -155,19 +155,33 @@ impl UpWindow {
                 let backends_thread = backends.clone();
 
                 std::thread::spawn(move || {
-                    let rt = tokio::runtime::Builder::new_current_thread()
+                    match tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
-                        .unwrap();
-
-                    rt.block_on(async {
-                        for backend in &backends_thread {
-                            let kind = backend.kind();
-                            let runner = CommandRunner::new(tx_thread.clone(), kind);
-                            let result = backend.run_update(&runner).await;
-                            let _ = result_tx_thread.send((kind, result)).await;
+                    {
+                        Ok(rt) => {
+                            rt.block_on(async {
+                                for backend in &backends_thread {
+                                    let kind = backend.kind();
+                                    let runner = CommandRunner::new(tx_thread.clone(), kind);
+                                    let result = backend.run_update(&runner).await;
+                                    let _ = result_tx_thread.send((kind, result)).await;
+                                }
+                            });
                         }
-                    });
+                        Err(e) => {
+                            // Send an error result for every backend so the UI exits its recv loop
+                            for backend in &backends_thread {
+                                let kind = backend.kind();
+                                let _ = result_tx_thread.send_blocking((
+                                    kind,
+                                    crate::backends::UpdateResult::Error(format!(
+                                        "Runtime error: {e}"
+                                    )),
+                                ));
+                            }
+                        }
+                    }
 
                     drop(tx_thread);
                     drop(result_tx_thread);
@@ -244,14 +258,20 @@ impl UpWindow {
                     glib::spawn_future_local(async move {
                         let (tx, rx) = async_channel::bounded::<Result<usize, String>>(1);
                         std::thread::spawn(move || {
-                            let rt = tokio::runtime::Builder::new_current_thread()
+                            match tokio::runtime::Builder::new_current_thread()
                                 .enable_all()
                                 .build()
-                                .unwrap();
-                            rt.block_on(async {
-                                let result = backend_clone.count_available().await;
-                                let _ = tx.send(result).await;
-                            });
+                            {
+                                Ok(rt) => {
+                                    rt.block_on(async {
+                                        let result = backend_clone.count_available().await;
+                                        let _ = tx.send(result).await;
+                                    });
+                                }
+                                Err(e) => {
+                                    let _ = tx.send_blocking(Err(format!("Runtime error: {e}")));
+                                }
+                            }
                         });
                         if let Ok(result) = rx.recv().await {
                             let row = rows_ref.borrow()[idx].1.clone();

@@ -152,7 +152,12 @@ fn check_packages_up_to_date(distro: &DistroInfo) -> CheckResult {
                 .filter(|l| !l.is_empty() && !l.starts_with("Listing"))
                 .count();
 
-            if upgradable == 0 || output.status.success() {
+            // `apt list --upgradable` always exits with code 0 regardless of
+            // whether updates are pending; `output.status.success()` is therefore
+            // always true for APT and must NOT be used as the pass condition.
+            // The correct indicator for all supported tools (APT, DNF, Zypper)
+            // is whether any package lines appear in their output.
+            if upgradable == 0 {
                 CheckResult {
                     name: "All packages up to date".into(),
                     passed: true,
@@ -370,7 +375,15 @@ fn upgrade_fedora(tx: &async_channel::Sender<String>) -> bool {
     let _ = tx.send_blocking("Downloading upgrade packages...".into());
 
     // Detect next version
-    let next_version = detect_next_fedora_version();
+    let next_version = match detect_next_fedora_version() {
+        Some(v) => v,
+        None => {
+            let _ = tx.send_blocking(
+                "Error: Could not detect current Fedora version. Aborting upgrade.".into(),
+            );
+            return false;
+        }
+    };
     let ver_str = next_version.to_string();
     if !run_streaming_command(
         "pkexec",
@@ -399,12 +412,16 @@ fn upgrade_opensuse(tx: &async_channel::Sender<String>) -> bool {
 }
 
 fn upgrade_nixos(tx: &async_channel::Sender<String>) -> bool {
+    // pkexec resets PATH, excluding NixOS tooling; export the required paths explicitly.
+    const NIX_PATH_EXPORT: &str =
+        "export PATH=/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin:$PATH";
     let config_type = detect_nixos_config_type();
     match config_type {
         NixOsConfigType::LegacyChannel => {
             let _ = tx.send_blocking("Detected: legacy channel-based NixOS config".into());
             let _ = tx.send_blocking("Updating NixOS channel...".into());
-            if !run_streaming_command("sudo", &["nix-channel", "--update"], tx) {
+            let cmd = format!("{NIX_PATH_EXPORT} && nix-channel --update");
+            if !run_streaming_command("pkexec", &["sh", "-c", &cmd], tx) {
                 return false;
             }
             let _ = tx.send_blocking("Rebuilding NixOS (switch --upgrade)...".into());
@@ -413,11 +430,8 @@ fn upgrade_nixos(tx: &async_channel::Sender<String>) -> bool {
         NixOsConfigType::Flake => {
             let _ = tx.send_blocking("Detected: flake-based NixOS config".into());
             let _ = tx.send_blocking("Updating flake inputs in /etc/nixos...".into());
-            if !run_streaming_command(
-                "sudo",
-                &["nix", "flake", "update", "--flake", "/etc/nixos"],
-                tx,
-            ) {
+            let cmd = format!("{NIX_PATH_EXPORT} && nix flake update --flake /etc/nixos");
+            if !run_streaming_command("pkexec", &["sh", "-c", &cmd], tx) {
                 return false;
             }
             let hostname = detect_hostname();
@@ -448,19 +462,30 @@ fn check_nixos_rebuild_available() -> CheckResult {
     }
 }
 
-fn detect_next_fedora_version() -> u32 {
-    let output = Command::new("rpm").args(["-E", "%fedora"]).output().ok();
-
-    if let Some(out) = output {
-        let current: u32 = String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .parse()
-            .unwrap_or(0);
-        current + 1
-    } else {
-        // Fallback to a reasonable version
-        41
+fn detect_next_fedora_version() -> Option<u32> {
+    // Primary: rpm macro (most accurate on Fedora)
+    if let Ok(output) = Command::new("rpm").args(["-E", "%fedora"]).output() {
+        let s = String::from_utf8_lossy(&output.stdout);
+        let trimmed = s.trim();
+        // Only accept it if it looks like a plain number (not the unexpanded macro "%fedora")
+        if !trimmed.starts_with('%') {
+            if let Ok(n) = trimmed.parse::<u32>() {
+                return Some(n + 1);
+            }
+        }
     }
+    // Fallback: parse VERSION_ID from /etc/os-release
+    if let Ok(content) = std::fs::read_to_string("/etc/os-release") {
+        for line in content.lines() {
+            if let Some(val) = line.strip_prefix("VERSION_ID=") {
+                let val = val.trim_matches('"');
+                if let Ok(n) = val.parse::<u32>() {
+                    return Some(n + 1);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn run_streaming_command(program: &str, args: &[&str], tx: &async_channel::Sender<String>) -> bool {
@@ -475,19 +500,37 @@ fn run_streaming_command(program: &str, args: &[&str], tx: &async_channel::Sende
 
     match result {
         Ok(mut child) => {
-            if let Some(stdout) = child.stdout.take() {
-                let reader = BufReader::new(stdout);
-                for line in reader.lines().map_while(Result::ok) {
-                    let _ = tx.send_blocking(line);
-                }
-            }
+            // Drain stdout and stderr concurrently on separate threads to prevent
+            // pipe-buffer deadlock. If one pipe fills its kernel buffer (~64 KiB)
+            // while the parent is draining the other, the child blocks and neither
+            // pipe ever reaches EOF — causing the parent to hang indefinitely.
+            let stdout_pipe = child.stdout.take();
+            let stderr_pipe = child.stderr.take();
 
-            if let Some(stderr) = child.stderr.take() {
-                let reader = BufReader::new(stderr);
-                for line in reader.lines().map_while(Result::ok) {
-                    let _ = tx.send_blocking(format!("stderr: {line}"));
+            let tx_stdout = tx.clone();
+            let stdout_thread = std::thread::spawn(move || {
+                if let Some(pipe) = stdout_pipe {
+                    let reader = BufReader::new(pipe);
+                    for line in reader.lines().map_while(Result::ok) {
+                        let _ = tx_stdout.send_blocking(line);
+                    }
                 }
-            }
+            });
+
+            let tx_stderr = tx.clone();
+            let stderr_thread = std::thread::spawn(move || {
+                if let Some(pipe) = stderr_pipe {
+                    let reader = BufReader::new(pipe);
+                    for line in reader.lines().map_while(Result::ok) {
+                        let _ = tx_stderr.send_blocking(format!("stderr: {line}"));
+                    }
+                }
+            });
+
+            // Wait for both drain threads before calling child.wait(), so the
+            // child's pipes are fully consumed before we reap the process.
+            let _ = stdout_thread.join();
+            let _ = stderr_thread.join();
 
             match child.wait() {
                 Ok(status) => {

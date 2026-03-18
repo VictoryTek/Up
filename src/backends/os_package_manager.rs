@@ -124,11 +124,11 @@ impl Backend for DnfBackend {
 }
 
 fn count_dnf_upgraded(output: &str) -> usize {
-    // Look for "Upgraded:" section
     for line in output.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("Upgraded") || trimmed.starts_with("Installed") {
-            // e.g., "Upgraded  15 Packages"
+        // DNF4 Transaction Summary: "  Upgrade  15 Packages"
+        // DNF5 Transaction Summary: "  Upgrading: 15 packages"
+        if trimmed.starts_with("Upgrade ") || trimmed.starts_with("Upgrading:") {
             for word in trimmed.split_whitespace() {
                 if let Ok(n) = word.parse::<usize>() {
                     return n;

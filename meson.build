@@ -16,15 +16,20 @@ datadir = join_paths(prefix, get_option('datadir'))
 
 if get_option('buildtype') == 'release'
   rust_target = 'release'
-  cargo_args = ['build', '--release', '--manifest-path', join_paths(srcdir, 'Cargo.toml')]
 else
   rust_target = 'debug'
-  cargo_args = ['build', '--manifest-path', join_paths(srcdir, 'Cargo.toml')]
 endif
 
 cargo_build = custom_target('cargo-build',
   output: 'up',
-  command: [cargo] + cargo_args,
+  command: [
+    'sh', '-c',
+    cargo.full_path() + ' build ' +
+    (rust_target == 'release' ? '--release ' : '') +
+    '--manifest-path ' + srcdir / 'Cargo.toml' +
+    ' && cp ' + srcdir / 'target' / rust_target / 'up' + ' @OUTPUT@'
+  ],
+  build_always_stale: true,
   console: true,
   install: true,
   install_dir: bindir,

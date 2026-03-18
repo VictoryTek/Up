@@ -151,6 +151,8 @@ impl UpgradePage {
         // Tracks whether a distro upgrade is actually available.
         // The Start Upgrade button must not be enabled unless this is true.
         let upgrade_available: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+        // Tracks whether all prerequisite checks have passed.
+        let all_checks_passed: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
 
         // Spawn async task to check upgrade availability now that the button exists.
         if distro_info.upgrade_supported {
@@ -193,6 +195,23 @@ impl UpgradePage {
             .build();
         content_box.append(&backup_check);
 
+        // Wire the backup checkbox once (unconditional) so it doesn't accumulate signal handlers.
+        {
+            let upgrade_btn_toggled = upgrade_button.clone();
+            let all_checks_passed_toggled = all_checks_passed.clone();
+            let upgrade_available_toggled = upgrade_available.clone();
+            backup_check.connect_toggled(move |check| {
+                if check.is_active()
+                    && *all_checks_passed_toggled.borrow()
+                    && *upgrade_available_toggled.borrow()
+                {
+                    upgrade_btn_toggled.set_sensitive(true);
+                } else {
+                    upgrade_btn_toggled.set_sensitive(false);
+                }
+            });
+        }
+
         // Wire up check button
         let check_rows_clone = check_rows.clone();
         let check_icons_clone = check_icons.clone();
@@ -201,7 +220,7 @@ impl UpgradePage {
         let backup_clone = backup_check.clone();
         let distro_clone = distro_info.clone();
         let upgrade_available_clone = upgrade_available.clone();
-
+        let all_checks_passed_clone = all_checks_passed.clone();
         check_button.connect_clicked(move |button| {
             button.set_sensitive(false);
             log_clone.clear();
@@ -214,6 +233,7 @@ impl UpgradePage {
             let backup_ref = backup_clone.clone();
             let distro = distro_clone.clone();
             let upgrade_available_ref = upgrade_available_clone.clone();
+            let all_checks_passed_ref = all_checks_passed_clone.clone();
 
             glib::spawn_future_local(async move {
                 let (tx, rx) = async_channel::unbounded::<String>();
@@ -257,22 +277,12 @@ impl UpgradePage {
                     }
                 }
 
-                let upgrade_is_available = *upgrade_available_ref.borrow();
-                if all_passed && upgrade_is_available {
-                    // Enable upgrade button only if backup is confirmed
-                    let upgrade_ref2 = upgrade_ref.clone();
-                    let upgrade_available_ref2 = upgrade_available_ref.clone();
-                    backup_ref.connect_toggled(move |check| {
-                        // Re-check availability in case the async check finished late.
-                        if check.is_active() && *upgrade_available_ref2.borrow() {
-                            upgrade_ref2.set_sensitive(true);
-                        } else {
-                            upgrade_ref2.set_sensitive(false);
-                        }
-                    });
-                    if backup_ref.is_active() {
-                        upgrade_ref.set_sensitive(true);
-                    }
+                *all_checks_passed_ref.borrow_mut() = all_passed;
+                // Re-evaluate button sensitivity now that checks have completed.
+                if all_passed && *upgrade_available_ref.borrow() && backup_ref.is_active() {
+                    upgrade_ref.set_sensitive(true);
+                } else if !all_passed {
+                    upgrade_ref.set_sensitive(false);
                 }
 
                 button_ref.set_sensitive(true);

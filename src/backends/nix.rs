@@ -78,7 +78,21 @@ impl Backend for NixBackend {
             }
         } else {
             // Non-NixOS: update the user's nix profile.
-            let use_flakes = runner.run("nix", &["profile", "list"]).await.is_ok();
+            // Detect whether the user's nix profile uses the flake/v2 manifest format.
+            // This is a silent filesystem check — it does NOT use runner.run() and
+            // therefore does not emit any log output before the real update starts.
+            let use_flakes = {
+                let manifest_path =
+                    std::path::Path::new(&std::env::var("HOME").unwrap_or_default())
+                        .join(".nix-profile/manifest.json");
+                if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+                    // Flake profiles have "version": 2 in their manifest
+                    content.contains("\"version\": 2")
+                } else {
+                    // If we can't read the manifest, fall back to the legacy nix-env path
+                    false
+                }
+            };
             if use_flakes {
                 match runner.run("nix", &["profile", "upgrade", ".*"]).await {
                     Ok(output) => UpdateResult::Success {
@@ -100,38 +114,27 @@ impl Backend for NixBackend {
     async fn count_available(&self) -> Result<usize, String> {
         if is_nixos() {
             if is_nixos_flake() {
-                // Copy flake.nix (and lock if present) to a temp dir and run
-                // `nix flake update` there.  This avoids needing root and does
-                // not touch /etc/nixos, while still fetching the latest input
-                // revisions from the network to produce an accurate count.
-                let tmpdir = std::env::temp_dir().join("up-nix-check");
-                let _ = tokio::fs::remove_dir_all(&tmpdir).await;
-                if tokio::fs::create_dir_all(&tmpdir).await.is_err()
-                    || tokio::fs::copy("/etc/nixos/flake.nix", tmpdir.join("flake.nix"))
-                        .await
-                        .is_err()
-                {
-                    return Err("Cannot read /etc/nixos/flake.nix".to_string());
-                }
-                // Bring the existing lock so nix can diff against it.
-                let _ = tokio::fs::copy("/etc/nixos/flake.lock", tmpdir.join("flake.lock")).await;
-                let result = tokio::process::Command::new("nix")
-                    .args(["flake", "update"])
-                    .current_dir(&tmpdir)
-                    .output()
-                    .await;
-                let _ = tokio::fs::remove_dir_all(&tmpdir).await;
-                match result {
-                    Ok(out) => {
-                        let stderr = String::from_utf8_lossy(&out.stderr);
-                        let count = stderr
-                            .lines()
-                            .filter(|l| l.contains("Updated input"))
-                            .count();
-                        Ok(count)
-                    }
-                    Err(e) => Err(format!("nix: {e}")),
-                }
+                // For flake-based NixOS: parse the lock file to count tracked inputs.
+                // This is read-only, requires no network, and has no side effects.
+                // We report the number of locked inputs as an informational count —
+                // a full freshness check would require a network fetch which belongs
+                // only in run_update.
+                let lock_content = tokio::fs::read_to_string("/etc/nixos/flake.lock")
+                    .await
+                    .map_err(|e| format!("Cannot read /etc/nixos/flake.lock: {e}"))?;
+                let lock: serde_json::Value = serde_json::from_str(&lock_content)
+                    .map_err(|e| format!("Cannot parse flake.lock: {e}"))?;
+                let count = lock
+                    .get("nodes")
+                    .and_then(|n| n.as_object())
+                    .map(|nodes| {
+                        nodes
+                            .values()
+                            .filter(|v| v.get("locked").is_some())
+                            .count()
+                    })
+                    .unwrap_or(0);
+                Ok(count)
             } else {
                 // Legacy NixOS channels have no unprivileged check mechanism.
                 Err("Click Update All to check".to_string())
