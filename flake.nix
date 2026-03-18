@@ -24,6 +24,8 @@
           nativeBuildInputs = with pkgs; [
             pkg-config
             wrapGAppsHook4
+            gtk4
+            hicolor-icon-theme
           ];
 
           buildInputs = with pkgs; [
@@ -40,6 +42,7 @@
               $out/share/metainfo/io.github.up.metainfo.xml
             install -Dm644 data/icons/hicolor/256x256/apps/io.github.up.png \
               $out/share/icons/hicolor/256x256/apps/io.github.up.png
+            gtk4-update-icon-cache -qtf $out/share/icons/hicolor
           '';
 
           meta = with pkgs.lib; {
