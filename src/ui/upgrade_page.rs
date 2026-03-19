@@ -70,7 +70,8 @@ impl UpgradePage {
             let config_label: String = match config_type {
                 upgrade::NixOsConfigType::Flake => {
                     let hostname = upgrade::detect_hostname();
-                    format!("Flake-based (/etc/nixos#{})", hostname)
+                    let safe_hostname = glib::markup_escape_text(&hostname);
+                    format!("Flake-based (/etc/nixos#{})", safe_hostname)
                 }
                 upgrade::NixOsConfigType::LegacyChannel => {
                     "Channel-based (/etc/nixos/configuration.nix)".to_string()

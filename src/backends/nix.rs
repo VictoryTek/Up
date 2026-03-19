@@ -22,6 +22,27 @@ fn nixos_hostname() -> String {
         .to_string()
 }
 
+/// Validates that a hostname is safe to use as a NixOS flake output attribute.
+/// Only ASCII alphanumeric, hyphen, and underscore are permitted.
+fn validate_hostname(hostname: &str) -> Result<&str, String> {
+    if hostname.is_empty() {
+        return Err("hostname is empty".to_string());
+    }
+    if hostname.len() > 63 {
+        return Err(format!(
+            "hostname is too long ({} chars, max 63)",
+            hostname.len()
+        ));
+    }
+    if !hostname
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(format!("Invalid hostname: {:?}", hostname));
+    }
+    Ok(hostname)
+}
+
 pub struct NixBackend;
 
 #[async_trait::async_trait]
@@ -50,15 +71,52 @@ impl Backend for NixBackend {
         if is_nixos() {
             if is_nixos_flake() {
                 // Flake-based NixOS: update the flake inputs then rebuild.
-                let hostname = nixos_hostname();
+                // Validate the hostname before use to prevent shell injection.
+                let raw_hostname = nixos_hostname();
+                let hostname = match validate_hostname(&raw_hostname) {
+                    Ok(h) => h,
+                    Err(e) => return UpdateResult::Error(e),
+                };
                 // Export the NixOS binary paths explicitly: pkexec resets PATH
                 // to standard directories that typically do not include Nix
-                // tooling on NixOS.
-                let cmd = format!(
-                    "export PATH=/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin:$PATH && cd /etc/nixos && nix flake update && nixos-rebuild switch --flake /etc/nixos#{}",
-                    hostname
-                );
-                match runner.run("pkexec", &["sh", "-c", &cmd]).await {
+                // tooling on NixOS. Use two separate runner.run() calls instead
+                // of sh -c to avoid shell injection.
+                //
+                // Call 1: update flake inputs, passing /etc/nixos as an argument.
+                if let Err(e) = runner
+                    .run(
+                        "pkexec",
+                        &[
+                            "env",
+                            "PATH=/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin",
+                            "nix",
+                            "--extra-experimental-features",
+                            "nix-command flakes",
+                            "flake",
+                            "update",
+                            "/etc/nixos",
+                        ],
+                    )
+                    .await
+                {
+                    return UpdateResult::Error(e);
+                }
+                // Call 2: rebuild the system with the validated flake path.
+                let flake_arg = format!("/etc/nixos#{}", hostname);
+                match runner
+                    .run(
+                        "pkexec",
+                        &[
+                            "env",
+                            "PATH=/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin",
+                            "nixos-rebuild",
+                            "switch",
+                            "--flake",
+                            &flake_arg,
+                        ],
+                    )
+                    .await
+                {
                     Ok(output) => UpdateResult::Success {
                         updated_count: output.lines().filter(|l| !l.is_empty()).count(),
                     },
