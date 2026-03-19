@@ -1,4 +1,5 @@
 use crate::backends::BackendKind;
+use log::{info, warn};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -19,6 +20,7 @@ impl CommandRunner {
     pub async fn run(&self, program: &str, args: &[&str]) -> Result<String, String> {
         let display_cmd = format!("{} {}", program, args.join(" "));
         self.send(format!("$ {display_cmd}")).await;
+        info!("Running: {} {:?}", program, args);
 
         let mut child = Command::new(program)
             .args(args)
@@ -75,6 +77,7 @@ impl CommandRunner {
             Ok(full_output)
         } else {
             let code = status.code().unwrap_or(-1);
+            warn!("{program} exited with code {code}");
             Err(format!("{program} exited with code {code}"))
         }
     }

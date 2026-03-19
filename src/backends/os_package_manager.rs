@@ -36,10 +36,10 @@ impl Backend for AptBackend {
     }
 
     async fn run_update(&self, runner: &CommandRunner) -> UpdateResult {
-        if let Err(e) = runner.run("pkexec", &["apt", "update"]).await {
+        if let Err(e) = runner.run("pkexec", &["env", "DEBIAN_FRONTEND=noninteractive", "apt", "update"]).await {
             return UpdateResult::Error(e);
         }
-        match runner.run("pkexec", &["apt", "upgrade", "-y"]).await {
+        match runner.run("pkexec", &["env", "DEBIAN_FRONTEND=noninteractive", "apt", "upgrade", "-y"]).await {
             Ok(output) => {
                 let count = count_apt_upgraded(&output);
                 UpdateResult::Success {

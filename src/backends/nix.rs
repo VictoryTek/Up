@@ -28,15 +28,15 @@ fn validate_hostname(hostname: &str) -> Result<&str, String> {
     if hostname.is_empty() {
         return Err("hostname is empty".to_string());
     }
-    if hostname.len() > 63 {
+    if hostname.len() > 253 {
         return Err(format!(
-            "hostname is too long ({} chars, max 63)",
+            "hostname is too long ({} chars, max 253)",
             hostname.len()
         ));
     }
     if !hostname
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
     {
         return Err(format!("Invalid hostname: {:?}", hostname));
     }
@@ -94,6 +94,7 @@ impl Backend for NixBackend {
                             "nix-command flakes",
                             "flake",
                             "update",
+                            "--flake",
                             "/etc/nixos",
                         ],
                     )

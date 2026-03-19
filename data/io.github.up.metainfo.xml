@@ -18,8 +18,8 @@
     <category>System</category>
     <category>PackageManager</category>
   </categories>
-  <url type="homepage">https://github.com/up-project/up</url>
-  <url type="bugtracker">https://github.com/up-project/up/issues</url>
+  <url type="homepage">https://github.com/user/up</url>
+  <url type="bugtracker">https://github.com/user/up/issues</url>
   <developer id="io.github.up-project.up">
     <name>Up Contributors</name>
   </developer>

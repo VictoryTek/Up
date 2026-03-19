@@ -1,3 +1,4 @@
+use log::{error, info};
 use std::path::Path;
 use std::process::Command;
 
@@ -6,14 +7,15 @@ use std::process::Command;
 /// the host systemd. Outside Flatpak, calls `systemctl reboot` directly.
 /// Uses `Command::spawn` (fire-and-forget) so the GTK loop is not blocked.
 pub fn reboot() {
+    info!("Reboot requested");
     if Path::new("/.flatpak-info").exists() {
         if let Err(e) = Command::new("flatpak-spawn")
             .args(["--host", "systemctl", "reboot"])
             .spawn()
         {
-            eprintln!("Failed to spawn reboot command: {e}");
+            error!("Failed to spawn reboot command: {e}");
         }
     } else if let Err(e) = Command::new("systemctl").arg("reboot").spawn() {
-        eprintln!("Failed to spawn reboot command: {e}");
+        error!("Failed to spawn reboot command: {e}");
     }
 }

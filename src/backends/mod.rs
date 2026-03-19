@@ -4,6 +4,7 @@ pub mod nix;
 pub mod os_package_manager;
 
 use crate::runner::CommandRunner;
+use log::info;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::Arc;
@@ -79,6 +80,10 @@ pub fn detect_backends() -> Vec<Arc<dyn Backend>> {
     // Nix
     if nix::is_available() {
         backends.push(Arc::new(nix::NixBackend));
+    }
+
+    for b in &backends {
+        info!("Backend detected: {}", b.display_name());
     }
 
     backends
