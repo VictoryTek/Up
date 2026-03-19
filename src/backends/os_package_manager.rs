@@ -1,5 +1,7 @@
 use crate::backends::{Backend, BackendKind, UpdateResult};
 use crate::runner::CommandRunner;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 /// Detect the OS package manager.
@@ -20,7 +22,6 @@ pub fn detect() -> Option<Arc<dyn Backend>> {
 // --- APT ---
 pub struct AptBackend;
 
-#[async_trait::async_trait]
 impl Backend for AptBackend {
     fn kind(&self) -> BackendKind {
         BackendKind::Apt
@@ -35,29 +36,33 @@ impl Backend for AptBackend {
         "system-software-install-symbolic"
     }
 
-    async fn run_update(&self, runner: &CommandRunner) -> UpdateResult {
-        if let Err(e) = runner.run("pkexec", &["env", "DEBIAN_FRONTEND=noninteractive", "apt", "update"]).await {
-            return UpdateResult::Error(e);
-        }
-        match runner.run("pkexec", &["env", "DEBIAN_FRONTEND=noninteractive", "apt", "upgrade", "-y"]).await {
-            Ok(output) => {
-                let count = count_apt_upgraded(&output);
-                UpdateResult::Success {
-                    updated_count: count,
-                }
+    fn run_update<'a>(&'a self, runner: &'a CommandRunner) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            if let Err(e) = runner.run("pkexec", &["env", "DEBIAN_FRONTEND=noninteractive", "apt", "update"]).await {
+                return UpdateResult::Error(e);
             }
-            Err(e) => UpdateResult::Error(e),
-        }
+            match runner.run("pkexec", &["env", "DEBIAN_FRONTEND=noninteractive", "apt", "upgrade", "-y"]).await {
+                Ok(output) => {
+                    let count = count_apt_upgraded(&output);
+                    UpdateResult::Success {
+                        updated_count: count,
+                    }
+                }
+                Err(e) => UpdateResult::Error(e),
+            }
+        })
     }
 
-    async fn count_available(&self) -> Result<usize, String> {
-        let out = tokio::process::Command::new("apt")
-            .args(["list", "--upgradable"])
-            .output()
-            .await
-            .map_err(|e| e.to_string())?;
-        let text = String::from_utf8_lossy(&out.stdout);
-        Ok(text.lines().filter(|l| l.contains('/')).count())
+    fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
+        Box::pin(async move {
+            let out = tokio::process::Command::new("apt")
+                .args(["list", "--upgradable"])
+                .output()
+                .await
+                .map_err(|e| e.to_string())?;
+            let text = String::from_utf8_lossy(&out.stdout);
+            Ok(text.lines().filter(|l| l.contains('/')).count())
+        })
     }
 }
 
@@ -78,7 +83,6 @@ fn count_apt_upgraded(output: &str) -> usize {
 // --- DNF ---
 pub struct DnfBackend;
 
-#[async_trait::async_trait]
 impl Backend for DnfBackend {
     fn kind(&self) -> BackendKind {
         BackendKind::Dnf
@@ -93,33 +97,37 @@ impl Backend for DnfBackend {
         "system-software-install-symbolic"
     }
 
-    async fn run_update(&self, runner: &CommandRunner) -> UpdateResult {
-        match runner.run("pkexec", &["dnf", "upgrade", "-y"]).await {
-            Ok(output) => {
-                let count = count_dnf_upgraded(&output);
-                UpdateResult::Success {
-                    updated_count: count,
+    fn run_update<'a>(&'a self, runner: &'a CommandRunner) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            match runner.run("pkexec", &["dnf", "upgrade", "-y"]).await {
+                Ok(output) => {
+                    let count = count_dnf_upgraded(&output);
+                    UpdateResult::Success {
+                        updated_count: count,
+                    }
                 }
+                Err(e) => UpdateResult::Error(e),
             }
-            Err(e) => UpdateResult::Error(e),
-        }
+        })
     }
 
-    async fn count_available(&self) -> Result<usize, String> {
-        let out = tokio::process::Command::new("dnf")
-            .args(["check-update"])
-            .output()
-            .await
-            .map_err(|e| e.to_string())?;
-        if out.status.code() == Some(0) {
-            return Ok(0);
-        }
-        let text = String::from_utf8_lossy(&out.stdout);
-        let count = text
-            .lines()
-            .filter(|l| !l.is_empty() && !l.starts_with("Last") && !l.starts_with("Obsoleting"))
-            .count();
-        Ok(count)
+    fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
+        Box::pin(async move {
+            let out = tokio::process::Command::new("dnf")
+                .args(["check-update"])
+                .output()
+                .await
+                .map_err(|e| e.to_string())?;
+            if out.status.code() == Some(0) {
+                return Ok(0);
+            }
+            let text = String::from_utf8_lossy(&out.stdout);
+            let count = text
+                .lines()
+                .filter(|l| !l.is_empty() && !l.starts_with("Last") && !l.starts_with("Obsoleting"))
+                .count();
+            Ok(count)
+        })
     }
 }
 
@@ -142,7 +150,6 @@ fn count_dnf_upgraded(output: &str) -> usize {
 // --- Pacman ---
 pub struct PacmanBackend;
 
-#[async_trait::async_trait]
 impl Backend for PacmanBackend {
     fn kind(&self) -> BackendKind {
         BackendKind::Pacman
@@ -157,39 +164,42 @@ impl Backend for PacmanBackend {
         "system-software-install-symbolic"
     }
 
-    async fn run_update(&self, runner: &CommandRunner) -> UpdateResult {
-        match runner
-            .run("pkexec", &["pacman", "-Syu", "--noconfirm"])
-            .await
-        {
-            Ok(output) => {
-                let count = output
-                    .lines()
-                    .filter(|l| l.starts_with("upgrading ") || l.starts_with("installing "))
-                    .count();
-                UpdateResult::Success {
-                    updated_count: count,
+    fn run_update<'a>(&'a self, runner: &'a CommandRunner) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            match runner
+                .run("pkexec", &["pacman", "-Syu", "--noconfirm"])
+                .await
+            {
+                Ok(output) => {
+                    let count = output
+                        .lines()
+                        .filter(|l| l.starts_with("upgrading ") || l.starts_with("installing "))
+                        .count();
+                    UpdateResult::Success {
+                        updated_count: count,
+                    }
                 }
+                Err(e) => UpdateResult::Error(e),
             }
-            Err(e) => UpdateResult::Error(e),
-        }
+        })
     }
 
-    async fn count_available(&self) -> Result<usize, String> {
-        let out = tokio::process::Command::new("pacman")
-            .args(["-Qu"])
-            .output()
-            .await
-            .map_err(|e| e.to_string())?;
-        let text = String::from_utf8_lossy(&out.stdout);
-        Ok(text.lines().filter(|l| !l.is_empty()).count())
+    fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
+        Box::pin(async move {
+            let out = tokio::process::Command::new("pacman")
+                .args(["-Qu"])
+                .output()
+                .await
+                .map_err(|e| e.to_string())?;
+            let text = String::from_utf8_lossy(&out.stdout);
+            Ok(text.lines().filter(|l| !l.is_empty()).count())
+        })
     }
 }
 
 // --- Zypper ---
 pub struct ZypperBackend;
 
-#[async_trait::async_trait]
 impl Backend for ZypperBackend {
     fn kind(&self) -> BackendKind {
         BackendKind::Zypper
@@ -204,28 +214,32 @@ impl Backend for ZypperBackend {
         "system-software-install-symbolic"
     }
 
-    async fn run_update(&self, runner: &CommandRunner) -> UpdateResult {
-        if let Err(e) = runner.run("pkexec", &["zypper", "refresh"]).await {
-            return UpdateResult::Error(e);
-        }
-        match runner.run("pkexec", &["zypper", "update", "-y"]).await {
-            Ok(output) => {
-                let count = output.lines().filter(|l| l.contains("done")).count();
-                UpdateResult::Success {
-                    updated_count: count,
-                }
+    fn run_update<'a>(&'a self, runner: &'a CommandRunner) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            if let Err(e) = runner.run("pkexec", &["zypper", "refresh"]).await {
+                return UpdateResult::Error(e);
             }
-            Err(e) => UpdateResult::Error(e),
-        }
+            match runner.run("pkexec", &["zypper", "update", "-y"]).await {
+                Ok(output) => {
+                    let count = output.lines().filter(|l| l.contains("done")).count();
+                    UpdateResult::Success {
+                        updated_count: count,
+                    }
+                }
+                Err(e) => UpdateResult::Error(e),
+            }
+        })
     }
 
-    async fn count_available(&self) -> Result<usize, String> {
-        let out = tokio::process::Command::new("zypper")
-            .args(["list-updates"])
-            .output()
-            .await
-            .map_err(|e| e.to_string())?;
-        let text = String::from_utf8_lossy(&out.stdout);
-        Ok(text.lines().filter(|l| l.starts_with("v ")).count())
+    fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
+        Box::pin(async move {
+            let out = tokio::process::Command::new("zypper")
+                .args(["list-updates"])
+                .output()
+                .await
+                .map_err(|e| e.to_string())?;
+            let text = String::from_utf8_lossy(&out.stdout);
+            Ok(text.lines().filter(|l| l.starts_with("v ")).count())
+        })
     }
 }

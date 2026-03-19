@@ -289,6 +289,7 @@ impl UpgradePage {
                             }
                         }
                         CheckMsg::Error(e) => {
+                            all_passed = false;
                             log_ref.append_line(&format!("Error: {e}"));
                         }
                     }

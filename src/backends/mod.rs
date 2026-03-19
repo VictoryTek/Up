@@ -7,6 +7,8 @@ use crate::runner::CommandRunner;
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,20 +43,19 @@ pub enum UpdateResult {
     Skipped(String),
 }
 
-#[async_trait::async_trait]
 pub trait Backend: Send + Sync {
     fn kind(&self) -> BackendKind;
     fn display_name(&self) -> &str;
     fn description(&self) -> &str;
     fn icon_name(&self) -> &str;
 
-    async fn run_update(&self, runner: &CommandRunner) -> UpdateResult;
+    fn run_update<'a>(&'a self, runner: &'a CommandRunner) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>>;
 
     /// Count packages available for update (read-only, no privilege required).
     /// Returns Ok(0) if up to date, Ok(N) if N updates available, Err(_) on failure.
     /// Default implementation returns Ok(0) for backends that do not support checking.
-    async fn count_available(&self) -> Result<usize, String> {
-        Ok(0)
+    fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
+        Box::pin(async { Ok(0) })
     }
 }
 
