@@ -40,6 +40,31 @@ pub fn detect_hostname() -> String {
         .to_string()
 }
 
+/// Validates that a hostname contains only characters safe for use as a NixOS
+/// flake output attribute (`[a-zA-Z0-9\-_.]`).
+///
+/// This mirrors the identical guard in `src/backends/nix.rs`. Both upgrade
+/// paths that embed a hostname in `/etc/nixos#<hostname>` must apply this
+/// check before constructing the flake reference.
+fn validate_hostname(hostname: &str) -> Result<&str, String> {
+    if hostname.is_empty() {
+        return Err("hostname is empty".to_string());
+    }
+    if hostname.len() > 253 {
+        return Err(format!(
+            "hostname is too long ({} chars, max 253)",
+            hostname.len()
+        ));
+    }
+    if !hostname
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(format!("Invalid hostname: {:?}", hostname));
+    }
+    Ok(hostname)
+}
+
 /// Parse /etc/os-release to detect the current distro.
 pub fn detect_distro() -> DistroInfo {
     let os_release = fs::read_to_string("/etc/os-release").unwrap_or_default();
@@ -353,7 +378,7 @@ pub fn execute_upgrade(distro: &DistroInfo, tx: &async_channel::Sender<String>) 
 fn upgrade_ubuntu(tx: &async_channel::Sender<String>) -> bool {
     let _ = tx.send_blocking("Running: do-release-upgrade -f DistUpgradeViewNonInteractive".into());
 
-    run_streaming_command(
+    crate::runner::run_command_sync(
         "pkexec",
         &["do-release-upgrade", "-f", "DistUpgradeViewNonInteractive"],
         tx,
@@ -363,7 +388,7 @@ fn upgrade_ubuntu(tx: &async_channel::Sender<String>) -> bool {
 fn upgrade_fedora(tx: &async_channel::Sender<String>) -> bool {
     // Step 1: Install upgrade plugin
     let _ = tx.send_blocking("Installing system-upgrade plugin...".into());
-    if !run_streaming_command(
+    if !crate::runner::run_command_sync(
         "pkexec",
         &["dnf", "install", "-y", "dnf-plugin-system-upgrade"],
         tx,
@@ -385,7 +410,7 @@ fn upgrade_fedora(tx: &async_channel::Sender<String>) -> bool {
         }
     };
     let ver_str = next_version.to_string();
-    if !run_streaming_command(
+    if !crate::runner::run_command_sync(
         "pkexec",
         &[
             "dnf",
@@ -403,12 +428,12 @@ fn upgrade_fedora(tx: &async_channel::Sender<String>) -> bool {
     // Step 3: Trigger reboot into upgrade
     let _ =
         tx.send_blocking("Download complete. The system will reboot to apply the upgrade.".into());
-    run_streaming_command("pkexec", &["dnf", "system-upgrade", "reboot"], tx)
+    crate::runner::run_command_sync("pkexec", &["dnf", "system-upgrade", "reboot"], tx)
 }
 
 fn upgrade_opensuse(tx: &async_channel::Sender<String>) -> bool {
     let _ = tx.send_blocking("Running zypper distribution upgrade...".into());
-    run_streaming_command("pkexec", &["zypper", "dup", "-y"], tx)
+    crate::runner::run_command_sync("pkexec", &["zypper", "dup", "-y"], tx)
 }
 
 fn upgrade_nixos(tx: &async_channel::Sender<String>) -> bool {
@@ -421,23 +446,34 @@ fn upgrade_nixos(tx: &async_channel::Sender<String>) -> bool {
             let _ = tx.send_blocking("Detected: legacy channel-based NixOS config".into());
             let _ = tx.send_blocking("Updating NixOS channel...".into());
             let cmd = format!("{NIX_PATH_EXPORT} && nix-channel --update");
-            if !run_streaming_command("pkexec", &["sh", "-c", &cmd], tx) {
+            if !crate::runner::run_command_sync("pkexec", &["sh", "-c", &cmd], tx) {
                 return false;
             }
             let _ = tx.send_blocking("Rebuilding NixOS (switch --upgrade)...".into());
-            run_streaming_command("pkexec", &["nixos-rebuild", "switch", "--upgrade"], tx)
+            crate::runner::run_command_sync("pkexec", &["nixos-rebuild", "switch", "--upgrade"], tx)
         }
         NixOsConfigType::Flake => {
             let _ = tx.send_blocking("Detected: flake-based NixOS config".into());
             let _ = tx.send_blocking("Updating flake inputs in /etc/nixos...".into());
             let cmd = format!("{NIX_PATH_EXPORT} && nix flake update --flake /etc/nixos");
-            if !run_streaming_command("pkexec", &["sh", "-c", &cmd], tx) {
+            if !crate::runner::run_command_sync("pkexec", &["sh", "-c", &cmd], tx) {
                 return false;
             }
-            let hostname = detect_hostname();
+            // Validate before embedding in the Nix flake URL. An unvalidated hostname
+            // containing '#', '?', spaces, or control characters can confuse
+            // nixos-rebuild's flake-reference parser and may cause an incorrect rebuild
+            // or a cryptic failure. This mirrors the identical guard in nix.rs.
+            let raw_hostname = detect_hostname();
+            let hostname = match validate_hostname(&raw_hostname) {
+                Ok(h) => h,
+                Err(e) => {
+                    let _ = tx.send_blocking(format!("Upgrade aborted: {e}"));
+                    return false;
+                }
+            };
             let flake_target = format!("/etc/nixos#{}", hostname);
             let _ = tx.send_blocking(format!("Rebuilding NixOS configuration: {flake_target}"));
-            run_streaming_command(
+            crate::runner::run_command_sync(
                 "pkexec",
                 &["nixos-rebuild", "switch", "--flake", &flake_target],
                 tx,
@@ -488,70 +524,40 @@ fn detect_next_fedora_version() -> Option<u32> {
     None
 }
 
-fn run_streaming_command(program: &str, args: &[&str], tx: &async_channel::Sender<String>) -> bool {
-    use std::io::{BufRead, BufReader};
-    use std::process::Stdio;
+#[cfg(test)]
+mod tests {
+    use super::validate_hostname;
 
-    let result = Command::new(program)
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
+    #[test]
+    fn validate_hostname_rejects_dangerous_input() {
+        // Empty
+        assert!(validate_hostname("").is_err());
+        // Too long (254 chars)
+        assert!(validate_hostname(&"a".repeat(254)).is_err());
+        // '#' splits the Nix flake attribute path
+        assert!(validate_hostname("host#evil").is_err());
+        // '?' is parsed as a Nix flake URL query parameter
+        assert!(validate_hostname("host?url=override").is_err());
+        // Space is not valid in a flake attr path
+        assert!(validate_hostname("my host").is_err());
+        // NUL byte
+        assert!(validate_hostname("host\x00name").is_err());
+        // Newline
+        assert!(validate_hostname("host\nmalicious").is_err());
+        // Shell metacharacters (defense in depth)
+        assert!(validate_hostname("host;id").is_err());
+    }
 
-    match result {
-        Ok(mut child) => {
-            // Drain stdout and stderr concurrently on separate threads to prevent
-            // pipe-buffer deadlock. If one pipe fills its kernel buffer (~64 KiB)
-            // while the parent is draining the other, the child blocks and neither
-            // pipe ever reaches EOF — causing the parent to hang indefinitely.
-            let stdout_pipe = child.stdout.take();
-            let stderr_pipe = child.stderr.take();
-
-            let tx_stdout = tx.clone();
-            let stdout_thread = std::thread::spawn(move || {
-                if let Some(pipe) = stdout_pipe {
-                    let reader = BufReader::new(pipe);
-                    for line in reader.lines().map_while(Result::ok) {
-                        let _ = tx_stdout.send_blocking(line);
-                    }
-                }
-            });
-
-            let tx_stderr = tx.clone();
-            let stderr_thread = std::thread::spawn(move || {
-                if let Some(pipe) = stderr_pipe {
-                    let reader = BufReader::new(pipe);
-                    for line in reader.lines().map_while(Result::ok) {
-                        let _ = tx_stderr.send_blocking(format!("stderr: {line}"));
-                    }
-                }
-            });
-
-            // Wait for both drain threads before calling child.wait(), so the
-            // child's pipes are fully consumed before we reap the process.
-            let _ = stdout_thread.join();
-            let _ = stderr_thread.join();
-
-            match child.wait() {
-                Ok(status) => {
-                    if status.success() {
-                        let _ = tx.send_blocking("Command completed successfully.".into());
-                        true
-                    } else {
-                        let code = status.code().unwrap_or(-1);
-                        let _ = tx.send_blocking(format!("Command exited with code {code}"));
-                        false
-                    }
-                }
-                Err(e) => {
-                    let _ = tx.send_blocking(format!("Failed to wait for process: {e}"));
-                    false
-                }
-            }
-        }
-        Err(e) => {
-            let _ = tx.send_blocking(format!("Failed to start {program}: {e}"));
-            false
-        }
+    #[test]
+    fn validate_hostname_accepts_valid_input() {
+        assert!(validate_hostname("nixos").is_ok());
+        assert!(validate_hostname("my-server").is_ok());
+        assert!(validate_hostname("server1.local").is_ok());
+        assert!(validate_hostname("MY_SERVER_42").is_ok());
+        // Underscore is common in NixOS hostnames
+        assert!(validate_hostname("my_host").is_ok());
+        assert!(validate_hostname("a").is_ok());
+        // Exactly 253 chars — boundary must pass
+        assert!(validate_hostname(&"a".repeat(253)).is_ok());
     }
 }
