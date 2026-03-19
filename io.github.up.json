@@ -13,8 +13,10 @@
         "--socket=wayland",
         "--talk-name=org.freedesktop.Flatpak",
         "--talk-name=org.freedesktop.PolicyKit1",
-        "--filesystem=host:ro",
-        "--talk-name=org.freedesktop.PackageKit"
+        "--filesystem=/etc/os-release:ro",
+        "--filesystem=/etc/nixos:ro",
+        "--filesystem=~/.nix-profile:ro",
+        "--filesystem=/usr:ro"
     ],
     "build-options": {
         "append-path": "/usr/lib/sdk/rust-stable/bin",

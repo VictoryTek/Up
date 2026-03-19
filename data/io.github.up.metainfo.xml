@@ -20,6 +20,9 @@
   </categories>
   <url type="homepage">https://github.com/user/up</url>
   <url type="bugtracker">https://github.com/user/up/issues</url>
+  <developer id="io.github.up-project.up">
+    <name>Up Contributors</name>
+  </developer>
   <launchable type="desktop-id">io.github.up.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>

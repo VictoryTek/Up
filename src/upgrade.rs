@@ -40,6 +40,31 @@ pub fn detect_hostname() -> String {
         .to_string()
 }
 
+/// Validates that a hostname contains only characters safe for use as a NixOS
+/// flake output attribute (`[a-zA-Z0-9\-_.]`).
+///
+/// This mirrors the identical guard in `src/backends/nix.rs`. Both upgrade
+/// paths that embed a hostname in `/etc/nixos#<hostname>` must apply this
+/// check before constructing the flake reference.
+fn validate_hostname(hostname: &str) -> Result<&str, String> {
+    if hostname.is_empty() {
+        return Err("hostname is empty".to_string());
+    }
+    if hostname.len() > 253 {
+        return Err(format!(
+            "hostname is too long ({} chars, max 253)",
+            hostname.len()
+        ));
+    }
+    if !hostname
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(format!("Invalid hostname: {:?}", hostname));
+    }
+    Ok(hostname)
+}
+
 /// Parse /etc/os-release to detect the current distro.
 pub fn detect_distro() -> DistroInfo {
     let os_release = fs::read_to_string("/etc/os-release").unwrap_or_default();
@@ -152,7 +177,12 @@ fn check_packages_up_to_date(distro: &DistroInfo) -> CheckResult {
                 .filter(|l| !l.is_empty() && !l.starts_with("Listing"))
                 .count();
 
-            if upgradable == 0 || output.status.success() {
+            // `apt list --upgradable` always exits with code 0 regardless of
+            // whether updates are pending; `output.status.success()` is therefore
+            // always true for APT and must NOT be used as the pass condition.
+            // The correct indicator for all supported tools (APT, DNF, Zypper)
+            // is whether any package lines appear in their output.
+            if upgradable == 0 {
                 CheckResult {
                     name: "All packages up to date".into(),
                     passed: true,
@@ -348,7 +378,7 @@ pub fn execute_upgrade(distro: &DistroInfo, tx: &async_channel::Sender<String>) 
 fn upgrade_ubuntu(tx: &async_channel::Sender<String>) -> bool {
     let _ = tx.send_blocking("Running: do-release-upgrade -f DistUpgradeViewNonInteractive".into());
 
-    run_streaming_command(
+    crate::runner::run_command_sync(
         "pkexec",
         &["do-release-upgrade", "-f", "DistUpgradeViewNonInteractive"],
         tx,
@@ -358,7 +388,7 @@ fn upgrade_ubuntu(tx: &async_channel::Sender<String>) -> bool {
 fn upgrade_fedora(tx: &async_channel::Sender<String>) -> bool {
     // Step 1: Install upgrade plugin
     let _ = tx.send_blocking("Installing system-upgrade plugin...".into());
-    if !run_streaming_command(
+    if !crate::runner::run_command_sync(
         "pkexec",
         &["dnf", "install", "-y", "dnf-plugin-system-upgrade"],
         tx,
@@ -370,9 +400,17 @@ fn upgrade_fedora(tx: &async_channel::Sender<String>) -> bool {
     let _ = tx.send_blocking("Downloading upgrade packages...".into());
 
     // Detect next version
-    let next_version = detect_next_fedora_version();
+    let next_version = match detect_next_fedora_version() {
+        Some(v) => v,
+        None => {
+            let _ = tx.send_blocking(
+                "Error: Could not detect current Fedora version. Aborting upgrade.".into(),
+            );
+            return false;
+        }
+    };
     let ver_str = next_version.to_string();
-    if !run_streaming_command(
+    if !crate::runner::run_command_sync(
         "pkexec",
         &[
             "dnf",
@@ -390,40 +428,52 @@ fn upgrade_fedora(tx: &async_channel::Sender<String>) -> bool {
     // Step 3: Trigger reboot into upgrade
     let _ =
         tx.send_blocking("Download complete. The system will reboot to apply the upgrade.".into());
-    run_streaming_command("pkexec", &["dnf", "system-upgrade", "reboot"], tx)
+    crate::runner::run_command_sync("pkexec", &["dnf", "system-upgrade", "reboot"], tx)
 }
 
 fn upgrade_opensuse(tx: &async_channel::Sender<String>) -> bool {
     let _ = tx.send_blocking("Running zypper distribution upgrade...".into());
-    run_streaming_command("pkexec", &["zypper", "dup", "-y"], tx)
+    crate::runner::run_command_sync("pkexec", &["zypper", "dup", "-y"], tx)
 }
 
 fn upgrade_nixos(tx: &async_channel::Sender<String>) -> bool {
+    // pkexec resets PATH, excluding NixOS tooling; export the required paths explicitly.
+    const NIX_PATH_EXPORT: &str =
+        "export PATH=/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin:$PATH";
     let config_type = detect_nixos_config_type();
     match config_type {
         NixOsConfigType::LegacyChannel => {
             let _ = tx.send_blocking("Detected: legacy channel-based NixOS config".into());
             let _ = tx.send_blocking("Updating NixOS channel...".into());
-            if !run_streaming_command("sudo", &["nix-channel", "--update"], tx) {
+            let cmd = format!("{NIX_PATH_EXPORT} && nix-channel --update");
+            if !crate::runner::run_command_sync("pkexec", &["sh", "-c", &cmd], tx) {
                 return false;
             }
             let _ = tx.send_blocking("Rebuilding NixOS (switch --upgrade)...".into());
-            run_streaming_command("pkexec", &["nixos-rebuild", "switch", "--upgrade"], tx)
+            crate::runner::run_command_sync("pkexec", &["nixos-rebuild", "switch", "--upgrade"], tx)
         }
         NixOsConfigType::Flake => {
             let _ = tx.send_blocking("Detected: flake-based NixOS config".into());
             let _ = tx.send_blocking("Updating flake inputs in /etc/nixos...".into());
-            if !run_streaming_command(
-                "sudo",
-                &["nix", "flake", "update", "--flake", "/etc/nixos"],
-                tx,
-            ) {
+            let cmd = format!("{NIX_PATH_EXPORT} && nix flake update --flake /etc/nixos");
+            if !crate::runner::run_command_sync("pkexec", &["sh", "-c", &cmd], tx) {
                 return false;
             }
-            let hostname = detect_hostname();
+            // Validate before embedding in the Nix flake URL. An unvalidated hostname
+            // containing '#', '?', spaces, or control characters can confuse
+            // nixos-rebuild's flake-reference parser and may cause an incorrect rebuild
+            // or a cryptic failure. This mirrors the identical guard in nix.rs.
+            let raw_hostname = detect_hostname();
+            let hostname = match validate_hostname(&raw_hostname) {
+                Ok(h) => h,
+                Err(e) => {
+                    let _ = tx.send_blocking(format!("Upgrade aborted: {e}"));
+                    return false;
+                }
+            };
             let flake_target = format!("/etc/nixos#{}", hostname);
             let _ = tx.send_blocking(format!("Rebuilding NixOS configuration: {flake_target}"));
-            run_streaming_command(
+            crate::runner::run_command_sync(
                 "pkexec",
                 &["nixos-rebuild", "switch", "--flake", &flake_target],
                 tx,
@@ -448,67 +498,66 @@ fn check_nixos_rebuild_available() -> CheckResult {
     }
 }
 
-fn detect_next_fedora_version() -> u32 {
-    let output = Command::new("rpm").args(["-E", "%fedora"]).output().ok();
-
-    if let Some(out) = output {
-        let current: u32 = String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .parse()
-            .unwrap_or(0);
-        current + 1
-    } else {
-        // Fallback to a reasonable version
-        41
+fn detect_next_fedora_version() -> Option<u32> {
+    // Primary: rpm macro (most accurate on Fedora)
+    if let Ok(output) = Command::new("rpm").args(["-E", "%fedora"]).output() {
+        let s = String::from_utf8_lossy(&output.stdout);
+        let trimmed = s.trim();
+        // Only accept it if it looks like a plain number (not the unexpanded macro "%fedora")
+        if !trimmed.starts_with('%') {
+            if let Ok(n) = trimmed.parse::<u32>() {
+                return Some(n + 1);
+            }
+        }
     }
+    // Fallback: parse VERSION_ID from /etc/os-release
+    if let Ok(content) = std::fs::read_to_string("/etc/os-release") {
+        for line in content.lines() {
+            if let Some(val) = line.strip_prefix("VERSION_ID=") {
+                let val = val.trim_matches('"');
+                if let Ok(n) = val.parse::<u32>() {
+                    return Some(n + 1);
+                }
+            }
+        }
+    }
+    None
 }
 
-fn run_streaming_command(program: &str, args: &[&str], tx: &async_channel::Sender<String>) -> bool {
-    use std::io::{BufRead, BufReader};
-    use std::process::Stdio;
+#[cfg(test)]
+mod tests {
+    use super::validate_hostname;
 
-    let result = Command::new(program)
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
+    #[test]
+    fn validate_hostname_rejects_dangerous_input() {
+        // Empty
+        assert!(validate_hostname("").is_err());
+        // Too long (254 chars)
+        assert!(validate_hostname(&"a".repeat(254)).is_err());
+        // '#' splits the Nix flake attribute path
+        assert!(validate_hostname("host#evil").is_err());
+        // '?' is parsed as a Nix flake URL query parameter
+        assert!(validate_hostname("host?url=override").is_err());
+        // Space is not valid in a flake attr path
+        assert!(validate_hostname("my host").is_err());
+        // NUL byte
+        assert!(validate_hostname("host\x00name").is_err());
+        // Newline
+        assert!(validate_hostname("host\nmalicious").is_err());
+        // Shell metacharacters (defense in depth)
+        assert!(validate_hostname("host;id").is_err());
+    }
 
-    match result {
-        Ok(mut child) => {
-            if let Some(stdout) = child.stdout.take() {
-                let reader = BufReader::new(stdout);
-                for line in reader.lines().map_while(Result::ok) {
-                    let _ = tx.send_blocking(line);
-                }
-            }
-
-            if let Some(stderr) = child.stderr.take() {
-                let reader = BufReader::new(stderr);
-                for line in reader.lines().map_while(Result::ok) {
-                    let _ = tx.send_blocking(format!("stderr: {line}"));
-                }
-            }
-
-            match child.wait() {
-                Ok(status) => {
-                    if status.success() {
-                        let _ = tx.send_blocking("Command completed successfully.".into());
-                        true
-                    } else {
-                        let code = status.code().unwrap_or(-1);
-                        let _ = tx.send_blocking(format!("Command exited with code {code}"));
-                        false
-                    }
-                }
-                Err(e) => {
-                    let _ = tx.send_blocking(format!("Failed to wait for process: {e}"));
-                    false
-                }
-            }
-        }
-        Err(e) => {
-            let _ = tx.send_blocking(format!("Failed to start {program}: {e}"));
-            false
-        }
+    #[test]
+    fn validate_hostname_accepts_valid_input() {
+        assert!(validate_hostname("nixos").is_ok());
+        assert!(validate_hostname("my-server").is_ok());
+        assert!(validate_hostname("server1.local").is_ok());
+        assert!(validate_hostname("MY_SERVER_42").is_ok());
+        // Underscore is common in NixOS hostnames
+        assert!(validate_hostname("my_host").is_ok());
+        assert!(validate_hostname("a").is_ok());
+        // Exactly 253 chars — boundary must pass
+        assert!(validate_hostname(&"a".repeat(253)).is_ok());
     }
 }

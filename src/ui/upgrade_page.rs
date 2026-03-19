@@ -6,6 +6,16 @@ use std::rc::Rc;
 use crate::ui::log_panel::LogPanel;
 use crate::upgrade;
 
+#[allow(dead_code)]
+enum CheckMsg {
+    /// A plain log line to display in the terminal output panel.
+    Log(String),
+    /// Structured results from all prerequisite checks.
+    Results(Vec<upgrade::CheckResult>),
+    /// A fatal error that prevented checks from completing.
+    Error(String),
+}
+
 pub struct UpgradePage;
 
 impl UpgradePage {
@@ -70,7 +80,8 @@ impl UpgradePage {
             let config_label: String = match config_type {
                 upgrade::NixOsConfigType::Flake => {
                     let hostname = upgrade::detect_hostname();
-                    format!("Flake-based (/etc/nixos#{})", hostname)
+                    let safe_hostname = glib::markup_escape_text(&hostname);
+                    format!("Flake-based (/etc/nixos#{})", safe_hostname)
                 }
                 upgrade::NixOsConfigType::LegacyChannel => {
                     "Channel-based (/etc/nixos/configuration.nix)".to_string()
@@ -151,6 +162,8 @@ impl UpgradePage {
         // Tracks whether a distro upgrade is actually available.
         // The Start Upgrade button must not be enabled unless this is true.
         let upgrade_available: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+        // Tracks whether all prerequisite checks have passed.
+        let all_checks_passed: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
 
         // Spawn async task to check upgrade availability now that the button exists.
         if distro_info.upgrade_supported {
@@ -193,6 +206,23 @@ impl UpgradePage {
             .build();
         content_box.append(&backup_check);
 
+        // Wire the backup checkbox once (unconditional) so it doesn't accumulate signal handlers.
+        {
+            let upgrade_btn_toggled = upgrade_button.clone();
+            let all_checks_passed_toggled = all_checks_passed.clone();
+            let upgrade_available_toggled = upgrade_available.clone();
+            backup_check.connect_toggled(move |check| {
+                if check.is_active()
+                    && *all_checks_passed_toggled.borrow()
+                    && *upgrade_available_toggled.borrow()
+                {
+                    upgrade_btn_toggled.set_sensitive(true);
+                } else {
+                    upgrade_btn_toggled.set_sensitive(false);
+                }
+            });
+        }
+
         // Wire up check button
         let check_rows_clone = check_rows.clone();
         let check_icons_clone = check_icons.clone();
@@ -201,7 +231,7 @@ impl UpgradePage {
         let backup_clone = backup_check.clone();
         let distro_clone = distro_info.clone();
         let upgrade_available_clone = upgrade_available.clone();
-
+        let all_checks_passed_clone = all_checks_passed.clone();
         check_button.connect_clicked(move |button| {
             button.set_sensitive(false);
             log_clone.clear();
@@ -214,28 +244,34 @@ impl UpgradePage {
             let backup_ref = backup_clone.clone();
             let distro = distro_clone.clone();
             let upgrade_available_ref = upgrade_available_clone.clone();
+            let all_checks_passed_ref = all_checks_passed_clone.clone();
 
             glib::spawn_future_local(async move {
-                let (tx, rx) = async_channel::unbounded::<String>();
+                let (check_tx, check_rx) = async_channel::unbounded::<CheckMsg>();
 
-                let tx_clone = tx.clone();
+                let check_tx_clone = check_tx.clone();
                 let distro_thread = distro.clone();
 
                 std::thread::spawn(move || {
-                    let results = upgrade::run_prerequisite_checks(&distro_thread, &tx_clone);
-                    // Send results as serialized
-                    let json = serde_json::to_string(&results).unwrap_or_default();
-                    let _ = tx_clone.send_blocking(format!("__RESULTS__:{json}"));
-                    drop(tx_clone);
+                    let (bridge_tx, bridge_rx) = async_channel::unbounded::<String>();
+                    let results = upgrade::run_prerequisite_checks(&distro_thread, &bridge_tx);
+                    drop(bridge_tx);
+                    while let Ok(line) = bridge_rx.recv_blocking() {
+                        let _ = check_tx_clone.send_blocking(CheckMsg::Log(line));
+                    }
+                    let _ = check_tx_clone.send_blocking(CheckMsg::Results(results));
+                    drop(check_tx_clone);
                 });
 
-                drop(tx);
+                drop(check_tx);
 
                 let mut all_passed = true;
-                while let Ok(msg) = rx.recv().await {
-                    if let Some(json) = msg.strip_prefix("__RESULTS__:") {
-                        if let Ok(results) = serde_json::from_str::<Vec<upgrade::CheckResult>>(json)
-                        {
+                while let Ok(msg) = check_rx.recv().await {
+                    match msg {
+                        CheckMsg::Log(line) => {
+                            log_ref.append_line(&line);
+                        }
+                        CheckMsg::Results(results) => {
                             let rows = check_rows_ref.borrow();
                             let icons = check_icons_ref.borrow();
                             for (i, result) in results.iter().enumerate() {
@@ -252,27 +288,19 @@ impl UpgradePage {
                                 }
                             }
                         }
-                    } else {
-                        log_ref.append_line(&msg);
+                        CheckMsg::Error(e) => {
+                            all_passed = false;
+                            log_ref.append_line(&format!("Error: {e}"));
+                        }
                     }
                 }
 
-                let upgrade_is_available = *upgrade_available_ref.borrow();
-                if all_passed && upgrade_is_available {
-                    // Enable upgrade button only if backup is confirmed
-                    let upgrade_ref2 = upgrade_ref.clone();
-                    let upgrade_available_ref2 = upgrade_available_ref.clone();
-                    backup_ref.connect_toggled(move |check| {
-                        // Re-check availability in case the async check finished late.
-                        if check.is_active() && *upgrade_available_ref2.borrow() {
-                            upgrade_ref2.set_sensitive(true);
-                        } else {
-                            upgrade_ref2.set_sensitive(false);
-                        }
-                    });
-                    if backup_ref.is_active() {
-                        upgrade_ref.set_sensitive(true);
-                    }
+                *all_checks_passed_ref.borrow_mut() = all_passed;
+                // Re-evaluate button sensitivity now that checks have completed.
+                if all_passed && *upgrade_available_ref.borrow() && backup_ref.is_active() {
+                    upgrade_ref.set_sensitive(true);
+                } else if !all_passed {
+                    upgrade_ref.set_sensitive(false);
                 }
 
                 button_ref.set_sensitive(true);
