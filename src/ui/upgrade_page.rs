@@ -6,6 +6,16 @@ use std::rc::Rc;
 use crate::ui::log_panel::LogPanel;
 use crate::upgrade;
 
+#[allow(dead_code)]
+enum CheckMsg {
+    /// A plain log line to display in the terminal output panel.
+    Log(String),
+    /// Structured results from all prerequisite checks.
+    Results(Vec<upgrade::CheckResult>),
+    /// A fatal error that prevented checks from completing.
+    Error(String),
+}
+
 pub struct UpgradePage;
 
 impl UpgradePage {
@@ -237,26 +247,31 @@ impl UpgradePage {
             let all_checks_passed_ref = all_checks_passed_clone.clone();
 
             glib::spawn_future_local(async move {
-                let (tx, rx) = async_channel::unbounded::<String>();
+                let (check_tx, check_rx) = async_channel::unbounded::<CheckMsg>();
 
-                let tx_clone = tx.clone();
+                let check_tx_clone = check_tx.clone();
                 let distro_thread = distro.clone();
 
                 std::thread::spawn(move || {
-                    let results = upgrade::run_prerequisite_checks(&distro_thread, &tx_clone);
-                    // Send results as serialized
-                    let json = serde_json::to_string(&results).unwrap_or_default();
-                    let _ = tx_clone.send_blocking(format!("__RESULTS__:{json}"));
-                    drop(tx_clone);
+                    let (bridge_tx, bridge_rx) = async_channel::unbounded::<String>();
+                    let results = upgrade::run_prerequisite_checks(&distro_thread, &bridge_tx);
+                    drop(bridge_tx);
+                    while let Ok(line) = bridge_rx.recv_blocking() {
+                        let _ = check_tx_clone.send_blocking(CheckMsg::Log(line));
+                    }
+                    let _ = check_tx_clone.send_blocking(CheckMsg::Results(results));
+                    drop(check_tx_clone);
                 });
 
-                drop(tx);
+                drop(check_tx);
 
                 let mut all_passed = true;
-                while let Ok(msg) = rx.recv().await {
-                    if let Some(json) = msg.strip_prefix("__RESULTS__:") {
-                        if let Ok(results) = serde_json::from_str::<Vec<upgrade::CheckResult>>(json)
-                        {
+                while let Ok(msg) = check_rx.recv().await {
+                    match msg {
+                        CheckMsg::Log(line) => {
+                            log_ref.append_line(&line);
+                        }
+                        CheckMsg::Results(results) => {
                             let rows = check_rows_ref.borrow();
                             let icons = check_icons_ref.borrow();
                             for (i, result) in results.iter().enumerate() {
@@ -273,8 +288,9 @@ impl UpgradePage {
                                 }
                             }
                         }
-                    } else {
-                        log_ref.append_line(&msg);
+                        CheckMsg::Error(e) => {
+                            log_ref.append_line(&format!("Error: {e}"));
+                        }
                     }
                 }
 
