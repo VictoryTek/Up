@@ -50,50 +50,27 @@ impl UpgradePage {
             .title("System Information")
             .build();
 
-        let distro_info = upgrade::detect_distro();
+        let distro_info_state: Rc<RefCell<Option<upgrade::DistroInfo>>> =
+            Rc::new(RefCell::new(None));
 
         let distro_row = adw::ActionRow::builder()
             .title("Distribution")
-            .subtitle(&distro_info.name)
+            .subtitle("Loading\u{2026}")
             .build();
         distro_row.add_prefix(&gtk::Image::from_icon_name("computer-symbolic"));
         info_group.add(&distro_row);
 
         let version_row = adw::ActionRow::builder()
             .title("Current Version")
-            .subtitle(&distro_info.version)
+            .subtitle("Loading\u{2026}")
             .build();
         info_group.add(&version_row);
 
         let upgrade_available_row = adw::ActionRow::builder()
             .title("Upgrade Available")
-            .subtitle(if distro_info.upgrade_supported {
-                "Checking..."
-            } else {
-                "Not supported for this distribution yet"
-            })
+            .subtitle("Loading\u{2026}")
             .build();
         info_group.add(&upgrade_available_row);
-
-        if distro_info.id == "nixos" {
-            let config_type = upgrade::detect_nixos_config_type();
-            let config_label: String = match config_type {
-                upgrade::NixOsConfigType::Flake => {
-                    let hostname = upgrade::detect_hostname();
-                    let safe_hostname = glib::markup_escape_text(&hostname);
-                    format!("Flake-based (/etc/nixos#{})", safe_hostname)
-                }
-                upgrade::NixOsConfigType::LegacyChannel => {
-                    "Channel-based (/etc/nixos/configuration.nix)".to_string()
-                }
-            };
-            let config_row = adw::ActionRow::builder()
-                .title("NixOS Config Type")
-                .subtitle(&config_label)
-                .build();
-            config_row.add_prefix(&gtk::Image::from_icon_name("emblem-system-symbolic"));
-            info_group.add(&config_row);
-        }
 
         content_box.append(&info_group);
 
@@ -103,19 +80,11 @@ impl UpgradePage {
             .description("These checks must pass before upgrading")
             .build();
 
-        let checks: Vec<(&str, &str)> = if distro_info.id == "nixos" {
-            vec![
-                ("nixos-rebuild available", "system-software-update-symbolic"),
-                ("Sufficient disk space (10 GB+)", "drive-harddisk-symbolic"),
-                ("Backup recommended", "document-save-symbolic"),
-            ]
-        } else {
-            vec![
-                ("All packages up to date", "system-software-update-symbolic"),
-                ("Sufficient disk space (10 GB+)", "drive-harddisk-symbolic"),
-                ("Backup recommended", "document-save-symbolic"),
-            ]
-        };
+        let checks: Vec<(&str, &str)> = vec![
+            ("All packages up to date", "system-software-update-symbolic"),
+            ("Sufficient disk space (10 GB+)", "drive-harddisk-symbolic"),
+            ("Backup recommended", "document-save-symbolic"),
+        ];
 
         let check_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
         let check_icons: Rc<RefCell<Vec<gtk::Image>>> = Rc::new(RefCell::new(Vec::new()));
@@ -151,6 +120,7 @@ impl UpgradePage {
         let check_button = gtk::Button::builder()
             .label("Run Checks")
             .css_classes(vec!["pill"])
+            .sensitive(false)
             .build();
 
         let upgrade_button = gtk::Button::builder()
@@ -164,36 +134,6 @@ impl UpgradePage {
         let upgrade_available: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
         // Tracks whether all prerequisite checks have passed.
         let all_checks_passed: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
-
-        // Spawn async task to check upgrade availability now that the button exists.
-        if distro_info.upgrade_supported {
-            let upgrade_row_clone = upgrade_available_row.clone();
-            let distro_check = distro_info.clone();
-            let upgrade_available_clone = upgrade_available.clone();
-            let upgrade_btn_for_avail = upgrade_button.clone();
-            glib::spawn_future_local(async move {
-                let (tx, rx) = async_channel::unbounded::<String>();
-
-                std::thread::spawn(move || {
-                    let result = upgrade::check_upgrade_available(&distro_check);
-                    let _ = tx.send_blocking(result);
-                    drop(tx);
-                });
-
-                if let Ok(result_msg) = rx.recv().await {
-                    let is_available = result_msg.starts_with("Yes");
-                    *upgrade_available_clone.borrow_mut() = is_available;
-                    upgrade_row_clone.set_subtitle(&result_msg);
-                    // If the button was already enabled by prerequisite checks but
-                    // there is no upgrade, disable it now.
-                    if !is_available {
-                        upgrade_btn_for_avail.set_sensitive(false);
-                    }
-                } else {
-                    upgrade_row_clone.set_subtitle("Could not determine upgrade availability");
-                }
-            });
-        }
 
         button_box.append(&check_button);
         button_box.append(&upgrade_button);
@@ -229,10 +169,14 @@ impl UpgradePage {
         let upgrade_btn_clone = upgrade_button.clone();
         let log_clone = log_panel.clone();
         let backup_clone = backup_check.clone();
-        let distro_clone = distro_info.clone();
+        let distro_state_for_check = distro_info_state.clone();
         let upgrade_available_clone = upgrade_available.clone();
         let all_checks_passed_clone = all_checks_passed.clone();
         check_button.connect_clicked(move |button| {
+            let distro = distro_state_for_check
+                .borrow()
+                .clone()
+                .expect("distro info must be available before check button is sensitive");
             button.set_sensitive(false);
             log_clone.clear();
 
@@ -242,7 +186,6 @@ impl UpgradePage {
             let log_ref = log_clone.clone();
             let button_ref = button.clone();
             let backup_ref = backup_clone.clone();
-            let distro = distro_clone.clone();
             let upgrade_available_ref = upgrade_available_clone.clone();
             let all_checks_passed_ref = all_checks_passed_clone.clone();
 
@@ -307,23 +250,22 @@ impl UpgradePage {
             });
         });
 
-        // Auto-trigger prerequisite checks for supported distros
-        if distro_info.upgrade_supported {
-            check_button.emit_clicked();
-        }
-
         // Wire up upgrade button
         let log_clone2 = log_panel.clone();
-        let distro_clone2 = distro_info.clone();
+        let distro_state_for_upgrade = distro_info_state.clone();
 
         upgrade_button.connect_clicked(move |button| {
+            let distro = distro_state_for_upgrade
+                .borrow()
+                .clone()
+                .expect("distro info must be available before upgrade button is active");
             let dialog = adw::AlertDialog::builder()
                 .heading("Confirm System Upgrade")
                 .body(format!(
                     "This will upgrade {} from version {} to the next major release.\n\n\
                     This operation may take a long time and require a reboot.\n\n\
                     Are you sure you want to continue?",
-                    distro_clone2.name, distro_clone2.version
+                    distro.name, distro.version
                 ))
                 .build();
 
@@ -335,7 +277,6 @@ impl UpgradePage {
 
             let log_ref = log_clone2.clone();
             let button_ref = button.clone();
-            let distro = distro_clone2.clone();
 
             dialog.connect_response(None, move |_dialog, response| {
                 if response == "upgrade" {
@@ -350,12 +291,13 @@ impl UpgradePage {
                     glib::spawn_future_local(async move {
                         let (tx, rx) = async_channel::unbounded::<String>();
                         let tx_clone = tx.clone();
-                        let (result_tx, result_rx) = async_channel::bounded::<bool>(1);
+                        let (result_tx, result_rx) =
+                            async_channel::bounded::<Result<(), String>>(1);
 
                         std::thread::spawn(move || {
-                            let success = upgrade::execute_upgrade(&distro2, &tx_clone);
+                            let outcome = upgrade::execute_upgrade(&distro2, &tx_clone);
                             drop(tx_clone);
-                            let _ = result_tx.send_blocking(success);
+                            let _ = result_tx.send_blocking(outcome);
                         });
 
                         drop(tx);
@@ -364,11 +306,21 @@ impl UpgradePage {
                             log_ref2.append_line(&line);
                         }
 
-                        let success = result_rx.recv().await.unwrap_or(false);
+                        let outcome = result_rx
+                            .recv()
+                            .await
+                            .unwrap_or_else(|_| {
+                                Err("Upgrade result channel closed unexpectedly".to_string())
+                            });
                         button_ref2.set_sensitive(true);
 
-                        if success {
-                            crate::ui::reboot_dialog::show_reboot_dialog(&button_ref3);
+                        match outcome {
+                            Ok(()) => {
+                                crate::ui::reboot_dialog::show_reboot_dialog(&button_ref3);
+                            }
+                            Err(e) => {
+                                log_ref2.append_line(&format!("Upgrade failed: {e}"));
+                            }
                         }
                     });
                 }
@@ -382,6 +334,122 @@ impl UpgradePage {
         clamp.set_child(Some(&content_box));
         scrolled.set_child(Some(&clamp));
         page_box.append(&scrolled);
+
+        // Spawn distro detection off the GTK thread.
+        {
+            let (detect_tx, detect_rx) = async_channel::unbounded::<(
+                upgrade::DistroInfo,
+                Option<(upgrade::NixOsConfigType, String)>,
+            )>();
+
+            super::spawn_background_async(move || async move {
+                let info = upgrade::detect_distro();
+                let nixos_extra = if info.id == "nixos" {
+                    let config_type = upgrade::detect_nixos_config_type();
+                    let raw_hostname = upgrade::detect_hostname();
+                    Some((config_type, raw_hostname))
+                } else {
+                    None
+                };
+                let _ = detect_tx.send((info, nixos_extra)).await;
+            });
+
+            let distro_state_fill = distro_info_state.clone();
+            let distro_row_fill = distro_row.clone();
+            let version_row_fill = version_row.clone();
+            let upgrade_available_row_fill = upgrade_available_row.clone();
+            let info_group_fill = info_group.clone();
+            let check_rows_fill = check_rows.clone();
+            let upgrade_available_fill = upgrade_available.clone();
+            let upgrade_btn_fill = upgrade_button.clone();
+            let check_btn_fill = check_button.clone();
+
+            glib::spawn_future_local(async move {
+                match detect_rx.recv().await {
+                    Ok((info, nixos_extra)) => {
+                        // Populate distro info rows
+                        distro_row_fill.set_subtitle(&info.name);
+                        version_row_fill.set_subtitle(&info.version);
+                        upgrade_available_row_fill.set_subtitle(if info.upgrade_supported {
+                            "Checking\u{2026}"
+                        } else {
+                            "Not supported for this distribution yet"
+                        });
+
+                        // Conditionally add NixOS config row
+                        if let Some((config_type, raw_hostname)) = &nixos_extra {
+                            let config_label = match config_type {
+                                upgrade::NixOsConfigType::Flake => {
+                                    let safe_hostname =
+                                        glib::markup_escape_text(raw_hostname);
+                                    format!("Flake-based (/etc/nixos#{})", safe_hostname)
+                                }
+                                upgrade::NixOsConfigType::LegacyChannel => {
+                                    "Channel-based (/etc/nixos/configuration.nix)"
+                                        .to_string()
+                                }
+                            };
+                            let config_row = adw::ActionRow::builder()
+                                .title("NixOS Config Type")
+                                .subtitle(&config_label)
+                                .build();
+                            config_row.add_prefix(&gtk::Image::from_icon_name(
+                                "emblem-system-symbolic",
+                            ));
+                            info_group_fill.add(&config_row);
+                            // Update first check row title for NixOS
+                            if let Some(row) = check_rows_fill.borrow().first() {
+                                row.set_title("nixos-rebuild available");
+                            }
+                        }
+
+                        // Store distro info
+                        *distro_state_fill.borrow_mut() = Some(info.clone());
+
+                        // Spawn upgrade availability check if supported
+                        if info.upgrade_supported {
+                            let upgrade_row_clone = upgrade_available_row_fill.clone();
+                            let distro_check = info.clone();
+                            let upgrade_available_clone = upgrade_available_fill.clone();
+                            let upgrade_btn_for_avail = upgrade_btn_fill.clone();
+                            glib::spawn_future_local(async move {
+                                let (tx, rx) = async_channel::unbounded::<String>();
+                                std::thread::spawn(move || {
+                                    let result =
+                                        upgrade::check_upgrade_available(&distro_check);
+                                    let _ = tx.send_blocking(result);
+                                    drop(tx);
+                                });
+                                if let Ok(result_msg) = rx.recv().await {
+                                    let is_available = result_msg.starts_with("Yes");
+                                    *upgrade_available_clone.borrow_mut() = is_available;
+                                    upgrade_row_clone.set_subtitle(&result_msg);
+                                    if !is_available {
+                                        upgrade_btn_for_avail.set_sensitive(false);
+                                    }
+                                } else {
+                                    upgrade_row_clone.set_subtitle(
+                                        "Could not determine upgrade availability",
+                                    );
+                                }
+                            });
+                        }
+
+                        // Enable check button and auto-trigger checks if supported
+                        check_btn_fill.set_sensitive(true);
+                        if info.upgrade_supported {
+                            check_btn_fill.emit_clicked();
+                        }
+                    }
+                    Err(_) => {
+                        eprintln!("Distro detection channel closed unexpectedly");
+                        distro_row_fill.set_subtitle("Unknown");
+                        version_row_fill.set_subtitle("Unknown");
+                        check_btn_fill.set_sensitive(false);
+                    }
+                }
+            });
+        }
 
         page_box
     }

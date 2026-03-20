@@ -24,8 +24,6 @@
           nativeBuildInputs = with pkgs; [
             pkg-config
             wrapGAppsHook4
-            gtk4
-            hicolor-icon-theme
           ];
 
           buildInputs = with pkgs; [
@@ -33,7 +31,15 @@
             libadwaita
             glib
             dbus
+            hicolor-icon-theme
           ];
+
+          # wrapGAppsHook4 bakes XDG_DATA_DIRS from buildInputs into the wrapper
+          # script, but does NOT add $out/share automatically. Without this, GTK
+          # cannot find the icon installed to $out/share/icons/hicolor/ at runtime.
+          preFixup = ''
+            gappsWrapperArgs+=(--prefix XDG_DATA_DIRS : "$out/share")
+          '';
 
           postInstall = ''
             install -Dm644 data/io.github.up.desktop \

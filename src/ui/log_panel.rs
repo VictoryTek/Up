@@ -4,6 +4,7 @@ use gtk::prelude::*;
 pub struct LogPanel {
     pub expander: gtk::Expander,
     text_view: gtk::TextView,
+    scroll_mark: gtk::TextMark,
 }
 
 impl LogPanel {
@@ -32,9 +33,14 @@ impl LogPanel {
             .child(&scrolled)
             .build();
 
+        let buffer = text_view.buffer();
+        let end_iter = buffer.end_iter();
+        let scroll_mark = buffer.create_mark(Some("scroll-end"), &end_iter, false);
+
         Self {
             expander,
             text_view,
+            scroll_mark,
         }
     }
 
@@ -45,9 +51,8 @@ impl LogPanel {
         buffer.insert(&mut end, "\n");
 
         // Auto-scroll to bottom
-        let mark = buffer.create_mark(None, &buffer.end_iter(), false);
-        self.text_view.scroll_mark_onscreen(&mark);
-        buffer.delete_mark(&mark);
+        buffer.move_mark(&self.scroll_mark, &buffer.end_iter());
+        self.text_view.scroll_mark_onscreen(&self.scroll_mark);
     }
 
     pub fn clear(&self) {

@@ -204,6 +204,17 @@ fn check_packages_up_to_date(distro: &DistroInfo) -> CheckResult {
     }
 }
 
+fn parse_df_avail_bytes(stdout: &str) -> Result<u64, String> {
+    let line = stdout
+        .lines()
+        .nth(1) // skip header
+        .ok_or_else(|| "df output contains no data line".to_string())?;
+    let trimmed = line.trim();
+    trimmed
+        .parse::<u64>()
+        .map_err(|e| format!("could not parse {:?} as bytes: {e}", trimmed))
+}
+
 fn check_disk_space() -> CheckResult {
     // Check available space on /
     match Command::new("df")
@@ -212,26 +223,31 @@ fn check_disk_space() -> CheckResult {
     {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            let avail_bytes: u64 = stdout
-                .lines()
-                .nth(1) // skip header
-                .and_then(|l| l.trim().parse().ok())
-                .unwrap_or(0);
-
-            let avail_gb = avail_bytes / (1024 * 1024 * 1024);
-            let required_gb = 10;
-
-            if avail_gb >= required_gb {
-                CheckResult {
-                    name: "Sufficient disk space".into(),
-                    passed: true,
-                    message: format!("{avail_gb} GB available"),
-                }
-            } else {
-                CheckResult {
+            match parse_df_avail_bytes(&stdout) {
+                Err(reason) => CheckResult {
                     name: "Sufficient disk space".into(),
                     passed: false,
-                    message: format!("Only {avail_gb} GB available, {required_gb} GB recommended"),
+                    message: format!("Could not parse disk space output: {reason}"),
+                },
+                Ok(avail_bytes) => {
+                    let avail_gb = avail_bytes / (1024 * 1024 * 1024);
+                    let required_gb = 10;
+
+                    if avail_gb >= required_gb {
+                        CheckResult {
+                            name: "Sufficient disk space".into(),
+                            passed: true,
+                            message: format!("{avail_gb} GB available"),
+                        }
+                    } else {
+                        CheckResult {
+                            name: "Sufficient disk space".into(),
+                            passed: false,
+                            message: format!(
+                                "Only {avail_gb} GB available, {required_gb} GB recommended"
+                            ),
+                        }
+                    }
                 }
             }
         }
@@ -353,8 +369,11 @@ fn check_nixos_upgrade(current_version_id: &str) -> String {
 }
 
 /// Execute the actual distro upgrade.
-/// Returns `true` if all upgrade steps completed successfully, `false` otherwise.
-pub fn execute_upgrade(distro: &DistroInfo, tx: &async_channel::Sender<String>) -> bool {
+/// Returns `Ok(())` if all upgrade steps completed successfully, or `Err(reason)` otherwise.
+pub fn execute_upgrade(
+    distro: &DistroInfo,
+    tx: &async_channel::Sender<String>,
+) -> Result<(), String> {
     let _ = tx.send_blocking(format!(
         "Starting upgrade for {} {}...",
         distro.name, distro.version
@@ -366,26 +385,30 @@ pub fn execute_upgrade(distro: &DistroInfo, tx: &async_channel::Sender<String>) 
         "opensuse-leap" => upgrade_opensuse(tx),
         "nixos" => upgrade_nixos(tx),
         _ => {
-            let _ = tx.send_blocking(format!(
-                "Upgrade is not yet supported for '{}'. Supported: Ubuntu, Fedora, openSUSE Leap, NixOS.",
+            let msg = format!(
+                "Upgrade is not yet supported for '{}'. Supported: Ubuntu, Debian, Fedora, openSUSE Leap, NixOS.",
                 distro.name
-            ));
-            false
+            );
+            let _ = tx.send_blocking(msg.clone());
+            Err(msg)
         }
     }
 }
 
-fn upgrade_ubuntu(tx: &async_channel::Sender<String>) -> bool {
+fn upgrade_ubuntu(tx: &async_channel::Sender<String>) -> Result<(), String> {
     let _ = tx.send_blocking("Running: do-release-upgrade -f DistUpgradeViewNonInteractive".into());
 
-    crate::runner::run_command_sync(
+    if !crate::runner::run_command_sync(
         "pkexec",
         &["do-release-upgrade", "-f", "DistUpgradeViewNonInteractive"],
         tx,
-    )
+    ) {
+        return Err("Ubuntu/Debian upgrade command failed (see log for details)".to_string());
+    }
+    Ok(())
 }
 
-fn upgrade_fedora(tx: &async_channel::Sender<String>) -> bool {
+fn upgrade_fedora(tx: &async_channel::Sender<String>) -> Result<(), String> {
     // Step 1: Install upgrade plugin
     let _ = tx.send_blocking("Installing system-upgrade plugin...".into());
     if !crate::runner::run_command_sync(
@@ -393,7 +416,7 @@ fn upgrade_fedora(tx: &async_channel::Sender<String>) -> bool {
         &["dnf", "install", "-y", "dnf-plugin-system-upgrade"],
         tx,
     ) {
-        return false;
+        return Err("Failed to install dnf-plugin-system-upgrade (see log for details)".to_string());
     }
 
     // Step 2: Download upgrade packages (next version)
@@ -406,7 +429,9 @@ fn upgrade_fedora(tx: &async_channel::Sender<String>) -> bool {
             let _ = tx.send_blocking(
                 "Error: Could not detect current Fedora version. Aborting upgrade.".into(),
             );
-            return false;
+            return Err(
+                "Could not detect current Fedora version to determine upgrade target".to_string(),
+            );
         }
     };
     let ver_str = next_version.to_string();
@@ -422,21 +447,32 @@ fn upgrade_fedora(tx: &async_channel::Sender<String>) -> bool {
         ],
         tx,
     ) {
-        return false;
+        return Err(format!(
+            "Failed to download Fedora {} upgrade packages (see log for details)",
+            next_version
+        ));
     }
 
     // Step 3: Trigger reboot into upgrade
     let _ =
         tx.send_blocking("Download complete. The system will reboot to apply the upgrade.".into());
-    crate::runner::run_command_sync("pkexec", &["dnf", "system-upgrade", "reboot"], tx)
+    if !crate::runner::run_command_sync("pkexec", &["dnf", "system-upgrade", "reboot"], tx) {
+        return Err("Failed to trigger Fedora upgrade reboot (see log for details)".to_string());
+    }
+    Ok(())
 }
 
-fn upgrade_opensuse(tx: &async_channel::Sender<String>) -> bool {
+fn upgrade_opensuse(tx: &async_channel::Sender<String>) -> Result<(), String> {
     let _ = tx.send_blocking("Running zypper distribution upgrade...".into());
-    crate::runner::run_command_sync("pkexec", &["zypper", "dup", "-y"], tx)
+    if !crate::runner::run_command_sync("pkexec", &["zypper", "dup", "-y"], tx) {
+        return Err(
+            "openSUSE distribution upgrade command failed (see log for details)".to_string(),
+        );
+    }
+    Ok(())
 }
 
-fn upgrade_nixos(tx: &async_channel::Sender<String>) -> bool {
+fn upgrade_nixos(tx: &async_channel::Sender<String>) -> Result<(), String> {
     // pkexec resets PATH, excluding NixOS tooling; export the required paths explicitly.
     const NIX_PATH_EXPORT: &str =
         "export PATH=/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin:$PATH";
@@ -447,17 +483,29 @@ fn upgrade_nixos(tx: &async_channel::Sender<String>) -> bool {
             let _ = tx.send_blocking("Updating NixOS channel...".into());
             let cmd = format!("{NIX_PATH_EXPORT} && nix-channel --update");
             if !crate::runner::run_command_sync("pkexec", &["sh", "-c", &cmd], tx) {
-                return false;
+                return Err("Failed to update NixOS channel (see log for details)".to_string());
             }
             let _ = tx.send_blocking("Rebuilding NixOS (switch --upgrade)...".into());
-            crate::runner::run_command_sync("pkexec", &["nixos-rebuild", "switch", "--upgrade"], tx)
+            if !crate::runner::run_command_sync(
+                "pkexec",
+                &["nixos-rebuild", "switch", "--upgrade"],
+                tx,
+            ) {
+                return Err(
+                    "Failed to rebuild NixOS with --upgrade (see log for details)".to_string(),
+                );
+            }
+            Ok(())
         }
         NixOsConfigType::Flake => {
             let _ = tx.send_blocking("Detected: flake-based NixOS config".into());
             let _ = tx.send_blocking("Updating flake inputs in /etc/nixos...".into());
             let cmd = format!("{NIX_PATH_EXPORT} && nix flake update --flake /etc/nixos");
             if !crate::runner::run_command_sync("pkexec", &["sh", "-c", &cmd], tx) {
-                return false;
+                return Err(
+                    "Failed to update flake inputs in /etc/nixos (see log for details)"
+                        .to_string(),
+                );
             }
             // Validate before embedding in the Nix flake URL. An unvalidated hostname
             // containing '#', '?', spaces, or control characters can confuse
@@ -467,17 +515,24 @@ fn upgrade_nixos(tx: &async_channel::Sender<String>) -> bool {
             let hostname = match validate_hostname(&raw_hostname) {
                 Ok(h) => h,
                 Err(e) => {
-                    let _ = tx.send_blocking(format!("Upgrade aborted: {e}"));
-                    return false;
+                    let msg = format!("Upgrade aborted: {e}");
+                    let _ = tx.send_blocking(msg.clone());
+                    return Err(msg);
                 }
             };
             let flake_target = format!("/etc/nixos#{}", hostname);
             let _ = tx.send_blocking(format!("Rebuilding NixOS configuration: {flake_target}"));
-            crate::runner::run_command_sync(
+            if !crate::runner::run_command_sync(
                 "pkexec",
                 &["nixos-rebuild", "switch", "--flake", &flake_target],
                 tx,
-            )
+            ) {
+                return Err(format!(
+                    "Failed to rebuild NixOS flake configuration '{}' (see log for details)",
+                    flake_target
+                ));
+            }
+            Ok(())
         }
     }
 }
@@ -526,7 +581,26 @@ fn detect_next_fedora_version() -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_hostname;
+    use super::{execute_upgrade, parse_df_avail_bytes, validate_hostname, DistroInfo};
+
+    #[test]
+    fn execute_upgrade_unsupported_distro_returns_err() {
+        let distro = DistroInfo {
+            id: "arch".to_string(),
+            name: "Arch Linux".to_string(),
+            version: "2026.01.01".to_string(),
+            version_id: "2026".to_string(),
+            upgrade_supported: false,
+        };
+        let (tx, _rx) = async_channel::unbounded::<String>();
+        let result = execute_upgrade(&distro, &tx);
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("not yet supported"),
+            "unexpected message: {msg}"
+        );
+    }
 
     #[test]
     fn validate_hostname_rejects_dangerous_input() {
@@ -559,5 +633,46 @@ mod tests {
         assert!(validate_hostname("a").is_ok());
         // Exactly 253 chars — boundary must pass
         assert!(validate_hostname(&"a".repeat(253)).is_ok());
+    }
+
+    #[test]
+    fn parse_df_avail_bytes_normal() {
+        // Typical df --output=avail -B1 output: header + data line
+        let output = "     Avail\n10737418240\n";
+        assert_eq!(parse_df_avail_bytes(output), Ok(10_737_418_240u64));
+    }
+
+    #[test]
+    fn parse_df_avail_bytes_genuine_zero() {
+        // Zero is a valid value — completely full disk
+        let output = "     Avail\n0\n";
+        assert_eq!(parse_df_avail_bytes(output), Ok(0u64));
+    }
+
+    #[test]
+    fn parse_df_avail_bytes_empty_stdout() {
+        // df spawned successfully but produced no output at all
+        assert!(parse_df_avail_bytes("").is_err());
+    }
+
+    #[test]
+    fn parse_df_avail_bytes_header_only() {
+        // Output contains the header line but no data line
+        let output = "     Avail\n";
+        assert!(parse_df_avail_bytes(output).is_err());
+    }
+
+    #[test]
+    fn parse_df_avail_bytes_non_numeric() {
+        // Non-numeric content in the data line (e.g. BusyBox error on stdout)
+        let output = "     Avail\nN/A\n";
+        assert!(parse_df_avail_bytes(output).is_err());
+    }
+
+    #[test]
+    fn parse_df_avail_bytes_locale_comma() {
+        // Locale-formatted number — parse::<u64>() does not accept commas
+        let output = "     Avail\n10,737,418,240\n";
+        assert!(parse_df_avail_bytes(output).is_err());
     }
 }

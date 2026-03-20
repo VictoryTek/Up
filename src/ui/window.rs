@@ -1,4 +1,4 @@
-use crate::backends::{self, BackendKind, UpdateResult};
+use crate::backends::{Backend, BackendKind, UpdateResult};
 use crate::runner::CommandRunner;
 use crate::ui::log_panel::LogPanel;
 use crate::ui::update_row::UpdateRow;
@@ -7,6 +7,7 @@ use adw::prelude::*;
 use gtk::glib;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 pub struct UpWindow;
 
@@ -60,8 +61,6 @@ impl UpWindow {
         main_box.append(&view_switcher_bar);
 
         window.set_content(Some(&main_box));
-        // Trigger availability checks now that the window is fully assembled.
-        (*run_checks)();
         window
     }
 
@@ -96,15 +95,19 @@ impl UpWindow {
             .description("Package managers detected on this system")
             .build();
 
-        let detected = backends::detect_backends();
+        let detected: Rc<RefCell<Vec<Arc<dyn Backend>>>> =
+            Rc::new(RefCell::new(Vec::new()));
 
         let rows: Rc<RefCell<Vec<(BackendKind, UpdateRow)>>> = Rc::new(RefCell::new(Vec::new()));
 
-        for backend in &detected {
-            let row = UpdateRow::new(backend.as_ref());
-            backends_group.add(&row.row);
-            rows.borrow_mut().push((backend.kind(), row));
-        }
+        // Placeholder row shown while background detection runs
+        let placeholder_row = adw::ActionRow::builder()
+            .title("Detecting package managers\u{2026}")
+            .build();
+        let placeholder_spinner = gtk::Spinner::new();
+        placeholder_spinner.start();
+        placeholder_row.add_suffix(&placeholder_spinner);
+        backends_group.add(&placeholder_row);
 
         content_box.append(&backends_group);
 
@@ -118,6 +121,7 @@ impl UpWindow {
             .css_classes(vec!["suggested-action", "pill"])
             .halign(gtk::Align::Center)
             .margin_top(12)
+            .sensitive(false)
             .build();
 
         let status_clone = status_label.clone();
@@ -142,7 +146,7 @@ impl UpWindow {
             let log_ref = log_clone.clone();
             let status_ref = status_clone.clone();
             let button_ref = button.clone();
-            let backends = detected_clone.clone();
+            let backends = detected_clone.borrow().clone();
 
             glib::spawn_future_local(async move {
                 let (tx, rx) = async_channel::unbounded::<(BackendKind, String)>();
@@ -154,37 +158,13 @@ impl UpWindow {
                 let result_tx_thread = result_tx.clone();
                 let backends_thread = backends.clone();
 
-                std::thread::spawn(move || {
-                    match tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                    {
-                        Ok(rt) => {
-                            rt.block_on(async {
-                                for backend in &backends_thread {
-                                    let kind = backend.kind();
-                                    let runner = CommandRunner::new(tx_thread.clone(), kind);
-                                    let result = backend.run_update(&runner).await;
-                                    let _ = result_tx_thread.send((kind, result)).await;
-                                }
-                            });
-                        }
-                        Err(e) => {
-                            // Send an error result for every backend so the UI exits its recv loop
-                            for backend in &backends_thread {
-                                let kind = backend.kind();
-                                let _ = result_tx_thread.send_blocking((
-                                    kind,
-                                    crate::backends::UpdateResult::Error(format!(
-                                        "Runtime error: {e}"
-                                    )),
-                                ));
-                            }
-                        }
+                super::spawn_background_async(move || async move {
+                    for backend in &backends_thread {
+                        let kind = backend.kind();
+                        let runner = CommandRunner::new(tx_thread.clone(), kind);
+                        let result = backend.run_update(&runner).await;
+                        let _ = result_tx_thread.send((kind, result)).await;
                     }
-
-                    drop(tx_thread);
-                    drop(result_tx_thread);
                 });
 
                 // Drop the original senders so channels close when the thread finishes
@@ -248,7 +228,7 @@ impl UpWindow {
             let rows = rows.clone();
             let detected = detected.clone();
             Rc::new(move || {
-                for (idx, backend) in detected.iter().enumerate() {
+                for (idx, backend) in detected.borrow().iter().enumerate() {
                     {
                         let borrowed = rows.borrow();
                         borrowed[idx].1.set_status_checking();
@@ -257,21 +237,9 @@ impl UpWindow {
                     let rows_ref = rows.clone();
                     glib::spawn_future_local(async move {
                         let (tx, rx) = async_channel::bounded::<Result<usize, String>>(1);
-                        std::thread::spawn(move || {
-                            match tokio::runtime::Builder::new_current_thread()
-                                .enable_all()
-                                .build()
-                            {
-                                Ok(rt) => {
-                                    rt.block_on(async {
-                                        let result = backend_clone.count_available().await;
-                                        let _ = tx.send(result).await;
-                                    });
-                                }
-                                Err(e) => {
-                                    let _ = tx.send_blocking(Err(format!("Runtime error: {e}")));
-                                }
-                            }
+                        super::spawn_background_async(move || async move {
+                            let result = backend_clone.count_available().await;
+                            let _ = tx.send(result).await;
                         });
                         if let Ok(result) = rx.recv().await {
                             let row = rows_ref.borrow()[idx].1.clone();
@@ -284,6 +252,48 @@ impl UpWindow {
                 }
             })
         };
+
+        // Spawn backend detection off the GTK thread.
+        {
+            let (detect_tx, detect_rx) =
+                async_channel::unbounded::<Vec<Arc<dyn Backend>>>();
+
+            let detected_fill = detected.clone();
+            let rows_fill = rows.clone();
+            let group_fill = backends_group.clone();
+            let run_checks_after_detect = run_checks.clone();
+            let update_button_ref = update_button.clone();
+
+            super::spawn_background_async(move || async move {
+                let backends = crate::backends::detect_backends();
+                let _ = detect_tx.send(backends).await;
+            });
+
+            glib::spawn_future_local(async move {
+                if let Ok(new_backends) = detect_rx.recv().await {
+                    // Remove placeholder
+                    group_fill.remove(&placeholder_row);
+                    // Populate rows
+                    {
+                        let mut rows_mut = rows_fill.borrow_mut();
+                        for backend in &new_backends {
+                            let row = UpdateRow::new(backend.as_ref());
+                            group_fill.add(&row.row);
+                            rows_mut.push((backend.kind(), row));
+                        }
+                    }
+                    // Store backends
+                    *detected_fill.borrow_mut() = new_backends;
+                    // Enable update button now that backends are ready
+                    update_button_ref.set_sensitive(true);
+                    // Trigger availability check
+                    (*run_checks_after_detect)();
+                } else {
+                    eprintln!("Backend detection failed; no backends detected.");
+                    group_fill.remove(&placeholder_row);
+                }
+            });
+        }
 
         (page_box, run_checks)
     }
