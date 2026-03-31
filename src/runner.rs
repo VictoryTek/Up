@@ -99,11 +99,7 @@ impl CommandRunner {
 ///
 /// Thread panics during drain are detected and reported as failures instead
 /// of being silently discarded.
-pub fn run_command_sync(
-    program: &str,
-    args: &[&str],
-    tx: &async_channel::Sender<String>,
-) -> bool {
+pub fn run_command_sync(program: &str, args: &[&str], tx: &async_channel::Sender<String>) -> bool {
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
 
