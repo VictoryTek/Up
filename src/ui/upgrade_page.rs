@@ -376,22 +376,21 @@ impl UpgradePage {
 
                         // Conditionally add NixOS config row
                         if let Some((config_type, raw_hostname)) = &nixos_extra {
+                            let safe_hostname = glib::markup_escape_text(raw_hostname);
                             let config_label = match config_type {
                                 upgrade::NixOsConfigType::Flake => {
-                                    let safe_hostname =
-                                        glib::markup_escape_text(raw_hostname);
                                     format!("Flake-based (/etc/nixos#{})", safe_hostname)
                                 }
                                 upgrade::NixOsConfigType::LegacyChannel => {
-                                    "Channel-based (/etc/nixos/configuration.nix)"
-                                        .to_string()
+                                    "Channel-based (/etc/nixos/configuration.nix)".to_string()
                                 }
                             };
                             let config_row = adw::ActionRow::builder()
                                 .title("NixOS Config Type")
                                 .subtitle(&config_label)
                                 .build();
-                            config_row.add_prefix(&gtk::Image::from_icon_name("emblem-system-symbolic"));
+                            config_row
+                                .add_prefix(&gtk::Image::from_icon_name("emblem-system-symbolic"));
                             info_group_fill.add(&config_row);
                             // Update first check row title for NixOS
                             if let Some(row) = check_rows_fill.borrow().first() {

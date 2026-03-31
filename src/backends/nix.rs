@@ -200,10 +200,7 @@ impl Backend for NixBackend {
                 if use_flakes {
                     match runner.run("nix", &["profile", "upgrade", ".*"]).await {
                         Ok(output) => UpdateResult::Success {
-                            updated_count: output
-                                .lines()
-                                .filter(|l| !l.is_empty())
-                                .count(),
+                            updated_count: output.lines().filter(|l| !l.is_empty()).count(),
                         },
                         Err(e) => UpdateResult::Error(e),
                     }
