@@ -55,6 +55,9 @@ flatpak install org.freedesktop.Sdk.Extension.rust-stable//24.08
 
 # Build and install
 flatpak-builder --user --install --force-clean builddir io.github.up.json
+
+# Or use the convenience script
+./scripts/build-flatpak.sh
 ```
 
 ### From Source
@@ -85,6 +88,23 @@ cargo run
 # With Nix
 nix develop
 cargo run
+
+# Build Flatpak locally
+./scripts/build-flatpak.sh
+```
+
+## CI/CD
+
+The project uses GitHub Actions for continuous integration and deployment:
+
+- **Build Testing**: Runs cargo fmt, clippy, build, and test on all pull requests and pushes to main
+- **Flatpak Packaging**: Automatically builds the application as a Flatpak package
+- **Release Automation**: Publishes Flatpak bundles to GitHub Releases on version tags
+
+To manually test the Flatpak CI, you can run:
+```bash
+# Install GNOME 46 SDK and Rust extension
+./scripts/build-flatpak.sh
 ```
 
 ## Architecture
@@ -116,4 +136,49 @@ GPL-3.0-or-later
 <!-- <img src="https://github.com/VictoryTek/Vauxite/blob/main/vauxite.png" /> -->
 
 A linux Utility
+
+# Flatpak Build (Premium Release Process)
+
+The application is packaged as a Flatpak for universal Linux compatibility.
+
+## Automated Release with GitHub Actions
+
+When a Git tag is pushed, GitHub Actions automatically:
+- Builds and tests the application
+- Creates a Flatpak bundle
+- Publishes it as a GitHub Release asset
+
+Example:
+```bash
+# Tag a release
+git tag -a v1.0.0 -m "Release version 1.0.0"
+git push origin v1.0.0
+
+# GitHub Actions will automatically build and release the Flatpak
+```
+
+## Manual Flatpak Build
+
+You can build the Flatpak manually:
+
+```bash
+# Clone the repository
+git clone https://github.com/user/up.git
+cd up
+
+# Build and install the Flatpak package
+./scripts/build-flatpak.sh
+
+# Run the application
+flatpak run io.github.up
+```
+
+## System Requirements
+
+Flatpak packaging requires:
+- Flatpak and flatpak-builder
+- GNOME 46 SDK and Platform
+- Rust 1.75+ (provided via GNOME extension)
+
+See [.github/docs/FLATPAK_README.md](.github/docs/FLATPAK_README.md) for comprehensive documentation.
 

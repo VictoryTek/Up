@@ -47,110 +47,33 @@ fn validate_flake_attr(name: &str) -> Result<String, String> {
 
 /// Determine the NixOS configuration attribute name to use for flake rebuilds.
 ///
-/// NixOS does not record the flake attribute name in any standard runtime file —
-/// the store path uses `networking.hostName`, not the flake attr, and
-/// `nixos-rebuild` itself falls back to the hostname when no attribute is given.
-///
 /// Resolution order:
 ///
-/// 1. `/etc/nixos/up-flake-attr` — a user-maintained file containing exactly
-///    the flake attribute name (e.g. "vexos-nvidia"). Recommended for systems
-///    where multiple configurations share the same `networking.hostName`.
-///    Create it once with: `sudo sh -c 'echo vexos-nvidia > /etc/nixos/up-flake-attr'`
+/// 1. `/etc/nixos/vexos-variant` — a user-maintained file containing exactly
+///    the flake attribute name (e.g. "vexos-nvidia"). Created by the VexOS
+///    NixOS configuration to track which variant is installed on the system.
+///    Example: `sudo sh -c 'echo vexos-nvidia > /etc/nixos/vexos-variant'`
 ///
-/// 2. Parse the running system's Nix store path from `/run/current-system`.
-///    The format is `nixos-system-{networking.hostName}-{nixos-version}`.
-///    If the extracted name exactly matches a `nixosConfigurations` attribute,
-///    it is used. This works when each config has a distinct `networking.hostName`
-///    that matches its flake attribute name.
-///
-/// 3. Return a descriptive error listing all available configurations and
-///    instructions for creating the config file.
-///
-/// 4. Last resort: fall back to the raw hostname when `nix eval` is unavailable.
+/// 2. Return an error with instructions for creating the file.
 fn resolve_nixos_flake_attr() -> Result<String, String> {
-    const CONFIG_FILE: &str = "/etc/nixos/up-flake-attr";
+    const VARIANT_FILE: &str = "/etc/nixos/vexos-variant";
 
-    // Step 1: User-maintained explicit override file.
-    if let Ok(content) = std::fs::read_to_string(CONFIG_FILE) {
-        let name = content.trim().to_string();
-        if !name.is_empty() {
-            return validate_flake_attr(&name);
-        }
-    }
-
-    // Step 2: List available nixosConfigurations from the flake.
-    // Unprivileged read-only operation; runs as the current user.
-    let available_names: Option<Vec<String>> = (|| {
-        let out = std::process::Command::new("nix")
-            .args([
-                "--extra-experimental-features",
-                "nix-command flakes",
-                "eval",
-                "--json",
-                "--no-write-lock-file",
-                "/etc/nixos#nixosConfigurations",
-                "--apply",
-                "builtins.attrNames",
-            ])
-            .output()
-            .ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        let stdout = std::str::from_utf8(&out.stdout).ok()?;
-        serde_json::from_str(stdout.trim()).ok()
-    })();
-
-    // Step 3: Parse the running system name from the /run/current-system symlink.
-    // Target format: /nix/store/<HASH>-nixos-system-<name>-<nixos-version>
-    // <name> is networking.hostName. Strip the store prefix and version suffix
-    // to recover it.
-    let system_name: Option<String> = (|| {
-        let link = std::fs::read_link("/run/current-system").ok()?;
-        let basename = link.file_name()?.to_str()?;
-        let rest = basename.strip_prefix("nixos-system-")?;
-        // The NixOS version suffix is a hyphen-separated component that starts
-        // with a digit (e.g. "24.05.1234.abcdef1"). Walk from the right,
-        // removing such components.
-        let mut parts: Vec<&str> = rest.split('-').collect();
-        while let Some(last) = parts.last() {
-            if last.chars().next().map_or(false, |c| c.is_ascii_digit()) {
-                parts.pop();
-            } else {
-                break;
+    // Step 1: Read the variant file (mandatory, primary source of truth).
+    match std::fs::read_to_string(VARIANT_FILE) {
+        Ok(content) => {
+            let variant = content.trim().to_string();
+            if variant.is_empty() {
+                return Err("Variant file /etc/nixos/vexos-variant is empty".to_string());
             }
+            // Validate and return the variant name
+            validate_flake_attr(&variant)
         }
-        if parts.is_empty() {
-            return None;
-        }
-        Some(parts.join("-"))
-    })();
-
-    // Step 4: Cross-reference the running system name with flake attribute names.
-    if let (Some(names), Some(sys_name)) = (&available_names, &system_name) {
-        if names.contains(sys_name) {
-            // Exact match: hostName == flake attr — no ambiguity.
-            return validate_flake_attr(sys_name);
-        }
-        // The running system's hostName does not match any flake attribute.
-        // This is typical when all configurations share the same networking.hostName
-        // (e.g. "vexos") but have distinct attribute names (e.g. "vexos-nvidia").
-        // There is no standard NixOS mechanism that records which attribute was used
-        // to build the running system, so we cannot determine it automatically.
-        return Err(format!(
-            "Cannot determine the active NixOS configuration automatically. \
-             The running system is '{}', but that does not match any available \
-             configuration: {}. \
-             Create /etc/nixos/up-flake-attr containing the correct name, e.g.: \
-             sudo sh -c 'echo vexos-nvidia > /etc/nixos/up-flake-attr'",
-            sys_name,
-            names.join(", "),
-        ));
+        Err(e) => Err(format!(
+            "Cannot read {}: {}. This file must exist and contain the flake attribute name. \
+             If this is a VexOS system, ensure the variant file was created during system configuration.",
+            VARIANT_FILE, e
+        )),
     }
-
-    // Step 5: nix eval unavailable — fall back to raw hostname.
-    validate_flake_attr(&nixos_hostname())
 }
 
 pub struct NixBackend;
