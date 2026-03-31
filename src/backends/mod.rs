@@ -49,7 +49,10 @@ pub trait Backend: Send + Sync {
     fn description(&self) -> &str;
     fn icon_name(&self) -> &str;
 
-    fn run_update<'a>(&'a self, runner: &'a CommandRunner) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>>;
+    fn run_update<'a>(
+        &'a self,
+        runner: &'a CommandRunner,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>>;
 
     /// Count packages available for update (read-only, no privilege required).
     /// Returns Ok(0) if up to date, Ok(N) if N updates available, Err(_) on failure.

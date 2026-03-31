@@ -428,9 +428,8 @@ impl UpgradePage {
                                         upgrade_btn_for_avail.set_sensitive(false);
                                     }
                                 } else {
-                                    upgrade_row_clone.set_subtitle(
-                                        "Could not determine upgrade availability",
-                                    );
+                                    upgrade_row_clone
+                                        .set_subtitle("Could not determine upgrade availability");
                                 }
                             });
                         }

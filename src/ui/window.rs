@@ -95,8 +95,7 @@ impl UpWindow {
             .description("Package managers detected on this system")
             .build();
 
-        let detected: Rc<RefCell<Vec<Arc<dyn Backend>>>> =
-            Rc::new(RefCell::new(Vec::new()));
+        let detected: Rc<RefCell<Vec<Arc<dyn Backend>>>> = Rc::new(RefCell::new(Vec::new()));
 
         let rows: Rc<RefCell<Vec<(BackendKind, UpdateRow)>>> = Rc::new(RefCell::new(Vec::new()));
 
@@ -255,8 +254,7 @@ impl UpWindow {
 
         // Spawn backend detection off the GTK thread.
         {
-            let (detect_tx, detect_rx) =
-                async_channel::unbounded::<Vec<Arc<dyn Backend>>>();
+            let (detect_tx, detect_rx) = async_channel::unbounded::<Vec<Arc<dyn Backend>>>();
 
             let detected_fill = detected.clone();
             let rows_fill = rows.clone();

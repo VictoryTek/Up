@@ -23,7 +23,10 @@ impl Backend for FlatpakBackend {
         "system-software-install-symbolic"
     }
 
-    fn run_update<'a>(&'a self, runner: &'a CommandRunner) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+    fn run_update<'a>(
+        &'a self,
+        runner: &'a CommandRunner,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
         Box::pin(async move {
             match runner.run("flatpak", &["update", "-y"]).await {
                 Ok(output) => {

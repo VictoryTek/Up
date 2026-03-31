@@ -416,7 +416,9 @@ fn upgrade_fedora(tx: &async_channel::Sender<String>) -> Result<(), String> {
         &["dnf", "install", "-y", "dnf-plugin-system-upgrade"],
         tx,
     ) {
-        return Err("Failed to install dnf-plugin-system-upgrade (see log for details)".to_string());
+        return Err(
+            "Failed to install dnf-plugin-system-upgrade (see log for details)".to_string(),
+        );
     }
 
     // Step 2: Download upgrade packages (next version)

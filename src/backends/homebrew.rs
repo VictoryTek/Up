@@ -23,7 +23,10 @@ impl Backend for HomebrewBackend {
         "system-software-install-symbolic"
     }
 
-    fn run_update<'a>(&'a self, runner: &'a CommandRunner) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+    fn run_update<'a>(
+        &'a self,
+        runner: &'a CommandRunner,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
         Box::pin(async move {
             if let Err(e) = runner.run("brew", &["update"]).await {
                 return UpdateResult::Error(e);
