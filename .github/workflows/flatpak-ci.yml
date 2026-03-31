@@ -52,7 +52,8 @@ jobs:
             cmake \
             ninja-build \
             desktop-file-utils \
-            gettext
+            gettext \
+            libunwind-dev
 
       - name: Run cargo fmt check
         run: cargo fmt --check

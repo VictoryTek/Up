@@ -161,16 +161,10 @@ impl Backend for NixBackend {
                 } else {
                     // Legacy NixOS channels: update channel metadata first,
                     // then rebuild the system.
-                    if let Err(e) = runner
-                        .run("pkexec", &["nix-channel", "--update"])
-                        .await
-                    {
+                    if let Err(e) = runner.run("pkexec", &["nix-channel", "--update"]).await {
                         return UpdateResult::Error(e);
                     }
-                    match runner
-                        .run("pkexec", &["nixos-rebuild", "switch"])
-                        .await
-                    {
+                    match runner.run("pkexec", &["nixos-rebuild", "switch"]).await {
                         Ok(output) => UpdateResult::Success {
                             updated_count: output.lines().filter(|l| !l.is_empty()).count(),
                         },
