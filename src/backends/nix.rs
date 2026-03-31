@@ -99,7 +99,10 @@ impl Backend for NixBackend {
         "system-software-install-symbolic"
     }
 
-    fn run_update<'a>(&'a self, runner: &'a CommandRunner) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+    fn run_update<'a>(
+        &'a self,
+        runner: &'a CommandRunner,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
         Box::pin(async move {
             if is_nixos() {
                 if is_nixos_flake() {
@@ -154,7 +157,10 @@ impl Backend for NixBackend {
                         .await
                     {
                         Ok(output) => UpdateResult::Success {
-                            updated_count: output.lines().filter(|l| !l.is_empty()).count(),
+                            updated_count: output
+                                .lines()
+                                .filter(|l| l.contains("upgrading"))
+                                .count(),
                         },
                         Err(e) => UpdateResult::Error(e),
                     }
@@ -166,7 +172,10 @@ impl Backend for NixBackend {
                     }
                     match runner.run("pkexec", &["nixos-rebuild", "switch"]).await {
                         Ok(output) => UpdateResult::Success {
-                            updated_count: output.lines().filter(|l| !l.is_empty()).count(),
+                            updated_count: output
+                                .lines()
+                                .filter(|l| l.contains("upgrading"))
+                                .count(),
                         },
                         Err(e) => UpdateResult::Error(e),
                     }
@@ -191,14 +200,20 @@ impl Backend for NixBackend {
                 if use_flakes {
                     match runner.run("nix", &["profile", "upgrade", ".*"]).await {
                         Ok(output) => UpdateResult::Success {
-                            updated_count: output.lines().filter(|l| !l.is_empty()).count(),
+                            updated_count: output
+                                .lines()
+                                .filter(|l| !l.is_empty())
+                                .count(),
                         },
                         Err(e) => UpdateResult::Error(e),
                     }
                 } else {
                     match runner.run("nix-env", &["-u"]).await {
                         Ok(output) => UpdateResult::Success {
-                            updated_count: output.lines().filter(|l| l.contains("upgrading")).count(),
+                            updated_count: output
+                                .lines()
+                                .filter(|l| l.contains("upgrading"))
+                                .count(),
                         },
                         Err(e) => UpdateResult::Error(e),
                     }
@@ -224,12 +239,7 @@ impl Backend for NixBackend {
                     let count = lock
                         .get("nodes")
                         .and_then(|n| n.as_object())
-                        .map(|nodes| {
-                            nodes
-                                .values()
-                                .filter(|v| v.get("locked").is_some())
-                                .count()
-                        })
+                        .map(|nodes| nodes.values().filter(|v| v.get("locked").is_some()).count())
                         .unwrap_or(0);
                     Ok(count)
                 } else {

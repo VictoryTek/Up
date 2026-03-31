@@ -393,9 +393,7 @@ impl UpgradePage {
                                 .title("NixOS Config Type")
                                 .subtitle(&config_label)
                                 .build();
-                            config_row.add_prefix(&gtk::Image::from_icon_name(
-                                "emblem-system-symbolic",
-                            ));
+                            config_row.add_prefix(&gtk::Image::from_icon_name("emblem-system-symbolic"));
                             info_group_fill.add(&config_row);
                             // Update first check row title for NixOS
                             if let Some(row) = check_rows_fill.borrow().first() {
@@ -415,8 +413,7 @@ impl UpgradePage {
                             glib::spawn_future_local(async move {
                                 let (tx, rx) = async_channel::unbounded::<String>();
                                 std::thread::spawn(move || {
-                                    let result =
-                                        upgrade::check_upgrade_available(&distro_check);
+                                    let result = upgrade::check_upgrade_available(&distro_check);
                                     let _ = tx.send_blocking(result);
                                     drop(tx);
                                 });
