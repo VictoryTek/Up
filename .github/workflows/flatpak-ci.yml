@@ -52,8 +52,6 @@ jobs:
             cmake \
             ninja-build \
             desktop-file-utils \
-            libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev \
             gettext
 
       - name: Run cargo fmt check
