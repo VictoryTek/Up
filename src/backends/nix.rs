@@ -159,7 +159,7 @@ impl Backend for NixBackend {
                         Ok(output) => UpdateResult::Success {
                             updated_count: output
                                 .lines()
-                                .filter(|l| l.contains("upgrading"))
+                                .filter(|l| !l.is_empty())
                                 .count(),
                         },
                         Err(e) => UpdateResult::Error(e),
