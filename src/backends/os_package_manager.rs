@@ -53,7 +53,13 @@ impl Backend for AptBackend {
             match runner
                 .run(
                     "pkexec",
-                    &["env", "DEBIAN_FRONTEND=noninteractive", "apt", "upgrade", "-y"],
+                    &[
+                        "env",
+                        "DEBIAN_FRONTEND=noninteractive",
+                        "apt",
+                        "upgrade",
+                        "-y",
+                    ],
                 )
                 .await
             {
@@ -117,10 +123,7 @@ impl Backend for DnfBackend {
         runner: &'a CommandRunner,
     ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
         Box::pin(async move {
-            match runner
-                .run("pkexec", &["dnf", "upgrade", "-y"])
-                .await
-            {
+            match runner.run("pkexec", &["dnf", "upgrade", "-y"]).await {
                 Ok(output) => {
                     let count = count_dnf_upgraded(&output);
                     UpdateResult::Success {

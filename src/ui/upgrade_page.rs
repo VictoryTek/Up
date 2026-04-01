@@ -306,10 +306,9 @@ impl UpgradePage {
                             log_ref2.append_line(&line);
                         }
 
-                        let outcome =
-                            result_rx.recv().await.unwrap_or_else(|_| {
-                                Err("Upgrade result channel closed unexpectedly".to_string())
-                            });
+                        let outcome = result_rx.recv().await.unwrap_or_else(|_| {
+                            Err("Upgrade result channel closed unexpectedly".to_string())
+                        });
                         button_ref2.set_sensitive(true);
 
                         match outcome {

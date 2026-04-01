@@ -505,8 +505,7 @@ fn upgrade_nixos(tx: &async_channel::Sender<String>) -> Result<(), String> {
             let cmd = format!("{NIX_PATH_EXPORT} && nix flake update --flake /etc/nixos");
             if !crate::runner::run_command_sync("pkexec", &["sh", "-c", &cmd], tx) {
                 return Err(
-                    "Failed to update flake inputs in /etc/nixos (see log for details)"
-                        .to_string(),
+                    "Failed to update flake inputs in /etc/nixos (see log for details)".to_string(),
                 );
             }
             // Validate before embedding in the Nix flake URL. An unvalidated hostname
