@@ -24,7 +24,7 @@ jobs:
   
   native-build:
     name: Native Build & Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
@@ -85,7 +85,7 @@ jobs:
   
   flatpak:
     name: Flatpak Build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: native-build
     container:
       image: ghcr.io/flatpak/flatpak-builder:ubuntu-22.04
@@ -147,7 +147,7 @@ jobs:
   
   validation:
     name: CI Validation
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [native-build, flatpak]
     if: always()
     steps:
