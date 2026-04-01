@@ -93,7 +93,7 @@ impl UpgradePage {
                 .title(*label)
                 .subtitle("Checking...")
                 .build();
-            row.add_prefix(&gtk::Image::from_icon_name(*icon));
+            row.add_prefix(&gtk::Image::from_icon_name(icon));
 
             let status_icon = gtk::Image::from_icon_name("content-loading-symbolic");
             row.add_suffix(&status_icon);

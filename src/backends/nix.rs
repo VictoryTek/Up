@@ -17,13 +17,6 @@ fn is_nixos_flake() -> bool {
     std::path::Path::new("/etc/nixos/flake.nix").exists()
 }
 
-fn nixos_hostname() -> String {
-    std::fs::read_to_string("/proc/sys/kernel/hostname")
-        .unwrap_or_else(|_| "nixos".to_owned())
-        .trim()
-        .to_string()
-}
-
 /// Validates that a string is safe to use as a NixOS flake output attribute.
 /// Only ASCII alphanumeric, hyphen, underscore, and dot are permitted.
 fn validate_flake_attr(name: &str) -> Result<String, String> {

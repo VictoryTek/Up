@@ -31,7 +31,7 @@ impl UpApplication {
 
         gtk::Window::set_default_icon_name("io.github.up");
 
-        let window = UpWindow::new(app);
+        let window = UpWindow::build(app);
         window.present();
     }
 }

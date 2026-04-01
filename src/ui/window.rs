@@ -12,7 +12,7 @@ use std::sync::Arc;
 pub struct UpWindow;
 
 impl UpWindow {
-    pub fn new(app: &adw::Application) -> adw::ApplicationWindow {
+    pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
         let window = adw::ApplicationWindow::builder()
             .application(app)
             .title("Up")
