@@ -2,7 +2,7 @@
   description = "Up — a modern Linux system update & upgrade app";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -24,6 +24,8 @@
           nativeBuildInputs = with pkgs; [
             pkg-config
             wrapGAppsHook4
+            glib
+            gtk4
           ];
 
           buildInputs = with pkgs; [
@@ -53,6 +55,7 @@
 
           meta = with pkgs.lib; {
             description = "A modern Linux system update & upgrade app";
+            homepage = "https://github.com/user/up";
             license = licenses.gpl3Plus;
             platforms = platforms.linux;
             mainProgram = "up";
