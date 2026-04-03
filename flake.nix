@@ -24,14 +24,15 @@
           nativeBuildInputs = with pkgs; [
             pkg-config
             wrapGAppsHook4
+            # glib provides glib-compile-resources (used by build.rs via glib-build-tools)
             glib
+            # gtk4 provides gtk4-update-icon-cache used in postInstall
             gtk4
           ];
 
           buildInputs = with pkgs; [
             gtk4
             libadwaita
-            glib
             dbus
             hicolor-icon-theme
           ];
@@ -81,5 +82,11 @@
             dbus
           ];
         };
-      });
-}
+      }) // {
+        # Expose an overlay so NixOS configs can do:
+        #   nixpkgs.overlays = [ inputs.up.overlays.default ];
+        #   environment.systemPackages = [ pkgs.up ];
+        overlays.default = final: prev: {
+          up = self.packages.${final.stdenv.system}.default;
+        };
+      };
