@@ -7,8 +7,22 @@ pub fn is_available() -> bool {
     which::which("nix").is_ok()
 }
 
-/// True when running on NixOS (the /etc/nixos directory is present).
+/// True when running on NixOS.
+///
+/// Uses multiple indicators in order of reliability:
+/// 1. `/run/current-system` — NixOS-specific symlink created by the activation
+///    script; present on every running NixOS system regardless of config location.
+/// 2. `ID=nixos` in `/etc/os-release` — standard OS identifier.
+/// 3. `/etc/nixos` — legacy fallback for traditional config locations.
 fn is_nixos() -> bool {
+    if std::path::Path::new("/run/current-system").exists() {
+        return true;
+    }
+    if let Ok(content) = std::fs::read_to_string("/etc/os-release") {
+        if content.lines().any(|l| l.trim() == "ID=nixos") {
+            return true;
+        }
+    }
     std::path::Path::new("/etc/nixos").exists()
 }
 
