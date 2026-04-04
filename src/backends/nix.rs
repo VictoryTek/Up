@@ -83,6 +83,32 @@ fn resolve_nixos_flake_attr() -> Result<String, String> {
     }
 }
 
+/// Parse the combined stdout+stderr output of Nix build commands to count how
+/// many store paths were actually built or fetched.
+///
+/// Nix emits lines of the form:
+///   "these N derivations will be built:"
+///   "these N paths will be fetched (X MiB download, Y MiB unpacked):"
+///
+/// These lines are only present when real work is done. When the system is
+/// already up to date they are absent, so this function correctly returns 0.
+fn count_nix_store_operations(output: &str) -> usize {
+    let mut total = 0usize;
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("these ")
+            && (trimmed.contains("derivations will be built")
+                || trimmed.contains("paths will be fetched"))
+        {
+            let after_these = &trimmed["these ".len()..];
+            if let Some(n_str) = after_these.split_whitespace().next() {
+                total += n_str.parse::<usize>().unwrap_or(0);
+            }
+        }
+    }
+    total
+}
+
 pub struct NixBackend;
 
 impl Backend for NixBackend {
@@ -148,10 +174,7 @@ impl Backend for NixBackend {
                         .await
                     {
                         Ok(output) => UpdateResult::Success {
-                            updated_count: output
-                                .lines()
-                                .filter(|l| !l.is_empty())
-                                .count(),
+                            updated_count: count_nix_store_operations(&output),
                         },
                         Err(e) => UpdateResult::Error(e),
                     }
@@ -170,10 +193,7 @@ impl Backend for NixBackend {
                         )
                         .await {
                         Ok(output) => UpdateResult::Success {
-                            updated_count: output
-                                .lines()
-                                .filter(|l| l.contains("upgrading"))
-                                .count(),
+                            updated_count: count_nix_store_operations(&output),
                         },
                         Err(e) => UpdateResult::Error(e),
                     }
@@ -198,7 +218,7 @@ impl Backend for NixBackend {
                 if use_flakes {
                     match runner.run("nix", &["profile", "upgrade", ".*"]).await {
                         Ok(output) => UpdateResult::Success {
-                            updated_count: output.lines().filter(|l| !l.is_empty()).count(),
+                            updated_count: count_nix_store_operations(&output),
                         },
                         Err(e) => UpdateResult::Error(e),
                     }
