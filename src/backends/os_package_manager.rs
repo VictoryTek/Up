@@ -239,7 +239,10 @@ impl Backend for ZypperBackend {
         Box::pin(async move {
             // Single pkexec invocation so polkit only prompts once.
             match runner
-                .run("pkexec", &["sh", "-c", "zypper refresh && zypper update -y"])
+                .run(
+                    "pkexec",
+                    &["sh", "-c", "zypper refresh && zypper update -y"],
+                )
                 .await
             {
                 Ok(output) => {
