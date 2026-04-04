@@ -215,27 +215,12 @@ impl Backend for NixBackend {
     fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
         Box::pin(async move {
             if is_nixos() {
-                if is_nixos_flake() {
-                    // For flake-based NixOS: parse the lock file to count tracked inputs.
-                    // This is read-only, requires no network, and has no side effects.
-                    // We report the number of locked inputs as an informational count —
-                    // a full freshness check would require a network fetch which belongs
-                    // only in run_update.
-                    let lock_content = tokio::fs::read_to_string("/etc/nixos/flake.lock")
-                        .await
-                        .map_err(|e| format!("Cannot read /etc/nixos/flake.lock: {e}"))?;
-                    let lock: serde_json::Value = serde_json::from_str(&lock_content)
-                        .map_err(|e| format!("Cannot parse flake.lock: {e}"))?;
-                    let count = lock
-                        .get("nodes")
-                        .and_then(|n| n.as_object())
-                        .map(|nodes| nodes.values().filter(|v| v.get("locked").is_some()).count())
-                        .unwrap_or(0);
-                    Ok(count)
-                } else {
-                    // Legacy NixOS channels have no unprivileged check mechanism.
-                    Err("Click Update All to check".to_string())
-                }
+                // NixOS (both flake and legacy channel) cannot determine whether
+                // updates are available without a network fetch, which belongs only
+                // in run_update. Reporting the number of locked flake inputs is
+                // misleading — those are pinned dependencies, not pending upgrades,
+                // and the count never changes after running an update.
+                return Err("Run Update All to check".to_string());
             } else {
                 let out = tokio::process::Command::new("nix-env")
                     .args(["-u", "--dry-run"])
