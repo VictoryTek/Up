@@ -92,7 +92,6 @@ impl Backend for FlatpakBackend {
                         .split(']')
                         .nth(1)
                         .unwrap_or("")
-                        .trim()
                         .split_whitespace()
                         .next()
                         .map(|s| s.to_string())
