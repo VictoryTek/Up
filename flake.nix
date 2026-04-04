@@ -90,3 +90,4 @@
           up = self.packages.${final.stdenv.system}.default;
         };
       };
+}
