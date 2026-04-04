@@ -76,6 +76,25 @@ impl Backend for AptBackend {
             Ok(text.lines().filter(|l| l.contains('/')).count())
         })
     }
+
+    fn list_available(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+        Box::pin(async move {
+            let out = tokio::process::Command::new("apt")
+                .args(["list", "--upgradable"])
+                .output()
+                .await
+                .map_err(|e| e.to_string())?;
+            let text = String::from_utf8_lossy(&out.stdout);
+            // Lines like: "htop/noble,now 3.3.0 amd64 [upgradable from: 3.2.2]"
+            Ok(text
+                .lines()
+                .filter(|l| l.contains('/'))
+                .filter_map(|l| l.split('/').next().map(|s| s.to_string()))
+                .collect())
+        })
+    }
 }
 
 fn count_apt_upgraded(output: &str) -> usize {
@@ -142,6 +161,33 @@ impl Backend for DnfBackend {
                 .filter(|l| !l.is_empty() && !l.starts_with("Last") && !l.starts_with("Obsoleting"))
                 .count();
             Ok(count)
+        })
+    }
+
+    fn list_available(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+        Box::pin(async move {
+            let out = tokio::process::Command::new("dnf")
+                .args(["check-update"])
+                .output()
+                .await
+                .map_err(|e| e.to_string())?;
+            // Exit code 1 = error; 0 = up to date; 100 = updates available
+            if out.status.code() == Some(1) {
+                return Err("dnf check-update failed".to_string());
+            }
+            let text = String::from_utf8_lossy(&out.stdout);
+            Ok(text
+                .lines()
+                .filter(|l| {
+                    !l.is_empty()
+                        && !l.starts_with("Last")
+                        && !l.starts_with("Obsoleting")
+                        && !l.starts_with("Security")
+                })
+                .filter_map(|l| l.split_whitespace().next().map(|s| s.to_string()))
+                .collect())
         })
     }
 }
@@ -213,6 +259,25 @@ impl Backend for PacmanBackend {
             Ok(text.lines().filter(|l| !l.is_empty()).count())
         })
     }
+
+    fn list_available(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+        Box::pin(async move {
+            let out = tokio::process::Command::new("pacman")
+                .args(["-Qu"])
+                .output()
+                .await
+                .map_err(|e| e.to_string())?;
+            let text = String::from_utf8_lossy(&out.stdout);
+            // Each line: "pkgname old-ver -> new-ver" — extract package name
+            Ok(text
+                .lines()
+                .filter(|l| !l.is_empty())
+                .filter_map(|l| l.split_whitespace().next().map(|s| s.to_string()))
+                .collect())
+        })
+    }
 }
 
 // --- Zypper ---
@@ -265,6 +330,26 @@ impl Backend for ZypperBackend {
                 .map_err(|e| e.to_string())?;
             let text = String::from_utf8_lossy(&out.stdout);
             Ok(text.lines().filter(|l| l.starts_with("v ")).count())
+        })
+    }
+
+    fn list_available(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+        Box::pin(async move {
+            let out = tokio::process::Command::new("zypper")
+                .args(["list-updates"])
+                .output()
+                .await
+                .map_err(|e| e.to_string())?;
+            let text = String::from_utf8_lossy(&out.stdout);
+            // Table rows starting with "v " — extract 3rd column (package name)
+            Ok(text
+                .lines()
+                .filter(|l| l.starts_with("v "))
+                .filter_map(|l| l.split('|').nth(2).map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .collect())
         })
     }
 }

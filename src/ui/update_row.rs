@@ -1,13 +1,17 @@
 use adw::prelude::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use crate::backends::Backend;
 
 #[derive(Clone)]
 pub struct UpdateRow {
-    pub row: adw::ActionRow,
+    pub row: adw::ExpanderRow,
     status_label: gtk::Label,
     spinner: gtk::Spinner,
     progress_bar: gtk::ProgressBar,
+    /// Tracks child rows added by set_packages() so they can be cleared on re-check.
+    pkg_rows: Rc<RefCell<Vec<adw::ActionRow>>>,
 }
 
 impl UpdateRow {
@@ -27,7 +31,7 @@ impl UpdateRow {
 
         let icon = gtk::Image::from_icon_name(backend.icon_name());
 
-        let row = adw::ActionRow::builder()
+        let row = adw::ExpanderRow::builder()
             .title(backend.display_name())
             .subtitle(backend.description())
             .build();
@@ -42,6 +46,39 @@ impl UpdateRow {
             status_label,
             spinner,
             progress_bar,
+            pkg_rows: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    /// Populate the expander with a list of pending package names.
+    /// Clears any previously added rows before adding new ones.
+    /// Caps display at 50 items with a summary row for the remainder.
+    pub fn set_packages(&self, packages: &[String]) {
+        // Remove previously added package rows to avoid duplicates on re-check.
+        {
+            let mut tracked = self.pkg_rows.borrow_mut();
+            for pkg_row in tracked.drain(..) {
+                self.row.remove(&pkg_row);
+            }
+        }
+        if packages.is_empty() {
+            return;
+        }
+        const MAX_PACKAGES: usize = 50;
+        let display_count = packages.len().min(MAX_PACKAGES);
+        let mut tracked = self.pkg_rows.borrow_mut();
+        for pkg in &packages[..display_count] {
+            let pkg_row = adw::ActionRow::builder().title(pkg.as_str()).build();
+            self.row.add_row(&pkg_row);
+            tracked.push(pkg_row);
+        }
+        if packages.len() > MAX_PACKAGES {
+            let remaining = packages.len() - MAX_PACKAGES;
+            let more_row = adw::ActionRow::builder()
+                .title(format!("\u{2026} and {remaining} more").as_str())
+                .build();
+            self.row.add_row(&more_row);
+            tracked.push(more_row);
         }
     }
 

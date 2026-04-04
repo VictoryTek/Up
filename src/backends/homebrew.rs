@@ -57,4 +57,23 @@ impl Backend for HomebrewBackend {
             Ok(text.lines().filter(|l| !l.is_empty()).count())
         })
     }
+
+    fn list_available(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+        Box::pin(async move {
+            let out = tokio::process::Command::new("brew")
+                .args(["outdated"])
+                .output()
+                .await
+                .map_err(|e| e.to_string())?;
+            let text = String::from_utf8_lossy(&out.stdout);
+            // Each line is "pkgname (old-version) < new-version" or just "pkgname"
+            Ok(text
+                .lines()
+                .filter(|l| !l.is_empty())
+                .filter_map(|l| l.split_whitespace().next().map(|s| s.to_string()))
+                .collect())
+        })
+    }
 }

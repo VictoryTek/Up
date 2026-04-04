@@ -60,6 +60,17 @@ pub trait Backend: Send + Sync {
     fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
         Box::pin(async { Ok(0) })
     }
+
+    /// Return a human-readable list of package names pending update.
+    /// Each element is a short package identifier (e.g., "htop").
+    /// Returns Ok(vec![]) for backends that cannot enumerate packages without
+    /// performing the update (e.g., NixOS).
+    /// Default implementation returns Ok(vec![]) for backward compatibility.
+    fn list_available(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
 }
 
 /// Detect all available backends on the current system.

@@ -5,7 +5,7 @@ use crate::ui::update_row::UpdateRow;
 use crate::ui::upgrade_page::UpgradePage;
 use adw::prelude::*;
 use gtk::glib;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -222,11 +222,34 @@ impl UpWindow {
         scrolled.set_child(Some(&clamp));
         page_box.append(&scrolled);
 
+        // Shared state for gating the Update All button on check completion.
+        let pending_checks: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
+        let total_available: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
+        let check_epoch: Rc<Cell<u64>> = Rc::new(Cell::new(0));
+
         // Build the availability-check closure. Shared with the header refresh button.
         let run_checks: Rc<dyn Fn()> = {
             let rows = rows.clone();
             let detected = detected.clone();
+            let update_button_checks = update_button.clone();
+            let pending_checks = pending_checks.clone();
+            let total_available = total_available.clone();
+            let check_epoch = check_epoch.clone();
+            let status_label_checks = status_label.clone();
             Rc::new(move || {
+                let n = detected.borrow().len();
+                if n == 0 {
+                    return;
+                }
+                // Disable button and reset counters at the start of each check cycle.
+                update_button_checks.set_sensitive(false);
+                *pending_checks.borrow_mut() = n;
+                *total_available.borrow_mut() = 0;
+                // Increment epoch to invalidate in-flight futures from the previous check.
+                check_epoch.set(check_epoch.get() + 1);
+                let my_epoch = check_epoch.get();
+                status_label_checks.set_label("Checking for updates...");
+
                 for (idx, backend) in detected.borrow().iter().enumerate() {
                     {
                         let borrowed = rows.borrow();
@@ -234,17 +257,54 @@ impl UpWindow {
                     }
                     let backend_clone = backend.clone();
                     let rows_ref = rows.clone();
+                    let pending_ref = pending_checks.clone();
+                    let total_ref = total_available.clone();
+                    let btn_ref = update_button_checks.clone();
+                    let status_ref = status_label_checks.clone();
+                    let epoch_ref = check_epoch.clone();
                     glib::spawn_future_local(async move {
-                        let (tx, rx) = async_channel::bounded::<Result<usize, String>>(1);
+                        type CheckPayload = (Result<usize, String>, Result<Vec<String>, String>);
+                        let (tx, rx) = async_channel::bounded::<CheckPayload>(1);
                         super::spawn_background_async(move || async move {
-                            let result = backend_clone.count_available().await;
-                            let _ = tx.send(result).await;
+                            let count = backend_clone.count_available().await;
+                            let list = backend_clone.list_available().await;
+                            let _ = tx.send((count, list)).await;
                         });
-                        if let Ok(result) = rx.recv().await {
+                        if let Ok((count_result, list_result)) = rx.recv().await {
+                            // Discard results from a superseded check cycle.
+                            if epoch_ref.get() != my_epoch {
+                                return;
+                            }
                             let row = rows_ref.borrow()[idx].1.clone();
-                            match result {
-                                Ok(count) => row.set_status_available(count),
-                                Err(msg) => row.set_status_unknown(&msg),
+                            match count_result {
+                                Ok(count) => {
+                                    row.set_status_available(count);
+                                    *total_ref.borrow_mut() += count;
+                                }
+                                Err(msg) => {
+                                    row.set_status_unknown(&msg);
+                                }
+                            }
+                            match list_result {
+                                Ok(packages) => row.set_packages(&packages),
+                                Err(_) => row.set_packages(&[]),
+                            }
+                            let remaining = {
+                                let mut p = pending_ref.borrow_mut();
+                                *p -= 1;
+                                *p
+                            };
+                            if remaining == 0 {
+                                let total = *total_ref.borrow();
+                                if total > 0 {
+                                    btn_ref.set_sensitive(true);
+                                    status_ref.set_label(&format!(
+                                        "{total} update{} available",
+                                        if total == 1 { "" } else { "s" }
+                                    ));
+                                } else {
+                                    status_ref.set_label("Everything is up to date.");
+                                }
                             }
                         }
                     });
@@ -260,7 +320,6 @@ impl UpWindow {
             let rows_fill = rows.clone();
             let group_fill = backends_group.clone();
             let run_checks_after_detect = run_checks.clone();
-            let update_button_ref = update_button.clone();
 
             super::spawn_background_async(move || async move {
                 let backends = crate::backends::detect_backends();
@@ -282,9 +341,7 @@ impl UpWindow {
                     }
                     // Store backends
                     *detected_fill.borrow_mut() = new_backends;
-                    // Enable update button now that backends are ready
-                    update_button_ref.set_sensitive(true);
-                    // Trigger availability check
+                    // Trigger availability check (enables Update All only if updates are found)
                     (*run_checks_after_detect)();
                 } else {
                     eprintln!("Backend detection failed; no backends detected.");

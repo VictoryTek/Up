@@ -258,4 +258,29 @@ impl Backend for NixBackend {
             }
         })
     }
+
+    fn list_available(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+        Box::pin(async move {
+            if is_nixos() {
+                // NixOS cannot enumerate pending updates without a network fetch.
+                // Return empty list; UI degrades gracefully (no expand affordance).
+                Ok(Vec::new())
+            } else {
+                let out = tokio::process::Command::new("nix-env")
+                    .args(["-u", "--dry-run"])
+                    .output()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                // nix-env --dry-run emits "upgrading 'name-1.0' to 'name-2.0'" on stderr
+                let text = String::from_utf8_lossy(&out.stderr);
+                Ok(text
+                    .lines()
+                    .filter(|l| l.contains("upgrading"))
+                    .filter_map(|l| l.split('\'').nth(1).map(|s| s.to_string()))
+                    .collect())
+            }
+        })
+    }
 }
