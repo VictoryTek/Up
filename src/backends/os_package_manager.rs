@@ -41,24 +41,15 @@ impl Backend for AptBackend {
         runner: &'a CommandRunner,
     ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
         Box::pin(async move {
-            if let Err(e) = runner
-                .run(
-                    "pkexec",
-                    &["env", "DEBIAN_FRONTEND=noninteractive", "apt", "update"],
-                )
-                .await
-            {
-                return UpdateResult::Error(e);
-            }
+            // Single pkexec invocation so polkit only prompts once.
             match runner
                 .run(
                     "pkexec",
                     &[
-                        "env",
-                        "DEBIAN_FRONTEND=noninteractive",
-                        "apt",
-                        "upgrade",
-                        "-y",
+                        "sh",
+                        "-c",
+                        "DEBIAN_FRONTEND=noninteractive apt update && \
+                         DEBIAN_FRONTEND=noninteractive apt upgrade -y",
                     ],
                 )
                 .await
@@ -246,10 +237,11 @@ impl Backend for ZypperBackend {
         runner: &'a CommandRunner,
     ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
         Box::pin(async move {
-            if let Err(e) = runner.run("pkexec", &["zypper", "refresh"]).await {
-                return UpdateResult::Error(e);
-            }
-            match runner.run("pkexec", &["zypper", "update", "-y"]).await {
+            // Single pkexec invocation so polkit only prompts once.
+            match runner
+                .run("pkexec", &["sh", "-c", "zypper refresh && zypper update -y"])
+                .await
+            {
                 Ok(output) => {
                     let count = output.lines().filter(|l| l.contains("done")).count();
                     UpdateResult::Success {

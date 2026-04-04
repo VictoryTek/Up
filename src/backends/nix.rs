@@ -122,43 +122,27 @@ impl Backend for NixBackend {
                         Ok(n) => n,
                         Err(e) => return UpdateResult::Error(e),
                     };
-                    // Export the NixOS binary paths explicitly: pkexec resets PATH
-                    // to standard directories that typically do not include Nix
-                    // tooling on NixOS. Use two separate runner.run() calls instead
-                    // of sh -c to avoid shell injection.
-                    //
-                    // Call 1: update flake inputs, passing /etc/nixos as an argument.
-                    if let Err(e) = runner
-                        .run(
-                            "pkexec",
-                            &[
-                                "env",
-                                "PATH=/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin",
-                                "nix",
-                                "--extra-experimental-features",
-                                "nix-command flakes",
-                                "flake",
-                                "update",
-                                "--flake",
-                                "/etc/nixos",
-                            ],
-                        )
-                        .await
-                    {
-                        return UpdateResult::Error(e);
-                    }
-                    // Call 2: rebuild the system with the resolved configuration name.
-                    let flake_arg = format!("/etc/nixos#{}", config_name);
+                    // Single pkexec invocation so polkit only prompts once.
+                    // pkexec resets PATH, so we restore the NixOS binary paths
+                    // explicitly via `env PATH=...` before invoking sh.
+                    // config_name is validated by validate_flake_attr (ASCII
+                    // alphanumeric / hyphen / underscore / dot only), so it is
+                    // safe to interpolate into the shell command string.
+                    let cmd = format!(
+                        "nix --extra-experimental-features 'nix-command flakes' \
+                         flake update --flake /etc/nixos && \
+                         nixos-rebuild switch --flake /etc/nixos#{}",
+                        config_name
+                    );
                     match runner
                         .run(
                             "pkexec",
                             &[
                                 "env",
                                 "PATH=/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin",
-                                "nixos-rebuild",
-                                "switch",
-                                "--flake",
-                                &flake_arg,
+                                "sh",
+                                "-c",
+                                &cmd,
                             ],
                         )
                         .await
@@ -172,12 +156,19 @@ impl Backend for NixBackend {
                         Err(e) => UpdateResult::Error(e),
                     }
                 } else {
-                    // Legacy NixOS channels: update channel metadata first,
-                    // then rebuild the system.
-                    if let Err(e) = runner.run("pkexec", &["nix-channel", "--update"]).await {
-                        return UpdateResult::Error(e);
-                    }
-                    match runner.run("pkexec", &["nixos-rebuild", "switch"]).await {
+                    // Legacy NixOS channels: single pkexec so polkit only prompts once.
+                    match runner
+                        .run(
+                            "pkexec",
+                            &[
+                                "env",
+                                "PATH=/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin",
+                                "sh",
+                                "-c",
+                                "nix-channel --update && nixos-rebuild switch",
+                            ],
+                        )
+                        .await {
                         Ok(output) => UpdateResult::Success {
                             updated_count: output
                                 .lines()
