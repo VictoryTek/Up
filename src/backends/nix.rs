@@ -234,7 +234,7 @@ impl Backend for NixBackend {
                 // in run_update. Reporting the number of locked flake inputs is
                 // misleading — those are pinned dependencies, not pending upgrades,
                 // and the count never changes after running an update.
-                return Err("Run Update All to check".to_string());
+                Err("Run Update All to check".to_string())
             } else {
                 let out = tokio::process::Command::new("nix-env")
                     .args(["-u", "--dry-run"])
