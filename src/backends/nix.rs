@@ -109,6 +109,166 @@ fn count_nix_store_operations(output: &str) -> usize {
     total
 }
 
+/// Compare two flake.lock JSON values and return the names of inputs whose
+/// locked revision or `lastModified` timestamp changed between the two files.
+/// New inputs (present in `new` but absent in `old`) are also reported.
+fn compare_lock_nodes(old: &serde_json::Value, new: &serde_json::Value) -> Vec<String> {
+    let old_nodes = old["nodes"].as_object();
+    let new_nodes = new["nodes"].as_object();
+    let mut changed = Vec::new();
+    if let (Some(old_map), Some(new_map)) = (old_nodes, new_nodes) {
+        for (name, new_val) in new_map {
+            if name == "root" {
+                continue;
+            }
+            if let Some(old_val) = old_map.get(name) {
+                let old_rev = &old_val["locked"]["rev"];
+                let new_rev = &new_val["locked"]["rev"];
+                let old_mod = &old_val["locked"]["lastModified"];
+                let new_mod = &new_val["locked"]["lastModified"];
+                if old_rev != new_rev || old_mod != new_mod {
+                    changed.push(name.clone());
+                }
+            } else {
+                // Input newly added in the updated lock.
+                changed.push(name.clone());
+            }
+        }
+    }
+    changed
+}
+
+/// Try `nix flake update --dry-run /etc/nixos` (Nix ≥ 2.19).
+///
+/// Returns:
+/// - `Ok(Some(inputs))` – success; `inputs` is the list of changed input names.
+/// - `Ok(None)`         – `--dry-run` flag is not recognised; caller should fall back.
+/// - `Err(msg)`         – a real (non-flag-support) error occurred.
+async fn nixos_flake_dry_run_check() -> Result<Option<Vec<String>>, String> {
+    let out = tokio::process::Command::new("nix")
+        .args([
+            "--extra-experimental-features",
+            "nix-command flakes",
+            "flake",
+            "update",
+            "--dry-run",
+            "/etc/nixos",
+        ])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{stdout}\n{stderr}");
+
+    // Detect unsupported --dry-run flag (older Nix) — signal caller to fall back.
+    if !out.status.success()
+        && (combined.contains("unrecognised flag")
+            || combined.contains("unrecognized flag")
+            || combined.contains("unknown option"))
+    {
+        return Ok(None);
+    }
+
+    if !out.status.success() {
+        return Err(format!(
+            "nix flake update --dry-run failed: {}",
+            combined.trim()
+        ));
+    }
+
+    // Parse lines like: "• Updated input 'nixpkgs':"
+    let inputs: Vec<String> = combined
+        .lines()
+        .filter(|l| l.trim_start().starts_with("\u{2022} Updated input '"))
+        .filter_map(|l| l.split('\'').nth(1).map(|s| s.to_string()))
+        .collect();
+
+    Ok(Some(inputs))
+}
+
+/// Fallback flake check that works on all Nix versions.
+///
+/// Copies `/etc/nixos/flake.nix` and `/etc/nixos/flake.lock` into a
+/// temporary directory, runs `nix flake update` there (no root required),
+/// and compares the resulting `flake.lock` against the original to determine
+/// which inputs changed.  The temp directory is removed after comparison.
+async fn nixos_flake_tempdir_check() -> Result<Vec<String>, String> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let temp_dir = std::env::temp_dir().join(format!("up-nix-check-{ts}"));
+
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("Failed to create temp dir: {e}"))?;
+
+    // Copy both files; clean up on any early error.
+    let cleanup = |e: String| {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        e
+    };
+
+    std::fs::copy("/etc/nixos/flake.nix", temp_dir.join("flake.nix"))
+        .map_err(|e| cleanup(format!("Failed to copy flake.nix: {e}")))?;
+    std::fs::copy("/etc/nixos/flake.lock", temp_dir.join("flake.lock"))
+        .map_err(|e| cleanup(format!("Failed to copy flake.lock: {e}")))?;
+
+    // Read and parse original lock before running the update.
+    let old_content = std::fs::read_to_string(temp_dir.join("flake.lock"))
+        .map_err(|e| cleanup(format!("Failed to read flake.lock: {e}")))?;
+    let old_lock: serde_json::Value = serde_json::from_str(&old_content)
+        .map_err(|e| cleanup(format!("Failed to parse flake.lock: {e}")))?;
+
+    let temp_dir_str = temp_dir
+        .to_str()
+        .ok_or_else(|| cleanup("Temp dir path contains non-UTF-8 bytes".to_string()))?
+        .to_string();
+
+    // Run `nix flake update <tempdir>` — writes updated flake.lock in-place.
+    let out = tokio::process::Command::new("nix")
+        .args([
+            "--extra-experimental-features",
+            "nix-command flakes",
+            "flake",
+            "update",
+            &temp_dir_str,
+        ])
+        .output()
+        .await
+        .map_err(|e| cleanup(e.to_string()))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(cleanup(format!(
+            "nix flake update (temp dir) failed: {}",
+            stderr.trim()
+        )));
+    }
+
+    let new_content = std::fs::read_to_string(temp_dir.join("flake.lock"))
+        .map_err(|e| cleanup(format!("Failed to read updated flake.lock: {e}")))?;
+    let new_lock: serde_json::Value = serde_json::from_str(&new_content)
+        .map_err(|e| cleanup(format!("Failed to parse updated flake.lock: {e}")))?;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(compare_lock_nodes(&old_lock, &new_lock))
+}
+
+/// Return the list of NixOS flake inputs that have pending upstream updates.
+///
+/// Tries `--dry-run` first (Nix ≥ 2.19); falls back to the temp-dir method
+/// for older Nix installations that do not support that flag.
+async fn nixos_flake_changed_inputs() -> Result<Vec<String>, String> {
+    match nixos_flake_dry_run_check().await? {
+        Some(inputs) => Ok(inputs),
+        None => nixos_flake_tempdir_check().await,
+    }
+}
+
 pub struct NixBackend;
 
 impl Backend for NixBackend {
@@ -239,14 +399,12 @@ impl Backend for NixBackend {
 
     fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
         Box::pin(async move {
-            if is_nixos() {
-                // NixOS (both flake and legacy channel) cannot determine whether
-                // updates are available without a network fetch, which belongs only
-                // in run_update. Reporting the number of locked flake inputs is
-                // misleading — those are pinned dependencies, not pending upgrades,
-                // and the count never changes after running an update.
-                Err("Run Update All to check".to_string())
+            if is_nixos() && is_nixos_flake() {
+                // Flake-based NixOS: detect changed inputs via --dry-run or temp-dir.
+                nixos_flake_changed_inputs().await.map(|v| v.len())
             } else {
+                // Non-NixOS Nix profile or legacy NixOS channels: check user
+                // profile upgrades via nix-env dry-run.
                 let out = tokio::process::Command::new("nix-env")
                     .args(["-u", "--dry-run"])
                     .output()
@@ -263,11 +421,11 @@ impl Backend for NixBackend {
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
         Box::pin(async move {
-            if is_nixos() {
-                // NixOS cannot enumerate pending updates without a network fetch.
-                // Return empty list; UI degrades gracefully (no expand affordance).
-                Ok(Vec::new())
+            if is_nixos() && is_nixos_flake() {
+                // Flake-based NixOS: return changed input names.
+                nixos_flake_changed_inputs().await
             } else {
+                // Non-NixOS Nix profile or legacy NixOS channels.
                 let out = tokio::process::Command::new("nix-env")
                     .args(["-u", "--dry-run"])
                     .output()

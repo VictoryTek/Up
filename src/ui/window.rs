@@ -4,6 +4,7 @@ use crate::ui::log_panel::LogPanel;
 use crate::ui::update_row::UpdateRow;
 use crate::ui::upgrade_page::UpgradePage;
 use adw::prelude::*;
+use gtk::gio;
 use gtk::glib;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -55,12 +56,43 @@ impl UpWindow {
         refresh_button.connect_clicked(move |_| (*run_checks_btn)());
         header.pack_start(&refresh_button);
 
+        // Application overflow menu (three-dot button on the end/right slot).
+        let app_menu = gio::Menu::new();
+        app_menu.append(Some("About Up"), Some("win.about"));
+        let menu_button = gtk::MenuButton::builder()
+            .icon_name("open-menu-symbolic")
+            .menu_model(&app_menu)
+            .tooltip_text("Main menu")
+            .build();
+        header.pack_end(&menu_button);
+
         let main_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
         main_box.append(&header);
         main_box.append(&view_stack);
         main_box.append(&view_switcher_bar);
 
         window.set_content(Some(&main_box));
+
+        // Register the "about" window action that opens the About dialog.
+        let about_action = gio::SimpleAction::new("about", None);
+        let window_ref = window.downgrade();
+        about_action.connect_activate(move |_, _| {
+            let Some(win) = window_ref.upgrade() else {
+                return;
+            };
+            let dialog = adw::AboutDialog::builder()
+                .application_name("Up")
+                .version(env!("CARGO_PKG_VERSION"))
+                .developer_name("Up Contributors")
+                .comments("A system updater for Linux")
+                .website("https://github.com/user/up")
+                .application_icon("io.github.up")
+                .license_type(gtk::License::Gpl30)
+                .build();
+            dialog.present(Some(&win));
+        });
+        window.add_action(&about_action);
+
         window
     }
 
