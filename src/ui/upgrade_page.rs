@@ -53,6 +53,9 @@ impl UpgradePage {
         let distro_info_state: Rc<RefCell<Option<upgrade::DistroInfo>>> =
             Rc::new(RefCell::new(None));
 
+        let nixos_config_type: Rc<RefCell<Option<upgrade::NixOsConfigType>>> =
+            Rc::new(RefCell::new(None));
+
         let distro_row = adw::ActionRow::builder()
             .title("Distribution")
             .subtitle("Loading\u{2026}")
@@ -253,12 +256,42 @@ impl UpgradePage {
         // Wire up upgrade button
         let log_clone2 = log_panel.clone();
         let distro_state_for_upgrade = distro_info_state.clone();
+        let nixos_config_type_for_upgrade = nixos_config_type.clone();
 
         upgrade_button.connect_clicked(move |button| {
             let distro = distro_state_for_upgrade
                 .borrow()
                 .clone()
                 .expect("distro info must be available before upgrade button is active");
+
+            // NixOS Flake: show informational dialog only — do NOT run an upgrade
+            if *nixos_config_type_for_upgrade.borrow() == Some(upgrade::NixOsConfigType::Flake) {
+                let next_ch = upgrade::next_nixos_channel(&distro.version_id)
+                    .unwrap_or_else(|| "the next NixOS release".to_string());
+                let next_ver = next_ch.trim_start_matches("nixos-").to_string();
+                let current_ver = distro.version_id.clone();
+
+                let dialog = adw::AlertDialog::builder()
+                    .heading("Upgrade via Flake")
+                    .body(format!(
+                        "NixOS {next_ver} may be available, but this system uses Nix Flakes.\n\n\
+                         To upgrade, edit /etc/nixos/flake.nix and update your nixpkgs input \
+                         to point to the new release:\n\n\
+                         \u{2022} Change:  github:NixOS/nixpkgs/nixos-{current_ver}\n\
+                         \u{2022} To:      github:NixOS/nixpkgs/nixos-{next_ver}\n\n\
+                         Then run:\n\
+                         \u{2022} sudo nix flake update /etc/nixos\n\
+                         \u{2022} sudo nixos-rebuild switch --flake /etc/nixos"
+                    ))
+                    .build();
+                dialog.add_response("close", "Close");
+                dialog.set_default_response(Some("close"));
+                dialog.set_close_response("close");
+                dialog.present(Some(button));
+                return;
+            }
+
+            // All other distros (including NixOS LegacyChannel): destructive confirm dialog
             let dialog = adw::AlertDialog::builder()
                 .heading("Confirm System Upgrade")
                 .body(format!(
@@ -330,6 +363,13 @@ impl UpgradePage {
 
         clamp.set_child(Some(&content_box));
         scrolled.set_child(Some(&clamp));
+
+        // Flake advisory banner — revealed only when NixOS+Flake is detected.
+        let flake_banner = adw::Banner::builder()
+            .title("Flake-managed system: upgrade via your flake.nix")
+            .revealed(false)
+            .build();
+        page_box.append(&flake_banner);
         page_box.append(&scrolled);
 
         // Spawn distro detection off the GTK thread.
@@ -350,6 +390,9 @@ impl UpgradePage {
                 };
                 let _ = detect_tx.send((info, nixos_extra)).await;
             });
+
+            let nixos_config_type_fill = nixos_config_type.clone();
+            let flake_banner_fill = flake_banner.clone();
 
             let distro_state_fill = distro_info_state.clone();
             let distro_row_fill = distro_row.clone();
@@ -391,6 +434,11 @@ impl UpgradePage {
                             config_row
                                 .add_prefix(&gtk::Image::from_icon_name("emblem-system-symbolic"));
                             info_group_fill.add(&config_row);
+                            // Store config type and reveal banner for flake systems
+                            *nixos_config_type_fill.borrow_mut() = Some(config_type.clone());
+                            if *config_type == upgrade::NixOsConfigType::Flake {
+                                flake_banner_fill.set_revealed(true);
+                            }
                             // Update first check row title for NixOS
                             if let Some(row) = check_rows_fill.borrow().first() {
                                 row.set_title("nixos-rebuild available");

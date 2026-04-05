@@ -326,45 +326,50 @@ fn check_opensuse_upgrade() -> String {
     "Check manually at https://get.opensuse.org/leap/".to_string()
 }
 
+/// Compute the next NixOS stable channel name from a YY.MM `version_id`.
+///
+/// Returns `Some("nixos-YY.MM")` for the next release, or `None` if the
+/// version_id cannot be parsed.
+///
+/// NixOS releases every six months: May (05) and November (11).
+/// - If current month is ≥ 11, next is (year+1, 05)
+/// - Otherwise, next is (year, 11)
+pub fn next_nixos_channel(version_id: &str) -> Option<String> {
+    let parts: Vec<&str> = version_id.split('.').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let year: u32 = parts[0].parse().ok()?;
+    let month: u32 = parts[1].parse().ok()?;
+    let (ny, nm) = if month >= 11 { (year + 1, 5) } else { (year, 11) };
+    Some(format!("nixos-{}.{:02}", ny, nm))
+}
+
 fn check_nixos_upgrade(current_version_id: &str) -> String {
-    let parts: Vec<&str> = current_version_id.split('.').collect();
-    if parts.len() == 2 {
-        if let (Ok(year), Ok(month)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
-            let (next_year, next_month) = if month >= 11 {
-                (year + 1, 5)
+    let Some(next_channel) = next_nixos_channel(current_version_id) else {
+        return "Could not parse current NixOS version".to_string();
+    };
+    let version_label = next_channel.trim_start_matches("nixos-");
+    match Command::new("curl")
+        .args([
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            &format!("https://channels.nixos.org/{}", next_channel),
+        ])
+        .output()
+    {
+        Ok(output) => {
+            let code = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if code == "200" || code == "301" || code == "302" {
+                format!("Yes — NixOS {} is available", version_label)
             } else {
-                (year, 11)
-            };
-            let next_channel = format!("nixos-{}.{:02}", next_year, next_month);
-            match Command::new("curl")
-                .args([
-                    "-s",
-                    "-o",
-                    "/dev/null",
-                    "-w",
-                    "%{http_code}",
-                    &format!("https://channels.nixos.org/{}", next_channel),
-                ])
-                .output()
-            {
-                Ok(output) => {
-                    let code = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if code == "200" || code == "301" || code == "302" {
-                        format!("Yes — NixOS {}.{:02} is available", next_year, next_month)
-                    } else {
-                        format!(
-                            "No — NixOS {}.{:02} not yet available",
-                            next_year, next_month
-                        )
-                    }
-                }
-                Err(_) => "Could not check (curl not found)".to_string(),
+                format!("No — NixOS {} not yet available", version_label)
             }
-        } else {
-            "Could not parse current NixOS version".to_string()
         }
-    } else {
-        "Could not parse current NixOS version".to_string()
+        Err(_) => "Could not check (curl not found)".to_string(),
     }
 }
 
@@ -383,7 +388,7 @@ pub fn execute_upgrade(
         "ubuntu" | "debian" => upgrade_ubuntu(tx),
         "fedora" => upgrade_fedora(tx),
         "opensuse-leap" => upgrade_opensuse(tx),
-        "nixos" => upgrade_nixos(tx),
+        "nixos" => upgrade_nixos(distro, tx),
         _ => {
             let msg = format!(
                 "Upgrade is not yet supported for '{}'. Supported: Ubuntu, Debian, Fedora, openSUSE Leap, NixOS.",
@@ -474,7 +479,7 @@ fn upgrade_opensuse(tx: &async_channel::Sender<String>) -> Result<(), String> {
     Ok(())
 }
 
-fn upgrade_nixos(tx: &async_channel::Sender<String>) -> Result<(), String> {
+fn upgrade_nixos(distro: &DistroInfo, tx: &async_channel::Sender<String>) -> Result<(), String> {
     // pkexec resets PATH, excluding NixOS tooling; export the required paths explicitly.
     const NIX_PATH_EXPORT: &str =
         "export PATH=/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin:$PATH";
@@ -482,12 +487,39 @@ fn upgrade_nixos(tx: &async_channel::Sender<String>) -> Result<(), String> {
     match config_type {
         NixOsConfigType::LegacyChannel => {
             let _ = tx.send_blocking("Detected: legacy channel-based NixOS config".into());
-            let _ = tx.send_blocking("Updating NixOS channel...".into());
-            let cmd = format!("{NIX_PATH_EXPORT} && nix-channel --update");
-            if !crate::runner::run_command_sync("pkexec", &["sh", "-c", &cmd], tx) {
-                return Err("Failed to update NixOS channel (see log for details)".to_string());
+
+            // Determine the target channel
+            let next_channel = match next_nixos_channel(&distro.version_id) {
+                Some(ch) => ch,
+                None => {
+                    let msg = format!(
+                        "Cannot determine next NixOS channel from version '{}'",
+                        distro.version_id
+                    );
+                    let _ = tx.send_blocking(msg.clone());
+                    return Err(msg);
+                }
+            };
+            let channel_url = format!("https://nixos.org/channels/{}", next_channel);
+
+            // Step 1: Register the new channel
+            let _ = tx.send_blocking(format!("Switching channel to {}...", next_channel));
+            let add_cmd = format!(
+                "{NIX_PATH_EXPORT} && nix-channel --add {} nixos",
+                channel_url
+            );
+            if !crate::runner::run_command_sync("pkexec", &["sh", "-c", &add_cmd], tx) {
+                return Err(format!(
+                    "Failed to register NixOS channel {} (see log for details)",
+                    next_channel
+                ));
             }
-            let _ = tx.send_blocking("Rebuilding NixOS (switch --upgrade)...".into());
+
+            // Step 2: Rebuild with --upgrade to apply the new channel
+            let _ = tx.send_blocking(format!(
+                "Rebuilding NixOS with {} (nixos-rebuild switch --upgrade)...",
+                next_channel
+            ));
             if !crate::runner::run_command_sync(
                 "pkexec",
                 &["nixos-rebuild", "switch", "--upgrade"],
@@ -582,7 +614,24 @@ fn detect_next_fedora_version() -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{execute_upgrade, parse_df_avail_bytes, validate_hostname, DistroInfo};
+    use super::{execute_upgrade, next_nixos_channel, parse_df_avail_bytes, validate_hostname, DistroInfo};
+
+    #[test]
+    fn next_nixos_channel_from_may_gives_november() {
+        assert_eq!(next_nixos_channel("24.05"), Some("nixos-24.11".to_string()));
+    }
+
+    #[test]
+    fn next_nixos_channel_from_november_gives_next_may() {
+        assert_eq!(next_nixos_channel("24.11"), Some("nixos-25.05".to_string()));
+    }
+
+    #[test]
+    fn next_nixos_channel_invalid_returns_none() {
+        assert_eq!(next_nixos_channel("unstable"), None);
+        assert_eq!(next_nixos_channel(""), None);
+        assert_eq!(next_nixos_channel("24"), None);
+    }
 
     #[test]
     fn execute_upgrade_unsupported_distro_returns_err() {
