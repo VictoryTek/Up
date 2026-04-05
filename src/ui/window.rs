@@ -85,7 +85,7 @@ impl UpWindow {
                 .version(env!("CARGO_PKG_VERSION"))
                 .developer_name("Up Contributors")
                 .comments("A system updater for Linux")
-                .website("https://github.com/user/up")
+                .website("https://github.com/VictoryTek/Up")
                 .application_icon("io.github.up")
                 .license_type(gtk::License::Gpl30)
                 .build();
