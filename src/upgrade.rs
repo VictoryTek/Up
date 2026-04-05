@@ -341,7 +341,11 @@ pub fn next_nixos_channel(version_id: &str) -> Option<String> {
     }
     let year: u32 = parts[0].parse().ok()?;
     let month: u32 = parts[1].parse().ok()?;
-    let (ny, nm) = if month >= 11 { (year + 1, 5) } else { (year, 11) };
+    let (ny, nm) = if month >= 11 {
+        (year + 1, 5)
+    } else {
+        (year, 11)
+    };
     Some(format!("nixos-{}.{:02}", ny, nm))
 }
 
@@ -614,7 +618,9 @@ fn detect_next_fedora_version() -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{execute_upgrade, next_nixos_channel, parse_df_avail_bytes, validate_hostname, DistroInfo};
+    use super::{
+        execute_upgrade, next_nixos_channel, parse_df_avail_bytes, validate_hostname, DistroInfo,
+    };
 
     #[test]
     fn next_nixos_channel_from_may_gives_november() {
