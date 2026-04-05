@@ -203,8 +203,7 @@ async fn nixos_flake_tempdir_check() -> Result<Vec<String>, String> {
         .as_secs();
     let temp_dir = std::env::temp_dir().join(format!("up-nix-check-{ts}"));
 
-    std::fs::create_dir_all(&temp_dir)
-        .map_err(|e| format!("Failed to create temp dir: {e}"))?;
+    std::fs::create_dir_all(&temp_dir).map_err(|e| format!("Failed to create temp dir: {e}"))?;
 
     // Copy both files; clean up on any early error.
     let cleanup = |e: String| {
