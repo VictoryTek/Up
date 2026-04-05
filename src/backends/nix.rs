@@ -222,20 +222,17 @@ async fn nixos_flake_tempdir_check() -> Result<Vec<String>, String> {
     let old_lock: serde_json::Value = serde_json::from_str(&old_content)
         .map_err(|e| cleanup(format!("Failed to parse flake.lock: {e}")))?;
 
-    let temp_dir_str = temp_dir
-        .to_str()
-        .ok_or_else(|| cleanup("Temp dir path contains non-UTF-8 bytes".to_string()))?
-        .to_string();
-
-    // Run `nix flake update <tempdir>` — writes updated flake.lock in-place.
+    // Run `nix flake update` from inside the temp dir — writes updated flake.lock in-place.
+    // Passing the path as a positional argument tells Nix to update a *named input*, not the
+    // flake directory; using `.current_dir()` is the correct cross-version approach.
     let out = tokio::process::Command::new("nix")
         .args([
             "--extra-experimental-features",
             "nix-command flakes",
             "flake",
             "update",
-            &temp_dir_str,
         ])
+        .current_dir(&temp_dir)
         .output()
         .await
         .map_err(|e| cleanup(e.to_string()))?;
