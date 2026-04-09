@@ -54,7 +54,7 @@ git clone https://github.com/user/up.git
 cd up
 
 # Install GNOME SDK
-flatpak install org.gnome.Sdk//46 org.gnome.Platform//46
+flatpak install org.gnome.Sdk//48 org.gnome.Platform//48
 flatpak install org.freedesktop.Sdk.Extension.rust-stable//24.08
 
 # Build and install (run from the project root)

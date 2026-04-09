@@ -146,6 +146,22 @@ impl UpWindow {
         let log_panel = LogPanel::new();
         content_box.append(&log_panel.expander);
 
+        // Restart notification banner, revealed only when Up itself is updated
+        // inside the Flatpak sandbox (new deployment is available on next launch).
+        let restart_banner = adw::Banner::builder()
+            .title("Up was updated \u{2014} restart to apply changes")
+            .button_label("Close Up")
+            .revealed(false)
+            .build();
+        restart_banner.connect_button_clicked(|banner| {
+            if let Some(window) = banner
+                .root()
+                .and_then(|r| r.downcast::<gtk::Window>().ok())
+            {
+                window.close();
+            }
+        });
+
         // Update All button
         let update_button = gtk::Button::builder()
             .label("Update All")
@@ -159,6 +175,7 @@ impl UpWindow {
         let rows_clone = rows.clone();
         let log_clone = log_panel.clone();
         let detected_clone = detected.clone();
+        let restart_banner_clone = restart_banner.clone();
 
         update_button.connect_clicked(move |button| {
             button.set_sensitive(false);
@@ -178,6 +195,7 @@ impl UpWindow {
             let status_ref = status_clone.clone();
             let button_ref = button.clone();
             let backends = detected_clone.borrow().clone();
+            let banner_ref = restart_banner_clone.clone();
 
             glib::spawn_future_local(async move {
                 let (tx, rx) = async_channel::unbounded::<(BackendKind, String)>();
@@ -217,12 +235,17 @@ impl UpWindow {
 
                 // Process results
                 let mut has_error = false;
+                let mut self_updated = false;
                 while let Ok((kind, result)) = result_rx.recv().await {
                     let rows_borrowed = rows_ref.borrow();
                     if let Some((_, row)) = rows_borrowed.iter().find(|(k, _)| *k == kind) {
                         match &result {
                             UpdateResult::Success { updated_count } => {
                                 row.set_status_success(*updated_count);
+                            }
+                            UpdateResult::SuccessWithSelfUpdate { updated_count } => {
+                                row.set_status_success(*updated_count);
+                                self_updated = true;
                             }
                             UpdateResult::Error(msg) => {
                                 row.set_status_error(msg);
@@ -233,6 +256,10 @@ impl UpWindow {
                             }
                         }
                     }
+                }
+
+                if self_updated {
+                    banner_ref.set_revealed(true);
                 }
 
                 if has_error {
@@ -252,6 +279,7 @@ impl UpWindow {
 
         clamp.set_child(Some(&content_box));
         scrolled.set_child(Some(&clamp));
+        page_box.append(&restart_banner);
         page_box.append(&scrolled);
 
         // Shared state for gating the Update All button on check completion.

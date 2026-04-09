@@ -39,6 +39,10 @@ impl fmt::Display for BackendKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UpdateResult {
     Success { updated_count: usize },
+    /// Emitted by `FlatpakBackend` when running inside the Flatpak sandbox and
+    /// the update output indicates that Up itself (`APP_ID`) was updated.  The
+    /// UI layer uses this variant to reveal a restart notification banner.
+    SuccessWithSelfUpdate { updated_count: usize },
     Error(String),
     Skipped(String),
 }
@@ -82,8 +86,10 @@ pub fn detect_backends() -> Vec<Arc<dyn Backend>> {
         backends.push(os_backend);
     }
 
-    // Flatpak
-    if flatpak::is_available() {
+    // Flatpak — always include when running inside the Flatpak sandbox so that
+    // `flatpak-spawn --host` can be used to update host Flatpak packages even
+    // though the `flatpak` binary itself is not on the sandbox PATH.
+    if flatpak::is_available() || flatpak::is_running_in_flatpak() {
         backends.push(Arc::new(flatpak::FlatpakBackend));
     }
 

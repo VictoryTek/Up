@@ -24,7 +24,7 @@ jobs:
   
   native-build:
     name: Native Build & Test
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
@@ -85,22 +85,53 @@ jobs:
   
   flatpak:
     name: Flatpak Build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     needs: native-build
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      image: ghcr.io/flatpak/flatpak-builder:ubuntu-22.04
       options: --privileged
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      - name: Build Flatpak package
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+      - name: Set up Flatpak environment
+        run: |
+          # Install GNOME 46 platform and SDK
+          flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub
+          flatpak install -y flathub org.gnome.Platform//46
+          flatpak install -y flathub org.gnome.Sdk//46
+          flatpak install -y flathub org.freedesktop.Sdk.Extension.rust-stable//24.08
+          
+      - name: Cache Flatpak dependencies
+        uses: actions/cache@v4
         with:
-          bundle: up-release.flatpak
-          manifest-path: ${{ env.FLATPAK_MANIFEST }}
-          cache-key: flatpak-builder-${{ github.sha }}
-          upload-artifact: true
+          path: |
+            ~/.flatpak
+            builddir
+          key: flatpak-${{ runner.os }}-${{ hashFiles('Cargo.toml', 'io.github.up.json') }}
+          restore-keys: |
+            flatpak-${{ runner.os }}-
+
+      - name: Build Flatpak package
+        run: |
+          flatpak-builder --user --install --force-clean builddir $FLATPAK_MANIFEST
+
+      - name: Bundle Flatpak for release
+        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
+        run: |
+          # Create .flatpak bundle for GitHub Releases
+          flatpak build-bundle \
+            builddir/repo \
+            up-release.flatpak \
+            $APP_ID
+
+      - name: Upload Flatpak bundle as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-bundle
+          path: up-release.flatpak
+          if-no-files-found: ignore
 
       - name: Upload to GitHub Releases
         if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
@@ -110,13 +141,84 @@ jobs:
           fail_on_unmatched_files: false
 
   # =============================================================================
+  # FLATPAK OSTREE REMOTE — GITHUB PAGES
+  # =============================================================================
+  # Exports the Flatpak bundle into an OSTree repository and deploys it to
+  # GitHub Pages so users can add a proper Flatpak remote for self-update.
+  # Runs only on published releases; requires FLATPAK_GPG_KEY and
+  # FLATPAK_GPG_KEY_ID secrets to be configured in the repository settings.
+  
+  flatpak-remote:
+    name: Publish Flatpak Remote
+    runs-on: ubuntu-24.04
+    needs: flatpak
+    if: github.event_name == 'release' && github.event.action == 'published'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      options: --privileged
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Download Flatpak bundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: up-release.flatpak
+
+      - name: Set up GPG signing key
+        env:
+          FLATPAK_GPG_KEY: ${{ secrets.FLATPAK_GPG_KEY }}
+          FLATPAK_GPG_KEY_ID: ${{ secrets.FLATPAK_GPG_KEY_ID }}
+        run: |
+          echo "$FLATPAK_GPG_KEY" | gpg --import
+          echo "GPG_KEY_ID=$FLATPAK_GPG_KEY_ID" >> "$GITHUB_ENV"
+
+      - name: Import .flatpak bundle into OSTree repository
+        run: |
+          mkdir -p ostree-repo
+          flatpak build-import-bundle \
+            --update-appstream \
+            --gpg-sign="$GPG_KEY_ID" \
+            ostree-repo up-release.flatpak
+
+      - name: Update repository summary and generate static deltas
+        run: |
+          flatpak build-update-repo \
+            --gpg-sign="$GPG_KEY_ID" \
+            --generate-static-deltas \
+            ostree-repo
+
+      - name: Export GPG public key alongside the repo
+        run: |
+          gpg --export --armor "$GPG_KEY_ID" > ostree-repo/io.github.up.gpg
+          GPG_B64=$(gpg --export "$GPG_KEY_ID" | base64 -w 0)
+          sed -i "s|^GPGKey=.*|GPGKey=$GPG_B64|" data/io.github.up.flatpakrepo
+          cp data/io.github.up.flatpakrepo ostree-repo/
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ostree-repo
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # =============================================================================
   # VALIDATION SUMMARY
   # =============================================================================
   # Confirms all CI checks passed
   
   validation:
     name: CI Validation
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     needs: [native-build, flatpak]
     if: always()
     steps:
