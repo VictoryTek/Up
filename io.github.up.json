@@ -32,6 +32,7 @@
             "config-opts": [
                 "-Dbuildtype=release"
             ],
+            "appstream-compose": false,
             "sources": [
                 {
                     "type": "dir",
