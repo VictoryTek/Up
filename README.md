@@ -49,11 +49,15 @@ nix develop github:user/up
 ### From Flatpak (local build)
 
 ```bash
+# Clone the repository
+git clone https://github.com/user/up.git
+cd up
+
 # Install GNOME SDK
 flatpak install org.gnome.Sdk//46 org.gnome.Platform//46
 flatpak install org.freedesktop.Sdk.Extension.rust-stable//24.08
 
-# Build and install
+# Build and install (run from the project root)
 flatpak-builder --user --install --force-clean builddir io.github.up.json
 
 # Or use the convenience script
