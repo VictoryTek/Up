@@ -38,11 +38,15 @@ impl fmt::Display for BackendKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UpdateResult {
-    Success { updated_count: usize },
+    Success {
+        updated_count: usize,
+    },
     /// Emitted by `FlatpakBackend` when running inside the Flatpak sandbox and
     /// the update output indicates that Up itself (`APP_ID`) was updated.  The
     /// UI layer uses this variant to reveal a restart notification banner.
-    SuccessWithSelfUpdate { updated_count: usize },
+    SuccessWithSelfUpdate {
+        updated_count: usize,
+    },
     Error(String),
     Skipped(String),
 }

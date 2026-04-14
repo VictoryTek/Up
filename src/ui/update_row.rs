@@ -63,7 +63,10 @@ impl UpdateRow {
                 self.row.remove(&pkg_row);
             }
         }
+        // Hide the expand arrow when there is nothing to expand.
+        self.row.set_enable_expansion(!packages.is_empty());
         if packages.is_empty() {
+            self.row.set_expanded(false);
             return;
         }
         const MAX_PACKAGES: usize = 50;

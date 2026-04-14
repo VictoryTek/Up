@@ -9,8 +9,7 @@ const GITHUB_REPO: &str = "VictoryTek/Up";
 /// Expected URL prefix for validated release asset downloads.
 /// Any URL from the GitHub Releases API that does not start with this prefix
 /// is rejected before it is embedded in a shell command.
-const GITHUB_RELEASE_DOWNLOAD_PREFIX: &str =
-    "https://github.com/VictoryTek/Up/releases/download/";
+const GITHUB_RELEASE_DOWNLOAD_PREFIX: &str = "https://github.com/VictoryTek/Up/releases/download/";
 
 /// Temporary path on the host where the self-update bundle is downloaded
 /// before installation.
@@ -103,9 +102,7 @@ fn is_newer_than_current(candidate_tag: &str) -> bool {
 ///
 /// Returns `Err` if the command fails or the output cannot be parsed into
 /// a non-empty tag line.
-async fn fetch_github_latest_release(
-    runner: &CommandRunner,
-) -> Result<(String, String), String> {
+async fn fetch_github_latest_release(runner: &CommandRunner) -> Result<(String, String), String> {
     let output = if is_running_in_flatpak() {
         // Use curl + python3 on the host; the script prints exactly two lines:
         // the release tag and the first .flatpak asset URL.
@@ -162,10 +159,7 @@ print(t);print(a[0] if a else '')",
 ///
 /// The running process is not terminated by the reinstall; the new version
 /// takes effect on the next launch — exactly what the restart banner prompts.
-async fn download_and_install_bundle(
-    runner: &CommandRunner,
-    url: &str,
-) -> Result<(), String> {
+async fn download_and_install_bundle(runner: &CommandRunner, url: &str) -> Result<(), String> {
     // Reject URLs that do not originate from the expected GitHub release path.
     if !url.starts_with(GITHUB_RELEASE_DOWNLOAD_PREFIX) {
         return Err(format!(
@@ -238,8 +232,7 @@ impl Backend for FlatpakBackend {
                     let updated_self = is_running_in_flatpak()
                         && output.lines().any(|l| {
                             let t = l.trim();
-                            t.starts_with(|c: char| c.is_ascii_digit())
-                                && t.contains(crate::APP_ID)
+                            t.starts_with(|c: char| c.is_ascii_digit()) && t.contains(crate::APP_ID)
                         });
 
                     // If running inside the Flatpak sandbox and Up was NOT
@@ -249,9 +242,7 @@ impl Backend for FlatpakBackend {
                     // success result from being returned.
                     let github_self_updated = if !updated_self && is_running_in_flatpak() {
                         match fetch_github_latest_release(runner).await {
-                            Ok((tag, url))
-                                if is_newer_than_current(&tag) && !url.is_empty() =>
-                            {
+                            Ok((tag, url)) if is_newer_than_current(&tag) && !url.is_empty() => {
                                 match download_and_install_bundle(runner, &url).await {
                                     Ok(()) => {
                                         log::info!(
@@ -267,9 +258,7 @@ impl Backend for FlatpakBackend {
                                 }
                             }
                             Ok((tag, _)) => {
-                                log::info!(
-                                    "Self-update check: already at latest ({tag})"
-                                );
+                                log::info!("Self-update check: already at latest ({tag})");
                                 false
                             }
                             Err(e) => {
@@ -306,8 +295,12 @@ impl Backend for FlatpakBackend {
                 .output()
                 .await
                 .map_err(|e| e.to_string())?;
-            let text = String::from_utf8_lossy(&out.stdout);
-            Ok(text
+            // Combine stdout and stderr: some Flatpak versions write the table
+            // to stderr, so reading only stdout would miss all updates.
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let combined = format!("{stdout}{stderr}");
+            Ok(combined
                 .lines()
                 .filter(|l| {
                     let t = l.trim();
@@ -327,25 +320,40 @@ impl Backend for FlatpakBackend {
                 .output()
                 .await
                 .map_err(|e| e.to_string())?;
-            let text = String::from_utf8_lossy(&out.stdout);
-            // Lines format: " 1. [✓] com.app.Name  stable  u  flathub  1.0 MB"
-            // Extract app ID from between ']' and first whitespace.
-            Ok(text
+            // Combine stdout and stderr: some Flatpak versions write the table
+            // to stderr, so reading only stdout would miss all updates.
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let combined = format!("{stdout}{stderr}");
+            // Lines are either the modern format (no brackets):
+            //   " 1.     com.example.App  stable  u  flathub  50.1 MB"
+            // or the legacy bracket format (Flatpak < 1.6):
+            //   " 1. [✓] com.example.App  stable  u  flathub  50.1 MB"
+            Ok(combined
                 .lines()
                 .filter(|l| {
                     let t = l.trim();
                     t.starts_with(|c: char| c.is_ascii_digit())
                 })
                 .filter_map(|l| {
-                    l.trim()
-                        .split(']')
-                        .nth(1)
-                        .unwrap_or("")
-                        .split_whitespace()
-                        .next()
-                        .map(|s| s.to_string())
+                    let t = l.trim();
+                    // Strip the leading "N." number prefix (handles 1–N digit numbers).
+                    let rest = t
+                        .trim_start_matches(|c: char| c.is_ascii_digit())
+                        .trim_start_matches(['.', '\t', ' ']);
+                    // Skip optional "[✓]" / "[i]" bracket marker (legacy Flatpak).
+                    let name_part = if rest.starts_with('[') {
+                        rest.splitn(2, ']').nth(1).unwrap_or("").trim()
+                    } else {
+                        rest
+                    };
+                    let name = name_part.split_whitespace().next()?;
+                    if name.is_empty() {
+                        None
+                    } else {
+                        Some(name.to_string())
+                    }
                 })
-                .filter(|s| !s.is_empty())
                 .collect())
         })
     }

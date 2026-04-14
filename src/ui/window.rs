@@ -154,10 +154,7 @@ impl UpWindow {
             .revealed(false)
             .build();
         restart_banner.connect_button_clicked(|banner| {
-            if let Some(window) = banner
-                .root()
-                .and_then(|r| r.downcast::<gtk::Window>().ok())
-            {
+            if let Some(window) = banner.root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
                 window.close();
             }
         });
