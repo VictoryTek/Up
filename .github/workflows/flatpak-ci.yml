@@ -81,49 +81,23 @@ jobs:
   # =============================================================================
   # FLATPAK BUILD
   # =============================================================================
-  # Builds the Flatpak package using GNOME SDK 46 and Rust extension
+  # Builds the Flatpak package using GNOME SDK 48 and Rust extension
   
   flatpak:
     name: Flatpak Build
     runs-on: ubuntu-24.04
     needs: native-build
-    container:
-      image: ghcr.io/flatpak/flatpak-builder:ubuntu-22.04
-      options: --privileged
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      - name: Set up Flatpak environment
-        run: |
-          # Install GNOME 48 platform and SDK (matches runtime-version in manifest)
-          flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub
-          flatpak install -y flathub org.gnome.Platform//48
-          flatpak install -y flathub org.gnome.Sdk//48
-          flatpak install -y flathub org.freedesktop.Sdk.Extension.rust-stable//24.08
-          
-      - name: Cache Flatpak dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.flatpak
-            builddir
-          key: flatpak-${{ runner.os }}-${{ hashFiles('Cargo.toml', 'io.github.up.json') }}
-          restore-keys: |
-            flatpak-${{ runner.os }}-
-
       - name: Build Flatpak package
-        run: |
-          flatpak-builder --user --install --force-clean builddir $FLATPAK_MANIFEST
-
-      - name: Bundle Flatpak for release
-        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
-        run: |
-          # Create .flatpak bundle for GitHub Releases
-          flatpak build-bundle \
-            builddir/repo \
-            up-release.flatpak \
-            $APP_ID
+        uses: bilelmoussaoui/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: up-release.flatpak
+          manifest-path: ${{ env.FLATPAK_MANIFEST }}
+          cache-key: flatpak-builder-${{ hashFiles('Cargo.toml', 'io.github.up.json') }}
+          upload-artifact: false
 
       - name: Upload Flatpak bundle as artifact
         if: always()
