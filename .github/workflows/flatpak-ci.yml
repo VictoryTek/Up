@@ -81,7 +81,7 @@ jobs:
   # =============================================================================
   # FLATPAK BUILD
   # =============================================================================
-  # Builds the Flatpak package using GNOME SDK 48 and Rust extension
+  # Builds the Flatpak package using GNOME SDK 50 and Rust extension
   
   flatpak:
     name: Flatpak Build
@@ -96,6 +96,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y flatpak flatpak-builder xvfb
           sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak install -y --noninteractive flathub \
+            org.gnome.Platform//50 \
+            org.gnome.Sdk//50 \
+            org.freedesktop.Sdk.Extension.rust-stable//25.08
 
       - name: Build Flatpak package
         uses: bilelmoussaoui/flatpak-github-actions/flatpak-builder@v6
@@ -141,7 +145,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
       options: --privileged
     steps:
       - name: Checkout source code
