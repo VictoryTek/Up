@@ -346,7 +346,7 @@ impl Backend for FlatpakBackend {
                         .trim_start_matches(['.', '\t', ' ']);
                     // Skip optional "[✓]" / "[i]" bracket marker (legacy Flatpak).
                     let name_part = if rest.starts_with('[') {
-                        rest.splitn(2, ']').nth(1).unwrap_or("").trim()
+                        rest.split_once(']').map(|x| x.1).unwrap_or("").trim()
                     } else {
                         rest
                     };
