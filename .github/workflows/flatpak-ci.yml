@@ -88,7 +88,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs: native-build
     container:
-      image: ghcr.io/flatpak/flatpak-builder:latest
+      image: ghcr.io/flatpak/flatpak-builder:ubuntu-22.04
       options: --privileged
     steps:
       - name: Checkout source code
@@ -96,10 +96,10 @@ jobs:
 
       - name: Set up Flatpak environment
         run: |
-          # Install GNOME 46 platform and SDK
+          # Install GNOME 48 platform and SDK (matches runtime-version in manifest)
           flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub
-          flatpak install -y flathub org.gnome.Platform//46
-          flatpak install -y flathub org.gnome.Sdk//46
+          flatpak install -y flathub org.gnome.Platform//48
+          flatpak install -y flathub org.gnome.Sdk//48
           flatpak install -y flathub org.freedesktop.Sdk.Extension.rust-stable//24.08
           
       - name: Cache Flatpak dependencies
