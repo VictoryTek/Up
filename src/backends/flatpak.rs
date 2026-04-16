@@ -286,78 +286,45 @@ impl Backend for FlatpakBackend {
     }
 
     fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
-        Box::pin(async move {
-            // Use --dry-run -y so the resolution logic matches run_update() exactly,
-            // including runtimes and extensions. The -y flag forces non-interactive
-            // mode so Flatpak always prints its numbered update table even when
-            // stdout is a pipe (no TTY) — without it the table is suppressed and
-            // the count always returns 0. Format stable since Flatpak 1.2.0.
-            let (cmd, args) = build_flatpak_cmd(&["update", "--dry-run", "-y"]);
-            let out = tokio::process::Command::new(&cmd)
-                .args(&args)
-                .output()
-                .await
-                .map_err(|e| e.to_string())?;
-            // Combine stdout and stderr: some Flatpak versions write the table
-            // to stderr, so reading only stdout would miss all updates.
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let combined = format!("{stdout}{stderr}");
-            Ok(combined
-                .lines()
-                .filter(|l| {
-                    let t = l.trim();
-                    t.starts_with(|c: char| c.is_ascii_digit())
-                })
-                .count())
-        })
+        Box::pin(async move { self.list_available().await.map(|v| v.len()) })
     }
 
     fn list_available(
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
         Box::pin(async move {
-            let (cmd, args) = build_flatpak_cmd(&["update", "--dry-run", "-y"]);
-            let out = tokio::process::Command::new(&cmd)
-                .args(&args)
+            // `flatpak remote-ls --updates` is the canonical way to list pending
+            // updates without side effects. `--dry-run` was removed in Flatpak 1.16.
+            // Query both system and user installations so per-user apps are included.
+            let (sys_cmd, sys_args) =
+                build_flatpak_cmd(&["remote-ls", "--updates", "--columns=application"]);
+            let sys_out = tokio::process::Command::new(&sys_cmd)
+                .args(&sys_args)
                 .output()
                 .await
                 .map_err(|e| e.to_string())?;
-            // Combine stdout and stderr: some Flatpak versions write the table
-            // to stderr, so reading only stdout would miss all updates.
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let combined = format!("{stdout}{stderr}");
-            // Lines are either the modern format (no brackets):
-            //   " 1.     com.example.App  stable  u  flathub  50.1 MB"
-            // or the legacy bracket format (Flatpak < 1.6):
-            //   " 1. [✓] com.example.App  stable  u  flathub  50.1 MB"
-            Ok(combined
-                .lines()
-                .filter(|l| {
-                    let t = l.trim();
-                    t.starts_with(|c: char| c.is_ascii_digit())
-                })
-                .filter_map(|l| {
-                    let t = l.trim();
-                    // Strip the leading "N." number prefix (handles 1–N digit numbers).
-                    let rest = t
-                        .trim_start_matches(|c: char| c.is_ascii_digit())
-                        .trim_start_matches(['.', '\t', ' ']);
-                    // Skip optional "[✓]" / "[i]" bracket marker (legacy Flatpak).
-                    let name_part = if rest.starts_with('[') {
-                        rest.split_once(']').map(|x| x.1).unwrap_or("").trim()
-                    } else {
-                        rest
-                    };
-                    let name = name_part.split_whitespace().next()?;
-                    if name.is_empty() {
-                        None
-                    } else {
-                        Some(name.to_string())
+
+            let (user_cmd, user_args) =
+                build_flatpak_cmd(&["remote-ls", "--updates", "--user", "--columns=application"]);
+            let user_out = tokio::process::Command::new(&user_cmd)
+                .args(&user_args)
+                .output()
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let mut apps: Vec<String> = Vec::new();
+            for raw in [&sys_out.stdout, &user_out.stdout] {
+                let text = String::from_utf8_lossy(raw);
+                for line in text.lines() {
+                    let t = line.trim();
+                    // Skip the "Application ID" header and blank lines.
+                    // Valid Flatpak app IDs are reverse-DNS and never contain spaces.
+                    if !t.is_empty() && !t.contains(' ') {
+                        apps.push(t.to_string());
                     }
-                })
-                .collect())
+                }
+            }
+            Ok(apps)
         })
     }
 }
