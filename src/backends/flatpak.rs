@@ -287,9 +287,12 @@ impl Backend for FlatpakBackend {
 
     fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
         Box::pin(async move {
-            // Use --dry-run so the resolution logic matches run_update() exactly,
-            // including runtimes and extensions. Format stable since Flatpak 1.2.0.
-            let (cmd, args) = build_flatpak_cmd(&["update", "--dry-run"]);
+            // Use --dry-run -y so the resolution logic matches run_update() exactly,
+            // including runtimes and extensions. The -y flag forces non-interactive
+            // mode so Flatpak always prints its numbered update table even when
+            // stdout is a pipe (no TTY) — without it the table is suppressed and
+            // the count always returns 0. Format stable since Flatpak 1.2.0.
+            let (cmd, args) = build_flatpak_cmd(&["update", "--dry-run", "-y"]);
             let out = tokio::process::Command::new(&cmd)
                 .args(&args)
                 .output()
@@ -314,7 +317,7 @@ impl Backend for FlatpakBackend {
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
         Box::pin(async move {
-            let (cmd, args) = build_flatpak_cmd(&["update", "--dry-run"]);
+            let (cmd, args) = build_flatpak_cmd(&["update", "--dry-run", "-y"]);
             let out = tokio::process::Command::new(&cmd)
                 .args(&args)
                 .output()
