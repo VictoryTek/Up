@@ -26,10 +26,10 @@ impl PrivilegedShell {
     /// Spawn `pkexec sh` and verify that authentication succeeded.
     pub async fn new() -> Result<Self, String> {
         let mut child = tokio::process::Command::new("pkexec")
-            .arg("sh")
+            .arg("/bin/sh")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .spawn()
             .map_err(|e| format!("Failed to start pkexec: {e}"))?;
 
@@ -43,7 +43,8 @@ impl PrivilegedShell {
             reader,
         };
 
-        // Verify auth succeeded by running a trivial command.
+        // Write a trivial command; if auth was cancelled or pkexec failed the
+        // process will have already exited so read_line returns 0 bytes.
         let s = shell.stdin.as_mut().ok_or("No stdin for shell")?;
         s.write_all(b"echo '___UP_READY___'\n")
             .await
@@ -53,14 +54,21 @@ impl PrivilegedShell {
             .map_err(|e| format!("Failed to flush shell: {e}"))?;
 
         let mut line = String::new();
-        shell
+        let n = shell
             .reader
             .read_line(&mut line)
             .await
             .map_err(|e| format!("Failed to read from shell: {e}"))?;
 
+        if n == 0 {
+            // Process exited before responding — authentication was cancelled or denied.
+            let status = shell.child.wait().await.ok();
+            let code = status.and_then(|s| s.code()).unwrap_or(-1);
+            return Err(format!("Authentication cancelled (exit code {code})"));
+        }
+
         if line.trim() != "___UP_READY___" {
-            return Err("Authentication failed or shell not ready".to_string());
+            return Err(format!("Unexpected shell response: {:?}", line.trim()));
         }
 
         Ok(shell)
