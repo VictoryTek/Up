@@ -197,7 +197,7 @@ impl UpWindow {
                     let (auth_tx, auth_rx) = async_channel::bounded::<Result<(), String>>(1);
                     super::spawn_background_async(move || async move {
                         let result = tokio::process::Command::new("pkexec")
-                            .args(&["sh", "-c", "true"])
+                            .args(["sh", "-c", "true"])
                             .status()
                             .await;
                         let outcome = match result {
