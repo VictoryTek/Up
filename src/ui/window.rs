@@ -1,5 +1,5 @@
 use crate::backends::{Backend, BackendKind, UpdateResult};
-use crate::runner::CommandRunner;
+use crate::runner::{CommandRunner, PrivilegedShell};
 use crate::ui::log_panel::LogPanel;
 use crate::ui::update_row::UpdateRow;
 use crate::ui::upgrade_page::UpgradePage;
@@ -190,30 +190,24 @@ impl UpWindow {
 
             glib::spawn_future_local(async move {
                 // --- Phase 1: Pre-authenticate if needed ---
-                if any_needs_root {
+                // Spawn a persistent `pkexec sh` process so the user
+                // authenticates exactly once; every subsequent privileged
+                // command is routed through this shell.
+                let shell: Option<Arc<tokio::sync::Mutex<PrivilegedShell>>> = if any_needs_root {
                     status_ref.set_label("Authenticating\u{2026}");
                     log_ref.append_line("Requesting administrator privileges\u{2026}");
 
-                    let (auth_tx, auth_rx) = async_channel::bounded::<Result<(), String>>(1);
+                    let (auth_tx, auth_rx) =
+                        async_channel::bounded::<Result<PrivilegedShell, String>>(1);
                     super::spawn_background_async(move || async move {
-                        let result = tokio::process::Command::new("pkexec")
-                            .args(["sh", "-c", "true"])
-                            .status()
-                            .await;
-                        let outcome = match result {
-                            Ok(status) if status.success() => Ok(()),
-                            Ok(status) => Err(format!(
-                                "Authentication failed (exit code {})",
-                                status.code().unwrap_or(-1)
-                            )),
-                            Err(e) => Err(format!("Failed to start pkexec: {e}")),
-                        };
+                        let outcome = PrivilegedShell::new().await;
                         let _ = auth_tx.send(outcome).await;
                     });
 
                     match auth_rx.recv().await {
-                        Ok(Ok(())) => {
+                        Ok(Ok(s)) => {
                             log_ref.append_line("Authentication successful.");
+                            Some(Arc::new(tokio::sync::Mutex::new(s)))
                         }
                         Ok(Err(e)) => {
                             log_ref.append_line(&format!("Authentication failed: {e}"));
@@ -228,7 +222,9 @@ impl UpWindow {
                             return;
                         }
                     }
-                }
+                } else {
+                    None
+                };
 
                 // --- Phase 2: Begin updates ---
                 status_ref.set_label("Updating\u{2026}");
@@ -251,13 +247,19 @@ impl UpWindow {
                 // Clone senders for the worker thread
                 let tx_thread = tx.clone();
                 let result_tx_thread = result_tx.clone();
+                let shell_thread = shell.clone();
 
                 super::spawn_background_async(move || async move {
                     for backend in &ordered_backends {
                         let kind = backend.kind();
-                        let runner = CommandRunner::new(tx_thread.clone(), kind);
+                        let runner =
+                            CommandRunner::new(tx_thread.clone(), kind, shell_thread.clone());
                         let result = backend.run_update(&runner).await;
                         let _ = result_tx_thread.send((kind, result)).await;
+                    }
+                    // Shut down the privileged shell now that all backends are done.
+                    if let Some(s) = shell_thread {
+                        s.lock().await.close().await;
                     }
                 });
 
