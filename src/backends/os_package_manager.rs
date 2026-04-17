@@ -35,6 +35,9 @@ impl Backend for AptBackend {
     fn icon_name(&self) -> &str {
         "system-software-install-symbolic"
     }
+    fn needs_root(&self) -> bool {
+        true
+    }
 
     fn run_update<'a>(
         &'a self,
@@ -126,6 +129,9 @@ impl Backend for DnfBackend {
     }
     fn icon_name(&self) -> &str {
         "system-software-install-symbolic"
+    }
+    fn needs_root(&self) -> bool {
+        true
     }
 
     fn run_update<'a>(
@@ -224,6 +230,9 @@ impl Backend for PacmanBackend {
     fn icon_name(&self) -> &str {
         "system-software-install-symbolic"
     }
+    fn needs_root(&self) -> bool {
+        true
+    }
 
     fn run_update<'a>(
         &'a self,
@@ -295,6 +304,9 @@ impl Backend for ZypperBackend {
     }
     fn icon_name(&self) -> &str {
         "system-software-install-symbolic"
+    }
+    fn needs_root(&self) -> bool {
+        true
     }
 
     fn run_update<'a>(

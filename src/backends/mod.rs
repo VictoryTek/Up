@@ -62,6 +62,13 @@ pub trait Backend: Send + Sync {
         runner: &'a CommandRunner,
     ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>>;
 
+    /// Whether this backend requires root privileges (pkexec) to perform updates.
+    /// Used by the UI to determine if pre-authentication is needed before starting.
+    /// Default: false (no root required).
+    fn needs_root(&self) -> bool {
+        false
+    }
+
     /// Count packages available for update (read-only, no privilege required).
     /// Returns Ok(0) if up to date, Ok(N) if N updates available, Err(_) on failure.
     /// Default implementation returns Ok(0) for backends that do not support checking.

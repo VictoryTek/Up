@@ -176,16 +176,7 @@ impl UpWindow {
 
         update_button.connect_clicked(move |button| {
             button.set_sensitive(false);
-            status_clone.set_label("Updating...");
             log_clone.clear();
-
-            // Set all rows to "Updating..." state
-            {
-                let rows_borrowed = rows_clone.borrow();
-                for (_, row) in rows_borrowed.iter() {
-                    row.set_status_running();
-                }
-            }
 
             let rows_ref = rows_clone.clone();
             let log_ref = log_clone.clone();
@@ -194,7 +185,65 @@ impl UpWindow {
             let backends = detected_clone.borrow().clone();
             let banner_ref = restart_banner_clone.clone();
 
+            // Check if any backend requires root privileges.
+            let any_needs_root = backends.iter().any(|b| b.needs_root());
+
             glib::spawn_future_local(async move {
+                // --- Phase 1: Pre-authenticate if needed ---
+                if any_needs_root {
+                    status_ref.set_label("Authenticating\u{2026}");
+                    log_ref.append_line("Requesting administrator privileges\u{2026}");
+
+                    let (auth_tx, auth_rx) = async_channel::bounded::<Result<(), String>>(1);
+                    super::spawn_background_async(move || async move {
+                        let result = tokio::process::Command::new("pkexec")
+                            .arg("/bin/true")
+                            .status()
+                            .await;
+                        let outcome = match result {
+                            Ok(status) if status.success() => Ok(()),
+                            Ok(status) => Err(format!(
+                                "Authentication failed (exit code {})",
+                                status.code().unwrap_or(-1)
+                            )),
+                            Err(e) => Err(format!("Failed to start pkexec: {e}")),
+                        };
+                        let _ = auth_tx.send(outcome).await;
+                    });
+
+                    match auth_rx.recv().await {
+                        Ok(Ok(())) => {
+                            log_ref.append_line("Authentication successful.");
+                        }
+                        Ok(Err(e)) => {
+                            log_ref.append_line(&format!("Authentication failed: {e}"));
+                            status_ref.set_label("Update cancelled.");
+                            button_ref.set_sensitive(true);
+                            return;
+                        }
+                        Err(_) => {
+                            log_ref.append_line("Authentication channel closed unexpectedly.");
+                            status_ref.set_label("Update cancelled.");
+                            button_ref.set_sensitive(true);
+                            return;
+                        }
+                    }
+                }
+
+                // --- Phase 2: Begin updates ---
+                status_ref.set_label("Updating\u{2026}");
+                {
+                    let rows_borrowed = rows_ref.borrow();
+                    for (_, row) in rows_borrowed.iter() {
+                        row.set_status_running();
+                    }
+                }
+
+                // Reorder: privileged backends first, then unprivileged.
+                // This maximises the polkit credential cache benefit.
+                let mut ordered_backends = backends.clone();
+                ordered_backends.sort_by_key(|b| u8::from(!b.needs_root()));
+
                 let (tx, rx) = async_channel::unbounded::<(BackendKind, String)>();
                 let (result_tx, result_rx) =
                     async_channel::unbounded::<(BackendKind, UpdateResult)>();
@@ -202,10 +251,9 @@ impl UpWindow {
                 // Clone senders for the worker thread
                 let tx_thread = tx.clone();
                 let result_tx_thread = result_tx.clone();
-                let backends_thread = backends.clone();
 
                 super::spawn_background_async(move || async move {
-                    for backend in &backends_thread {
+                    for backend in &ordered_backends {
                         let kind = backend.kind();
                         let runner = CommandRunner::new(tx_thread.clone(), kind);
                         let result = backend.run_update(&runner).await;

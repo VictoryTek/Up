@@ -288,6 +288,10 @@ impl Backend for NixBackend {
         "system-software-install-symbolic"
     }
 
+    fn needs_root(&self) -> bool {
+        is_nixos()
+    }
+
     fn run_update<'a>(
         &'a self,
         runner: &'a CommandRunner,
