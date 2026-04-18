@@ -3,6 +3,7 @@ use crate::runner::{CommandRunner, PrivilegedShell};
 use crate::ui::log_panel::LogPanel;
 use crate::ui::update_row::UpdateRow;
 use crate::ui::upgrade_page::UpgradePage;
+use crate::upgrade;
 use adw::prelude::*;
 use gtk::gio;
 use gtk::glib;
@@ -24,7 +25,8 @@ impl UpWindow {
         let view_stack = adw::ViewStack::new();
 
         // --- Update Page ---
-        let (update_page, run_checks) = Self::build_update_page();
+        let (update_page, run_checks, sysinfo_distro_row, sysinfo_version_row) =
+            Self::build_update_page();
         view_stack.add_titled_with_icon(
             &update_page,
             Some("update"),
@@ -33,13 +35,55 @@ impl UpWindow {
         );
 
         // --- Upgrade Page ---
-        let upgrade_page = UpgradePage::build();
-        view_stack.add_titled_with_icon(
-            &upgrade_page,
+        let (upgrade_widget, upgrade_init_tx) = UpgradePage::build();
+        let upgrade_stack_page = view_stack.add_titled_with_icon(
+            &upgrade_widget,
             Some("upgrade"),
             "Upgrade",
             "software-update-urgent-symbolic",
         );
+        // Hidden by default; revealed only when distro detection confirms upgrade support.
+        upgrade_stack_page.set_visible(false);
+
+        // Spawn single distro detection, fanning out to update-page sysinfo and upgrade page.
+        {
+            let (detect_tx, detect_rx) = async_channel::bounded::<(
+                upgrade::DistroInfo,
+                Option<(upgrade::NixOsConfigType, String)>,
+            )>(1);
+
+            super::spawn_background_async(move || async move {
+                let info = upgrade::detect_distro();
+                let nixos_extra = if info.id == "nixos" {
+                    let config_type = upgrade::detect_nixos_config_type();
+                    let raw_hostname = upgrade::detect_hostname();
+                    Some((config_type, raw_hostname))
+                } else {
+                    None
+                };
+                let _ = detect_tx.send((info, nixos_extra)).await;
+            });
+
+            glib::spawn_future_local(async move {
+                if let Ok((info, nixos_extra)) = detect_rx.recv().await {
+                    // 1. Populate update-page system info rows
+                    sysinfo_distro_row.set_subtitle(&info.name);
+                    sysinfo_version_row.set_subtitle(&info.version);
+
+                    // 2. Gate upgrade tab visibility
+                    upgrade_stack_page.set_visible(info.upgrade_supported);
+
+                    // 3. Forward to upgrade page
+                    if info.upgrade_supported {
+                        let init = upgrade::UpgradePageInit {
+                            distro: info,
+                            nixos_extra,
+                        };
+                        let _ = upgrade_init_tx.send(init).await;
+                    }
+                }
+            });
+        }
 
         let view_switcher_bar = adw::ViewSwitcherBar::builder()
             .stack(&view_stack)
@@ -96,7 +140,7 @@ impl UpWindow {
         window
     }
 
-    fn build_update_page() -> (gtk::Box, Rc<dyn Fn()>) {
+    fn build_update_page() -> (gtk::Box, Rc<dyn Fn()>, adw::ActionRow, adw::ActionRow) {
         let page_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
         let scrolled = gtk::ScrolledWindow::builder()
@@ -120,6 +164,26 @@ impl UpWindow {
             .css_classes(vec!["dim-label"])
             .build();
         content_box.append(&status_label);
+
+        // System Information group (populated after background distro detection)
+        let sys_info_group = adw::PreferencesGroup::builder()
+            .title("System Information")
+            .build();
+
+        let distro_row = adw::ActionRow::builder()
+            .title("Distribution")
+            .subtitle("Loading\u{2026}")
+            .build();
+        distro_row.add_prefix(&gtk::Image::from_icon_name("computer-symbolic"));
+        sys_info_group.add(&distro_row);
+
+        let version_row = adw::ActionRow::builder()
+            .title("Current Version")
+            .subtitle("Loading\u{2026}")
+            .build();
+        sys_info_group.add(&version_row);
+
+        content_box.append(&sys_info_group);
 
         // Backend rows group
         let backends_group = adw::PreferencesGroup::builder()
@@ -457,6 +521,6 @@ impl UpWindow {
             });
         }
 
-        (page_box, run_checks)
+        (page_box, run_checks, distro_row, version_row)
     }
 }

@@ -19,7 +19,7 @@ enum CheckMsg {
 pub struct UpgradePage;
 
 impl UpgradePage {
-    pub fn build() -> gtk::Box {
+    pub fn build() -> (gtk::Box, async_channel::Sender<upgrade::UpgradePageInit>) {
         let page_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
         let scrolled = gtk::ScrolledWindow::builder()
@@ -47,7 +47,7 @@ impl UpgradePage {
 
         // Distro info group
         let info_group = adw::PreferencesGroup::builder()
-            .title("System Information")
+            .title("Upgrade Status")
             .build();
 
         let distro_info_state: Rc<RefCell<Option<upgrade::DistroInfo>>> =
@@ -55,19 +55,6 @@ impl UpgradePage {
 
         let nixos_config_type: Rc<RefCell<Option<upgrade::NixOsConfigType>>> =
             Rc::new(RefCell::new(None));
-
-        let distro_row = adw::ActionRow::builder()
-            .title("Distribution")
-            .subtitle("Loading\u{2026}")
-            .build();
-        distro_row.add_prefix(&gtk::Image::from_icon_name("computer-symbolic"));
-        info_group.add(&distro_row);
-
-        let version_row = adw::ActionRow::builder()
-            .title("Current Version")
-            .subtitle("Loading\u{2026}")
-            .build();
-        info_group.add(&version_row);
 
         let upgrade_available_row = adw::ActionRow::builder()
             .title("Upgrade Available")
@@ -372,31 +359,12 @@ impl UpgradePage {
         page_box.append(&flake_banner);
         page_box.append(&scrolled);
 
-        // Spawn distro detection off the GTK thread.
+        let (init_tx, init_rx) = async_channel::bounded::<upgrade::UpgradePageInit>(1);
+
         {
-            let (detect_tx, detect_rx) = async_channel::unbounded::<(
-                upgrade::DistroInfo,
-                Option<(upgrade::NixOsConfigType, String)>,
-            )>();
-
-            super::spawn_background_async(move || async move {
-                let info = upgrade::detect_distro();
-                let nixos_extra = if info.id == "nixos" {
-                    let config_type = upgrade::detect_nixos_config_type();
-                    let raw_hostname = upgrade::detect_hostname();
-                    Some((config_type, raw_hostname))
-                } else {
-                    None
-                };
-                let _ = detect_tx.send((info, nixos_extra)).await;
-            });
-
             let nixos_config_type_fill = nixos_config_type.clone();
             let flake_banner_fill = flake_banner.clone();
-
             let distro_state_fill = distro_info_state.clone();
-            let distro_row_fill = distro_row.clone();
-            let version_row_fill = version_row.clone();
             let upgrade_available_row_fill = upgrade_available_row.clone();
             let info_group_fill = info_group.clone();
             let check_rows_fill = check_rows.clone();
@@ -405,92 +373,84 @@ impl UpgradePage {
             let check_btn_fill = check_button.clone();
 
             glib::spawn_future_local(async move {
-                match detect_rx.recv().await {
-                    Ok((info, nixos_extra)) => {
-                        // Populate distro info rows
-                        distro_row_fill.set_subtitle(&info.name);
-                        version_row_fill.set_subtitle(&info.version);
-                        upgrade_available_row_fill.set_subtitle(if info.upgrade_supported {
-                            "Checking\u{2026}"
-                        } else {
-                            "Not supported for this distribution yet"
-                        });
+                if let Ok(init) = init_rx.recv().await {
+                    let info = init.distro;
+                    let nixos_extra = init.nixos_extra;
 
-                        // Conditionally add NixOS config row
-                        if let Some((config_type, raw_hostname)) = &nixos_extra {
-                            let safe_hostname = glib::markup_escape_text(raw_hostname);
-                            let config_label = match config_type {
-                                upgrade::NixOsConfigType::Flake => {
-                                    format!("Flake-based (/etc/nixos#{})", safe_hostname)
-                                }
-                                upgrade::NixOsConfigType::LegacyChannel => {
-                                    "Channel-based (/etc/nixos/configuration.nix)".to_string()
-                                }
-                            };
-                            let config_row = adw::ActionRow::builder()
-                                .title("NixOS Config Type")
-                                .subtitle(&config_label)
-                                .build();
-                            config_row
-                                .add_prefix(&gtk::Image::from_icon_name("emblem-system-symbolic"));
-                            info_group_fill.add(&config_row);
-                            // Store config type and reveal banner for flake systems
-                            *nixos_config_type_fill.borrow_mut() = Some(config_type.clone());
-                            if *config_type == upgrade::NixOsConfigType::Flake {
-                                flake_banner_fill.set_revealed(true);
+                    upgrade_available_row_fill.set_subtitle(if info.upgrade_supported {
+                        "Checking\u{2026}"
+                    } else {
+                        "Not supported for this distribution yet"
+                    });
+
+                    // Conditionally add NixOS config row
+                    if let Some((config_type, raw_hostname)) = &nixos_extra {
+                        let safe_hostname = glib::markup_escape_text(raw_hostname);
+                        let config_label = match config_type {
+                            upgrade::NixOsConfigType::Flake => {
+                                format!("Flake-based (/etc/nixos#{})", safe_hostname)
                             }
-                            // Update first check row title for NixOS
-                            if let Some(row) = check_rows_fill.borrow().first() {
-                                row.set_title("nixos-rebuild available");
+                            upgrade::NixOsConfigType::LegacyChannel => {
+                                "Channel-based (/etc/nixos/configuration.nix)".to_string()
                             }
+                        };
+                        let config_row = adw::ActionRow::builder()
+                            .title("NixOS Config Type")
+                            .subtitle(&config_label)
+                            .build();
+                        config_row
+                            .add_prefix(&gtk::Image::from_icon_name("emblem-system-symbolic"));
+                        info_group_fill.add(&config_row);
+                        // Store config type and reveal banner for flake systems
+                        *nixos_config_type_fill.borrow_mut() = Some(config_type.clone());
+                        if *config_type == upgrade::NixOsConfigType::Flake {
+                            flake_banner_fill.set_revealed(true);
                         }
-
-                        // Store distro info
-                        *distro_state_fill.borrow_mut() = Some(info.clone());
-
-                        // Spawn upgrade availability check if supported
-                        if info.upgrade_supported {
-                            let upgrade_row_clone = upgrade_available_row_fill.clone();
-                            let distro_check = info.clone();
-                            let upgrade_available_clone = upgrade_available_fill.clone();
-                            let upgrade_btn_for_avail = upgrade_btn_fill.clone();
-                            glib::spawn_future_local(async move {
-                                let (tx, rx) = async_channel::unbounded::<String>();
-                                std::thread::spawn(move || {
-                                    let result = upgrade::check_upgrade_available(&distro_check);
-                                    let _ = tx.send_blocking(result);
-                                    drop(tx);
-                                });
-                                if let Ok(result_msg) = rx.recv().await {
-                                    let is_available = result_msg.starts_with("Yes");
-                                    *upgrade_available_clone.borrow_mut() = is_available;
-                                    upgrade_row_clone.set_subtitle(&result_msg);
-                                    if !is_available {
-                                        upgrade_btn_for_avail.set_sensitive(false);
-                                    }
-                                } else {
-                                    upgrade_row_clone
-                                        .set_subtitle("Could not determine upgrade availability");
-                                }
-                            });
-                        }
-
-                        // Enable check button and auto-trigger checks if supported
-                        check_btn_fill.set_sensitive(true);
-                        if info.upgrade_supported {
-                            check_btn_fill.emit_clicked();
+                        // Update first check row title for NixOS
+                        if let Some(row) = check_rows_fill.borrow().first() {
+                            row.set_title("nixos-rebuild available");
                         }
                     }
-                    Err(_) => {
-                        eprintln!("Distro detection channel closed unexpectedly");
-                        distro_row_fill.set_subtitle("Unknown");
-                        version_row_fill.set_subtitle("Unknown");
-                        check_btn_fill.set_sensitive(false);
+
+                    // Store distro info
+                    *distro_state_fill.borrow_mut() = Some(info.clone());
+
+                    // Spawn upgrade availability check if supported
+                    if info.upgrade_supported {
+                        let upgrade_row_clone = upgrade_available_row_fill.clone();
+                        let distro_check = info.clone();
+                        let upgrade_available_clone = upgrade_available_fill.clone();
+                        let upgrade_btn_for_avail = upgrade_btn_fill.clone();
+                        glib::spawn_future_local(async move {
+                            let (tx, rx) = async_channel::unbounded::<String>();
+                            std::thread::spawn(move || {
+                                let result = upgrade::check_upgrade_available(&distro_check);
+                                let _ = tx.send_blocking(result);
+                                drop(tx);
+                            });
+                            if let Ok(result_msg) = rx.recv().await {
+                                let is_available = result_msg.starts_with("Yes");
+                                *upgrade_available_clone.borrow_mut() = is_available;
+                                upgrade_row_clone.set_subtitle(&result_msg);
+                                if !is_available {
+                                    upgrade_btn_for_avail.set_sensitive(false);
+                                }
+                            } else {
+                                upgrade_row_clone
+                                    .set_subtitle("Could not determine upgrade availability");
+                            }
+                        });
+                    }
+
+                    // Enable check button and auto-trigger checks if supported
+                    check_btn_fill.set_sensitive(true);
+                    if info.upgrade_supported {
+                        check_btn_fill.emit_clicked();
                     }
                 }
             });
         }
 
-        page_box
+        (page_box, init_tx)
     }
 }

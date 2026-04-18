@@ -25,6 +25,14 @@ pub enum NixOsConfigType {
     LegacyChannel,
 }
 
+/// Carries all detection results the upgrade page needs to initialise.
+/// Sent once from UpWindow::build() over a bounded channel after detection.
+#[derive(Debug, Clone)]
+pub struct UpgradePageInit {
+    pub distro: DistroInfo,
+    pub nixos_extra: Option<(NixOsConfigType, String)>,
+}
+
 pub fn detect_nixos_config_type() -> NixOsConfigType {
     if std::path::Path::new("/etc/nixos/flake.nix").exists() {
         NixOsConfigType::Flake
