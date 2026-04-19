@@ -281,27 +281,26 @@ impl UpWindow {
                 // its own runtime) causes write operations to fail because the original
                 // reactor is no longer running.
                 super::spawn_background_async(move || async move {
-                    let shell: Option<Arc<tokio::sync::Mutex<PrivilegedShell>>> =
-                        if any_needs_root {
-                            match PrivilegedShell::new().await {
-                                Ok(s) => {
-                                    let _ = auth_status_tx.send(Ok(())).await;
-                                    Some(Arc::new(tokio::sync::Mutex::new(s)))
-                                }
-                                Err(e) => {
-                                    let _ = auth_status_tx.send(Err(e)).await;
-                                    return;
-                                }
+                    let shell: Option<Arc<tokio::sync::Mutex<PrivilegedShell>>> = if any_needs_root
+                    {
+                        match PrivilegedShell::new().await {
+                            Ok(s) => {
+                                let _ = auth_status_tx.send(Ok(())).await;
+                                Some(Arc::new(tokio::sync::Mutex::new(s)))
                             }
-                        } else {
-                            let _ = auth_status_tx.send(Ok(())).await;
-                            None
-                        };
+                            Err(e) => {
+                                let _ = auth_status_tx.send(Err(e)).await;
+                                return;
+                            }
+                        }
+                    } else {
+                        let _ = auth_status_tx.send(Ok(())).await;
+                        None
+                    };
 
                     for backend in &ordered_backends {
                         let kind = backend.kind();
-                        let runner =
-                            CommandRunner::new(tx_thread.clone(), kind, shell.clone());
+                        let runner = CommandRunner::new(tx_thread.clone(), kind, shell.clone());
                         let result = backend.run_update(&runner).await;
                         let _ = result_tx_thread.send((kind, result)).await;
                     }
