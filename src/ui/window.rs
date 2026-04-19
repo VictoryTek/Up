@@ -253,50 +253,9 @@ impl UpWindow {
             let any_needs_root = backends.iter().any(|b| b.needs_root());
 
             glib::spawn_future_local(async move {
-                // --- Phase 1: Pre-authenticate if needed ---
-                // Spawn a persistent `pkexec sh` process so the user
-                // authenticates exactly once; every subsequent privileged
-                // command is routed through this shell.
-                let shell: Option<Arc<tokio::sync::Mutex<PrivilegedShell>>> = if any_needs_root {
+                if any_needs_root {
                     status_ref.set_label("Authenticating\u{2026}");
                     log_ref.append_line("Requesting administrator privileges\u{2026}");
-
-                    let (auth_tx, auth_rx) =
-                        async_channel::bounded::<Result<PrivilegedShell, String>>(1);
-                    super::spawn_background_async(move || async move {
-                        let outcome = PrivilegedShell::new().await;
-                        let _ = auth_tx.send(outcome).await;
-                    });
-
-                    match auth_rx.recv().await {
-                        Ok(Ok(s)) => {
-                            log_ref.append_line("Authentication successful.");
-                            Some(Arc::new(tokio::sync::Mutex::new(s)))
-                        }
-                        Ok(Err(e)) => {
-                            log_ref.append_line(&format!("Authentication failed: {e}"));
-                            status_ref.set_label("Update cancelled.");
-                            button_ref.set_sensitive(true);
-                            return;
-                        }
-                        Err(_) => {
-                            log_ref.append_line("Authentication channel closed unexpectedly.");
-                            status_ref.set_label("Update cancelled.");
-                            button_ref.set_sensitive(true);
-                            return;
-                        }
-                    }
-                } else {
-                    None
-                };
-
-                // --- Phase 2: Begin updates ---
-                status_ref.set_label("Updating\u{2026}");
-                {
-                    let rows_borrowed = rows_ref.borrow();
-                    for (_, row) in rows_borrowed.iter() {
-                        row.set_status_running();
-                    }
                 }
 
                 // Reorder: privileged backends first, then unprivileged.
@@ -308,28 +267,83 @@ impl UpWindow {
                 let (result_tx, result_rx) =
                     async_channel::unbounded::<(BackendKind, UpdateResult)>();
 
-                // Clone senders for the worker thread
+                // Auth status: Ok(()) = authenticated (or not needed), Err(msg) = failed.
+                let (auth_status_tx, auth_status_rx) =
+                    async_channel::bounded::<Result<(), String>>(1);
+
                 let tx_thread = tx.clone();
                 let result_tx_thread = result_tx.clone();
-                let shell_thread = shell.clone();
 
+                // IMPORTANT: PrivilegedShell must be created AND used within the
+                // same Tokio runtime.  Its Tokio I/O handles (ChildStdin/ChildStdout)
+                // are bound to the reactor of the runtime that created them.  Passing
+                // them across spawn_background_async boundaries (each of which builds
+                // its own runtime) causes write operations to fail because the original
+                // reactor is no longer running.
                 super::spawn_background_async(move || async move {
+                    let shell: Option<Arc<tokio::sync::Mutex<PrivilegedShell>>> =
+                        if any_needs_root {
+                            match PrivilegedShell::new().await {
+                                Ok(s) => {
+                                    let _ = auth_status_tx.send(Ok(())).await;
+                                    Some(Arc::new(tokio::sync::Mutex::new(s)))
+                                }
+                                Err(e) => {
+                                    let _ = auth_status_tx.send(Err(e)).await;
+                                    return;
+                                }
+                            }
+                        } else {
+                            let _ = auth_status_tx.send(Ok(())).await;
+                            None
+                        };
+
                     for backend in &ordered_backends {
                         let kind = backend.kind();
                         let runner =
-                            CommandRunner::new(tx_thread.clone(), kind, shell_thread.clone());
+                            CommandRunner::new(tx_thread.clone(), kind, shell.clone());
                         let result = backend.run_update(&runner).await;
                         let _ = result_tx_thread.send((kind, result)).await;
                     }
                     // Shut down the privileged shell now that all backends are done.
-                    if let Some(s) = shell_thread {
+                    if let Some(s) = shell {
                         s.lock().await.close().await;
                     }
                 });
 
-                // Drop the original senders so channels close when the thread finishes
+                // Drop the original senders so channels close when the thread finishes.
                 drop(tx);
                 drop(result_tx);
+
+                // Wait for authentication result before updating the UI.
+                match auth_status_rx.recv().await {
+                    Ok(Ok(())) => {
+                        if any_needs_root {
+                            log_ref.append_line("Authentication successful.");
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        log_ref.append_line(&format!("Authentication failed: {e}"));
+                        status_ref.set_label("Update cancelled.");
+                        button_ref.set_sensitive(true);
+                        return;
+                    }
+                    Err(_) => {
+                        log_ref.append_line("Authentication channel closed unexpectedly.");
+                        status_ref.set_label("Update cancelled.");
+                        button_ref.set_sensitive(true);
+                        return;
+                    }
+                }
+
+                // --- Begin updates ---
+                status_ref.set_label("Updating\u{2026}");
+                {
+                    let rows_borrowed = rows_ref.borrow();
+                    for (_, row) in rows_borrowed.iter() {
+                        row.set_status_running();
+                    }
+                }
 
                 // Process log output in a separate future
                 let log_ref2 = log_ref.clone();
