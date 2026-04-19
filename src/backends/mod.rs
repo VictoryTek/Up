@@ -97,6 +97,12 @@ pub fn detect_backends() -> Vec<Arc<dyn Backend>> {
         backends.push(os_backend);
     }
 
+    // Nix — placed before Flatpak so that row order matches execution order
+    // (Nix runs privileged and is sorted ahead of unprivileged backends).
+    if nix::is_available() {
+        backends.push(Arc::new(nix::NixBackend));
+    }
+
     // Flatpak — always include when running inside the Flatpak sandbox so that
     // `flatpak-spawn --host` can be used to update host Flatpak packages even
     // though the `flatpak` binary itself is not on the sandbox PATH.
@@ -107,11 +113,6 @@ pub fn detect_backends() -> Vec<Arc<dyn Backend>> {
     // Homebrew
     if homebrew::is_available() {
         backends.push(Arc::new(homebrew::HomebrewBackend));
-    }
-
-    // Nix
-    if nix::is_available() {
-        backends.push(Arc::new(nix::NixBackend));
     }
 
     for b in &backends {
