@@ -1,6 +1,8 @@
 use adw::prelude::*;
-use std::cell::RefCell;
+use gtk::glib;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::Duration;
 
 use crate::backends::Backend;
 
@@ -12,6 +14,8 @@ pub struct UpdateRow {
     progress_bar: gtk::ProgressBar,
     /// Tracks child rows added by set_packages() so they can be cleared on re-check.
     pkg_rows: Rc<RefCell<Vec<adw::ActionRow>>>,
+    progress_timer: Rc<RefCell<Option<glib::SourceId>>>,
+    progress_fraction: Rc<Cell<f64>>,
 }
 
 impl UpdateRow {
@@ -49,6 +53,8 @@ impl UpdateRow {
             spinner,
             progress_bar,
             pkg_rows: Rc::new(RefCell::new(Vec::new())),
+            progress_timer: Rc::new(RefCell::new(None)),
+            progress_fraction: Rc::new(Cell::new(0.0)),
         }
     }
 
@@ -107,20 +113,43 @@ impl UpdateRow {
         }
     }
 
-    pub fn pulse_progress(&self) {
-        self.progress_bar.pulse();
-    }
-
     pub fn set_status_running(&self) {
+        // Cancel any previously running timer before starting a new one.
+        if let Some(source_id) = self.progress_timer.borrow_mut().take() {
+            source_id.remove();
+        }
+        self.progress_fraction.set(0.0);
         self.spinner.set_visible(true);
         self.spinner.set_spinning(true);
         self.progress_bar.set_visible(true);
         self.progress_bar.set_fraction(0.0);
         self.status_label.set_label("Updating...");
         self.status_label.set_css_classes(&["accent"]);
+
+        let progress_bar = self.progress_bar.clone();
+        let fraction_rc = self.progress_fraction.clone();
+
+        let source_id = glib::timeout_add_local(Duration::from_millis(200), move || {
+            let current = fraction_rc.get();
+            let new_val = (current + 0.005).min(0.95);
+            fraction_rc.set(new_val);
+            progress_bar.set_fraction(new_val);
+            glib::ControlFlow::Continue
+        });
+
+        *self.progress_timer.borrow_mut() = Some(source_id);
+    }
+
+    fn stop_progress_timer(&self) {
+        if let Some(source_id) = self.progress_timer.borrow_mut().take() {
+            source_id.remove();
+        }
+        self.progress_fraction.set(1.0);
+        self.progress_bar.set_fraction(1.0);
     }
 
     pub fn set_status_success(&self, count: usize) {
+        self.stop_progress_timer();
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
         self.progress_bar.set_visible(false);
@@ -134,6 +163,7 @@ impl UpdateRow {
     }
 
     pub fn set_status_error(&self, msg: &str) {
+        self.stop_progress_timer();
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
         self.progress_bar.set_visible(false);
@@ -142,6 +172,7 @@ impl UpdateRow {
     }
 
     pub fn set_status_skipped(&self, msg: &str) {
+        self.stop_progress_timer();
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
         self.progress_bar.set_visible(false);
@@ -151,6 +182,7 @@ impl UpdateRow {
 
     /// Used when the count cannot be determined without running the update (e.g. NixOS).
     pub fn set_status_unknown(&self, msg: &str) {
+        self.stop_progress_timer();
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
         self.progress_bar.set_visible(false);

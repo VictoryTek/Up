@@ -346,14 +346,9 @@ impl UpWindow {
 
                 // Process log output in a separate future
                 let log_ref2 = log_ref.clone();
-                let rows_for_log = rows_ref.clone();
                 glib::spawn_future_local(async move {
                     while let Ok((kind, line)) = rx.recv().await {
                         log_ref2.append_line(&format!("[{kind}] {line}"));
-                        let borrowed = rows_for_log.borrow();
-                        if let Some((_, row)) = borrowed.iter().find(|(k, _)| *k == kind) {
-                            row.pulse_progress();
-                        }
                     }
                 });
 
