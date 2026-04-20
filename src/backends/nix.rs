@@ -315,9 +315,11 @@ impl Backend for NixBackend {
                     // alphanumeric / hyphen / underscore / dot only), so it is
                     // safe to interpolate into the shell command string.
                     let cmd = format!(
-                        "nix --extra-experimental-features 'nix-command flakes' \
+                        "stdbuf -oL -eL \
+                         nix --extra-experimental-features 'nix-command flakes' \
                          flake update --flake /etc/nixos && \
-                         nixos-rebuild switch --flake /etc/nixos#{}",
+                         stdbuf -oL -eL \
+                         nixos-rebuild switch --flake /etc/nixos#{} --print-build-logs",
                         config_name
                     );
                     match runner
@@ -348,7 +350,8 @@ impl Backend for NixBackend {
                                 "PATH=/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin",
                                 "sh",
                                 "-c",
-                                "nix-channel --update && nixos-rebuild switch",
+                                "stdbuf -oL -eL nix-channel --update && \
+                                 stdbuf -oL -eL nixos-rebuild switch --print-build-logs",
                             ],
                         )
                         .await {

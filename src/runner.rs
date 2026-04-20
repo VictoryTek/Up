@@ -1,10 +1,24 @@
-use crate::backends::BackendKind;
+use crate::backends::{BackendKind, UpdateResult};
 use log::{info, warn};
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
+
+/// Unified event type that carries all backend activity through a single ordered channel.
+/// The worker sends events in strict sequence: Started → LogLine(s) → Finished.
+/// The GTK receive loop processes one event at a time, eliminating any race between
+/// independent futures on separate channels.
+#[derive(Debug)]
+pub enum BackendEvent {
+    /// The named backend has started its update operation.
+    Started(BackendKind),
+    /// A single line of log output produced by the named backend.
+    LogLine(BackendKind, String),
+    /// The named backend has finished; carries its result.
+    Finished(BackendKind, UpdateResult),
+}
 
 // ── Persistent privileged shell ──────────────────────────────────────────
 
@@ -80,7 +94,7 @@ impl PrivilegedShell {
     pub async fn run_command(
         &mut self,
         args: &[&str],
-        tx: &async_channel::Sender<(BackendKind, String)>,
+        tx: &async_channel::Sender<BackendEvent>,
         kind: BackendKind,
     ) -> Result<String, String> {
         let cmd_line = args
@@ -124,7 +138,7 @@ impl PrivilegedShell {
             let content = line.trim_end_matches('\n').to_string();
             full_output.push_str(&content);
             full_output.push('\n');
-            let _ = tx.send((kind, content)).await;
+            let _ = tx.send(BackendEvent::LogLine(kind, content)).await;
         }
     }
 
@@ -157,14 +171,14 @@ fn shell_quote(s: &str) -> String {
 /// Runs system commands and streams output back to the UI via an async channel.
 #[derive(Clone)]
 pub struct CommandRunner {
-    tx: async_channel::Sender<(BackendKind, String)>,
+    tx: async_channel::Sender<BackendEvent>,
     kind: BackendKind,
     shell: Option<Arc<Mutex<PrivilegedShell>>>,
 }
 
 impl CommandRunner {
     pub fn new(
-        tx: async_channel::Sender<(BackendKind, String)>,
+        tx: async_channel::Sender<BackendEvent>,
         kind: BackendKind,
         shell: Option<Arc<Mutex<PrivilegedShell>>>,
     ) -> Self {
@@ -211,7 +225,9 @@ impl CommandRunner {
                 while let Ok(Some(line)) = reader.next_line().await {
                     out.push_str(&line);
                     out.push('\n');
-                    let _ = tx_stdout.send((kind_stdout, line)).await;
+                    let _ = tx_stdout
+                        .send(BackendEvent::LogLine(kind_stdout, line))
+                        .await;
                 }
             }
             out
@@ -226,7 +242,9 @@ impl CommandRunner {
                 while let Ok(Some(line)) = reader.next_line().await {
                     out.push_str(&line);
                     out.push('\n');
-                    let _ = tx_stderr.send((kind_stderr, line)).await;
+                    let _ = tx_stderr
+                        .send(BackendEvent::LogLine(kind_stderr, line))
+                        .await;
                 }
             }
             out
@@ -250,7 +268,7 @@ impl CommandRunner {
     }
 
     async fn send(&self, msg: String) {
-        let _ = self.tx.send((self.kind, msg)).await;
+        let _ = self.tx.send(BackendEvent::LogLine(self.kind, msg)).await;
     }
 }
 

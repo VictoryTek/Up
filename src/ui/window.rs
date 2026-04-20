@@ -1,5 +1,5 @@
 use crate::backends::{Backend, BackendKind, UpdateResult};
-use crate::runner::{CommandRunner, PrivilegedShell};
+use crate::runner::{BackendEvent, CommandRunner, PrivilegedShell};
 use crate::ui::log_panel::LogPanel;
 use crate::ui::update_row::UpdateRow;
 use crate::ui::upgrade_page::UpgradePage;
@@ -263,18 +263,13 @@ impl UpWindow {
                 let mut ordered_backends = backends.clone();
                 ordered_backends.sort_by_key(|b| u8::from(!b.needs_root()));
 
-                let (tx, rx) = async_channel::unbounded::<(BackendKind, String)>();
-                let (result_tx, result_rx) =
-                    async_channel::unbounded::<(BackendKind, UpdateResult)>();
-                let (started_tx, started_rx) = async_channel::unbounded::<BackendKind>();
+                let (event_tx, event_rx) = async_channel::unbounded::<BackendEvent>();
 
                 // Auth status: Ok(()) = authenticated (or not needed), Err(msg) = failed.
                 let (auth_status_tx, auth_status_rx) =
                     async_channel::bounded::<Result<(), String>>(1);
 
-                let tx_thread = tx.clone();
-                let result_tx_thread = result_tx.clone();
-                let started_tx_thread = started_tx.clone();
+                let event_tx_thread = event_tx.clone();
 
                 // IMPORTANT: PrivilegedShell must be created AND used within the
                 // same Tokio runtime.  Its Tokio I/O handles (ChildStdin/ChildStdout)
@@ -302,10 +297,13 @@ impl UpWindow {
 
                     for backend in &ordered_backends {
                         let kind = backend.kind();
-                        let _ = started_tx_thread.send(kind).await;
-                        let runner = CommandRunner::new(tx_thread.clone(), kind, shell.clone());
+                        let _ = event_tx_thread.send(BackendEvent::Started(kind)).await;
+                        let runner =
+                            CommandRunner::new(event_tx_thread.clone(), kind, shell.clone());
                         let result = backend.run_update(&runner).await;
-                        let _ = result_tx_thread.send((kind, result)).await;
+                        let _ = event_tx_thread
+                            .send(BackendEvent::Finished(kind, result))
+                            .await;
                     }
                     // Shut down the privileged shell now that all backends are done.
                     if let Some(s) = shell {
@@ -313,10 +311,8 @@ impl UpWindow {
                     }
                 });
 
-                // Drop the original senders so channels close when the thread finishes.
-                drop(tx);
-                drop(result_tx);
-                drop(started_tx);
+                // Drop the original sender so the channel closes when the thread finishes.
+                drop(event_tx);
 
                 // Wait for authentication result before updating the UI.
                 match auth_status_rx.recv().await {
@@ -342,45 +338,41 @@ impl UpWindow {
                 // --- Begin updates ---
                 status_ref.set_label("Updating\u{2026}");
 
-                // Process started events — activate each row's progress bar as its backend begins
-                let rows_for_started = rows_ref.clone();
-                glib::spawn_future_local(async move {
-                    while let Ok(kind) = started_rx.recv().await {
-                        let rows_borrowed = rows_for_started.borrow();
-                        if let Some((_, row)) = rows_borrowed.iter().find(|(k, _)| *k == kind) {
-                            row.set_status_running();
-                        }
-                    }
-                });
-
-                // Process log output in a separate future
-                let log_ref2 = log_ref.clone();
-                glib::spawn_future_local(async move {
-                    while let Ok((kind, line)) = rx.recv().await {
-                        log_ref2.append_line(&format!("[{kind}] {line}"));
-                    }
-                });
-
-                // Process results
+                // Process all backend events in strict arrival order via a single loop.
+                // This ensures Started(A) → LogLine(A)* → Finished(A) → Started(B) …
+                // are always processed in sequence, eliminating the three-channel race.
                 let mut has_error = false;
                 let mut self_updated = false;
-                while let Ok((kind, result)) = result_rx.recv().await {
-                    let rows_borrowed = rows_ref.borrow();
-                    if let Some((_, row)) = rows_borrowed.iter().find(|(k, _)| *k == kind) {
-                        match &result {
-                            UpdateResult::Success { updated_count } => {
-                                row.set_status_success(*updated_count);
+                while let Ok(event) = event_rx.recv().await {
+                    match event {
+                        BackendEvent::Started(kind) => {
+                            let rows_borrowed = rows_ref.borrow();
+                            if let Some((_, row)) = rows_borrowed.iter().find(|(k, _)| *k == kind) {
+                                row.set_status_running();
                             }
-                            UpdateResult::SuccessWithSelfUpdate { updated_count } => {
-                                row.set_status_success(*updated_count);
-                                self_updated = true;
-                            }
-                            UpdateResult::Error(msg) => {
-                                row.set_status_error(msg);
-                                has_error = true;
-                            }
-                            UpdateResult::Skipped(msg) => {
-                                row.set_status_skipped(msg);
+                        }
+                        BackendEvent::LogLine(kind, line) => {
+                            log_ref.append_line(&format!("[{kind}] {line}"));
+                        }
+                        BackendEvent::Finished(kind, result) => {
+                            let rows_borrowed = rows_ref.borrow();
+                            if let Some((_, row)) = rows_borrowed.iter().find(|(k, _)| *k == kind) {
+                                match &result {
+                                    UpdateResult::Success { updated_count } => {
+                                        row.set_status_success(*updated_count);
+                                    }
+                                    UpdateResult::SuccessWithSelfUpdate { updated_count } => {
+                                        row.set_status_success(*updated_count);
+                                        self_updated = true;
+                                    }
+                                    UpdateResult::Error(msg) => {
+                                        row.set_status_error(msg);
+                                        has_error = true;
+                                    }
+                                    UpdateResult::Skipped(msg) => {
+                                        row.set_status_skipped(msg);
+                                    }
+                                }
                             }
                         }
                     }

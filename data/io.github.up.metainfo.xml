@@ -26,6 +26,11 @@
   <launchable type="desktop-id">io.github.up.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="1.0.1" date="2026-04-20">
+      <description>
+        <p>Fixed Nix and Flatpak running simultaneously. Restored real-time Nix terminal output by forcing line-buffered output via stdbuf and adding --print-build-logs to nixos-rebuild switch.</p>
+      </description>
+    </release>
     <release version="1.0.0" date="2026-04-20">
       <description>
         <p>First stable release. Supports APT, DNF, Pacman, Zypper, Flatpak, Homebrew, and Nix backends with live streaming output, distro version upgrades, and a native libadwaita interface.</p>
