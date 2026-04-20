@@ -11,3 +11,85 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+
+jobs:
+  # =============================================================================
+  # NATIVE BUILD & TEST
+  # =============================================================================
+  
+  native-build:
+    name: Native Build & Test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install GTK4 and libadwaita dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libglib2.0-dev \
+            libcairo2-dev \
+            libpango1.0-dev \
+            pkg-config \
+            cmake \
+            ninja-build \
+            desktop-file-utils \
+            gettext \
+            libunwind-dev
+
+      - name: Run cargo fmt check
+        run: cargo fmt --check
+
+      - name: Run cargo clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Build with cargo
+        run: cargo build --release
+
+      - name: Run cargo test
+        run: cargo test --release
+
+      - name: Validate desktop file
+        run: desktop-file-validate data/io.github.up.desktop
+
+      - name: Validate AppStream metadata
+        run: |
+          if ! command -v appstreamcli &> /dev/null; then
+            sudo apt-get install -y appstream
+          fi
+          appstreamcli validate --no-net data/io.github.up.metainfo.xml
+
+  # =============================================================================
+  # VALIDATION SUMMARY
+  # =============================================================================
+  
+  validation:
+    name: CI Validation
+    runs-on: ubuntu-24.04
+    needs: [native-build]
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          echo "CI Pipeline Summary:"
+          echo "✓ Native Build & Test: ${{ needs.native-build.result }}"
+          echo ""
+          if [ "${{ needs.native-build.result }}" != "success" ]; then
+            echo "❌ CI Pipeline failed"
+            exit 1
+          else
+            echo "✅ All CI checks passed successfully"
+          fi
