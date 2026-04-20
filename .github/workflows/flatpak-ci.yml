@@ -87,6 +87,8 @@ jobs:
     name: Flatpak Build
     runs-on: ubuntu-24.04
     needs: native-build
+    permissions:
+      contents: write
     steps:
       - name: Checkout source code
         uses: actions/checkout@v6
