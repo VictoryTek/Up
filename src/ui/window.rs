@@ -266,6 +266,7 @@ impl UpWindow {
                 let (tx, rx) = async_channel::unbounded::<(BackendKind, String)>();
                 let (result_tx, result_rx) =
                     async_channel::unbounded::<(BackendKind, UpdateResult)>();
+                let (started_tx, started_rx) = async_channel::unbounded::<BackendKind>();
 
                 // Auth status: Ok(()) = authenticated (or not needed), Err(msg) = failed.
                 let (auth_status_tx, auth_status_rx) =
@@ -273,6 +274,7 @@ impl UpWindow {
 
                 let tx_thread = tx.clone();
                 let result_tx_thread = result_tx.clone();
+                let started_tx_thread = started_tx.clone();
 
                 // IMPORTANT: PrivilegedShell must be created AND used within the
                 // same Tokio runtime.  Its Tokio I/O handles (ChildStdin/ChildStdout)
@@ -300,6 +302,7 @@ impl UpWindow {
 
                     for backend in &ordered_backends {
                         let kind = backend.kind();
+                        let _ = started_tx_thread.send(kind).await;
                         let runner = CommandRunner::new(tx_thread.clone(), kind, shell.clone());
                         let result = backend.run_update(&runner).await;
                         let _ = result_tx_thread.send((kind, result)).await;
@@ -313,6 +316,7 @@ impl UpWindow {
                 // Drop the original senders so channels close when the thread finishes.
                 drop(tx);
                 drop(result_tx);
+                drop(started_tx);
 
                 // Wait for authentication result before updating the UI.
                 match auth_status_rx.recv().await {
@@ -337,12 +341,17 @@ impl UpWindow {
 
                 // --- Begin updates ---
                 status_ref.set_label("Updating\u{2026}");
-                {
-                    let rows_borrowed = rows_ref.borrow();
-                    for (_, row) in rows_borrowed.iter() {
-                        row.set_status_running();
+
+                // Process started events — activate each row's progress bar as its backend begins
+                let rows_for_started = rows_ref.clone();
+                glib::spawn_future_local(async move {
+                    while let Ok(kind) = started_rx.recv().await {
+                        let rows_borrowed = rows_for_started.borrow();
+                        if let Some((_, row)) = rows_borrowed.iter().find(|(k, _)| *k == kind) {
+                            row.set_status_running();
+                        }
                     }
-                }
+                });
 
                 // Process log output in a separate future
                 let log_ref2 = log_ref.clone();
