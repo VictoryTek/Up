@@ -293,34 +293,39 @@ impl Backend for FlatpakBackend {
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
         Box::pin(async move {
-            // `flatpak remote-ls --updates` is the canonical way to list pending
-            // updates without side effects. `--dry-run` was removed in Flatpak 1.16.
-            // Query both system and user installations so per-user apps are included.
-            let (sys_cmd, sys_args) =
-                build_flatpak_cmd(&["remote-ls", "--updates", "--columns=application"]);
-            let sys_out = tokio::process::Command::new(&sys_cmd)
-                .args(&sys_args)
+            // Use `flatpak update --no-deploy -y --user` to detect pending updates
+            // without applying them. The `--user` flag is intentional: the `--system`
+            // variant triggers a polkit prompt on every background check, which is
+            // poor UX. System Flatpak installs are uncommon on desktop systems, so
+            // only user installations are checked here.
+            let (cmd, args) = build_flatpak_cmd(&["update", "--no-deploy", "-y", "--user"]);
+            let out = tokio::process::Command::new(&cmd)
+                .args(&args)
                 .output()
                 .await
                 .map_err(|e| e.to_string())?;
 
-            let (user_cmd, user_args) =
-                build_flatpak_cmd(&["remote-ls", "--updates", "--user", "--columns=application"]);
-            let user_out = tokio::process::Command::new(&user_cmd)
-                .args(&user_args)
-                .output()
-                .await
-                .map_err(|e| e.to_string())?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                return Err(format!("flatpak update --no-deploy failed: {stderr}"));
+            }
 
+            let text = String::from_utf8_lossy(&out.stdout);
             let mut apps: Vec<String> = Vec::new();
-            for raw in [&sys_out.stdout, &user_out.stdout] {
-                let text = String::from_utf8_lossy(raw);
-                for line in text.lines() {
-                    let t = line.trim();
-                    // Skip the "Application ID" header and blank lines.
-                    // Valid Flatpak app IDs are reverse-DNS and never contain spaces.
-                    if !t.is_empty() && !t.contains(' ') {
-                        apps.push(t.to_string());
+            for line in text.lines() {
+                let t = line.trim();
+                // Update rows look like: "1.  com.example.App  stable  u  flathub  ..."
+                // Token 0 is a 1-based index ending with '.'; token 1 is the app ID.
+                // Header ("ID ...") and progress lines ("49%", "5.0 MB") are skipped
+                // because they either don't start with a digit or lack the trailing '.'.
+                let mut tokens = t.split_whitespace();
+                if let Some(index) = tokens.next() {
+                    if index.starts_with(|c: char| c.is_ascii_digit()) && index.ends_with('.') {
+                        if let Some(app_id) = tokens.next() {
+                            if !apps.contains(&app_id.to_string()) {
+                                apps.push(app_id.to_string());
+                            }
+                        }
                     }
                 }
             }
