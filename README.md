@@ -46,24 +46,6 @@ nix profile add github:victorytek/up
 nix develop github:victorytek/up
 ```
 
-### From Flatpak (local build)
-
-```bash
-# Clone the repository
-git clone https://github.com/user/up.git
-cd up
-
-# Install GNOME SDK
-flatpak install org.gnome.Sdk//48 org.gnome.Platform//48
-flatpak install org.freedesktop.Sdk.Extension.rust-stable//24.08
-
-# Build and install (run from the project root)
-flatpak-builder --user --install --force-clean builddir io.github.up.json
-
-# Or use the convenience script
-./scripts/build-flatpak.sh
-```
-
 ### From Source
 
 ```bash
@@ -83,7 +65,7 @@ meson install -C builddir
 
 ```bash
 # Clone
-git clone https://github.com/user/up.git
+git clone https://github.com/victorytek/up.git
 cd up
 
 # Build and run
@@ -167,7 +149,7 @@ You can build the Flatpak manually:
 
 ```bash
 # Clone the repository
-git clone https://github.com/user/up.git
+git clone https://github.com/victorytek/up.git
 cd up
 
 # Build and install the Flatpak package
