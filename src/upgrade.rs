@@ -95,14 +95,17 @@ pub fn detect_distro() -> DistroInfo {
         .cloned()
         .unwrap_or_else(|| "0".into());
 
+    let id_like = fields.get("ID_LIKE").cloned().unwrap_or_default();
+
     let upgrade_supported = match id.as_str() {
-        // Guard Ubuntu behind tool availability — do-release-upgrade is not
-        // installed on all Ubuntu variants (e.g. minimal server images).
-        "ubuntu" => which::which("do-release-upgrade").is_ok(),
-        "fedora" => true, // plugin installed dynamically by upgrade_fedora()
+        "ubuntu" | "linuxmint" | "pop" | "elementary" | "zorin" => true,
+        "fedora" => true,
         "opensuse-leap" => true,
+        "debian" => true,
         "nixos" => true,
-        // "debian" intentionally omitted — no safe automated upgrade path
+        "rhel" | "centos" => true,
+        _ if id_like.split_whitespace().any(|s| s == "ubuntu") => true,
+        _ if id_like.split_whitespace().any(|s| s == "debian") => true,
         _ => false,
     };
 

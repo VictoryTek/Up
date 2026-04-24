@@ -1,4 +1,3 @@
-pub mod determinate_nix;
 pub mod flatpak;
 pub mod homebrew;
 pub mod nix;
@@ -21,7 +20,6 @@ pub enum BackendKind {
     Flatpak,
     Homebrew,
     Nix,
-    DeterminateNix,
 }
 
 impl fmt::Display for BackendKind {
@@ -34,7 +32,6 @@ impl fmt::Display for BackendKind {
             Self::Flatpak => write!(f, "Flatpak"),
             Self::Homebrew => write!(f, "Homebrew"),
             Self::Nix => write!(f, "Nix"),
-            Self::DeterminateNix => write!(f, "Determinate Nix"),
         }
     }
 }
@@ -104,12 +101,6 @@ pub fn detect_backends() -> Vec<Arc<dyn Backend>> {
     // (Nix runs privileged and is sorted ahead of unprivileged backends).
     if nix::is_available() {
         backends.push(Arc::new(nix::NixBackend));
-    }
-
-    // Determinate Nix — self-upgrade of the Determinate Nix installation.
-    // Added after NixBackend so NixBackend runs first for package updates.
-    if determinate_nix::is_available() {
-        backends.push(Arc::new(determinate_nix::DeterminateNixBackend));
     }
 
     // Flatpak — always include when running inside the Flatpak sandbox so that

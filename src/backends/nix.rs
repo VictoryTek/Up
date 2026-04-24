@@ -265,6 +265,40 @@ async fn nixos_flake_changed_inputs() -> Result<Vec<String>, String> {
     }
 }
 
+/// True when Determinate Nix (by Determinate Systems) is installed.
+///
+/// Uses two markers in conjunction:
+/// 1. `/nix/receipt.json` — created exclusively by the Determinate Nix installer.
+/// 2. `determinate-nixd` binary on PATH — confirms the daemon is installed.
+fn is_determinate_nix() -> bool {
+    std::path::Path::new("/nix/receipt.json").exists() && which::which("determinate-nixd").is_ok()
+}
+
+/// Parse `determinate-nixd version` output to detect if an upgrade is available.
+///
+/// Returns `true` if the output contains the phrase "An upgrade is available".
+fn upgrade_available_in_output(output: &str) -> bool {
+    output
+        .lines()
+        .any(|l| l.to_ascii_lowercase().contains("an upgrade is available"))
+}
+
+/// Parse upgraded/already-up-to-date status from `determinate-nixd upgrade` output.
+fn count_determinate_upgraded(output: &str) -> usize {
+    let lower = output.to_ascii_lowercase();
+    if lower.contains("nothing to upgrade")
+        || lower.contains("already up to date")
+        || lower.contains("already on the latest")
+    {
+        return 0;
+    }
+    if lower.contains("upgraded") || lower.contains("upgrading") || lower.contains("successfully") {
+        return 1;
+    }
+    // Default: command succeeded, assume something changed
+    1
+}
+
 pub struct NixBackend;
 
 impl Backend for NixBackend {
@@ -277,7 +311,9 @@ impl Backend for NixBackend {
     }
 
     fn description(&self) -> &str {
-        if is_nixos() {
+        if is_determinate_nix() {
+            "Determinate Nix installation (determinate-nixd)"
+        } else if is_nixos() {
             "NixOS system packages"
         } else {
             "Nix profile packages"
@@ -363,37 +399,60 @@ impl Backend for NixBackend {
                 }
             } else {
                 // Non-NixOS: update the user's nix profile.
-                // Detect whether the user's nix profile uses the flake/v2 manifest format.
-                // This is a silent filesystem check — it does NOT use runner.run() and
-                // therefore does not emit any log output before the real update starts.
-                let use_flakes = {
-                    let manifest_path =
-                        std::path::Path::new(&std::env::var("HOME").unwrap_or_default())
-                            .join(".nix-profile/manifest.json");
-                    if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-                        // Flake profiles have "version": 2 in their manifest
-                        content.contains("\"version\": 2")
-                    } else {
-                        // If we can't read the manifest, fall back to the legacy nix-env path
-                        false
-                    }
-                };
-                if use_flakes {
-                    match runner.run("nix", &["profile", "upgrade", ".*"]).await {
+                //
+                // Check for Determinate Nix first — it runs unprivileged via its daemon.
+                if is_determinate_nix() {
+                    match runner.run("determinate-nixd", &["upgrade"]).await {
                         Ok(output) => UpdateResult::Success {
-                            updated_count: count_nix_store_operations(&output),
+                            updated_count: count_determinate_upgraded(&output),
                         },
                         Err(e) => UpdateResult::Error(e),
                     }
                 } else {
-                    match runner.run("nix-env", &["-u"]).await {
-                        Ok(output) => UpdateResult::Success {
-                            updated_count: output
-                                .lines()
-                                .filter(|l| l.contains("upgrading"))
-                                .count(),
-                        },
-                        Err(e) => UpdateResult::Error(e),
+                    // Detect whether the user's nix profile uses the legacy v1 manifest format.
+                    // This is a silent filesystem check — it does NOT use runner.run() and
+                    // therefore does not emit any log output before the real update starts.
+                    let use_legacy_nix_env = {
+                        let manifest_path =
+                            std::path::Path::new(&std::env::var("HOME").unwrap_or_default())
+                                .join(".nix-profile/manifest.json");
+                        if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+                            // Only use nix-env when manifest is NOT version 2
+                            !content.contains("\"version\": 2")
+                        } else {
+                            // Can't read manifest — default to modern nix profile upgrade
+                            false
+                        }
+                    };
+                    if use_legacy_nix_env {
+                        match runner.run("nix-env", &["-u"]).await {
+                            Ok(output) => UpdateResult::Success {
+                                updated_count: output
+                                    .lines()
+                                    .filter(|l| l.contains("upgrading"))
+                                    .count(),
+                            },
+                            Err(e) => UpdateResult::Error(e),
+                        }
+                    } else {
+                        match runner
+                            .run(
+                                "nix",
+                                &[
+                                    "--extra-experimental-features",
+                                    "nix-command",
+                                    "profile",
+                                    "upgrade",
+                                    ".*",
+                                ],
+                            )
+                            .await
+                        {
+                            Ok(output) => UpdateResult::Success {
+                                updated_count: count_nix_store_operations(&output),
+                            },
+                            Err(e) => UpdateResult::Error(e),
+                        }
                     }
                 }
             }
@@ -405,17 +464,46 @@ impl Backend for NixBackend {
             if is_nixos() && is_nixos_flake() {
                 // Flake-based NixOS: detect changed inputs via --dry-run or temp-dir.
                 nixos_flake_changed_inputs().await.map(|v| v.len())
-            } else {
-                // Non-NixOS Nix profile or legacy NixOS channels: check user
-                // profile upgrades via nix-env dry-run.
-                let out = tokio::process::Command::new("nix-env")
-                    .args(["-u", "--dry-run"])
+            } else if is_determinate_nix() {
+                // Determinate Nix: check version output for upgrade availability.
+                let out = tokio::process::Command::new("determinate-nixd")
+                    .arg("version")
                     .output()
                     .await
                     .map_err(|e| e.to_string())?;
-                // nix-env --dry-run writes "upgrading ..." lines to stderr
-                let text = String::from_utf8_lossy(&out.stderr);
-                Ok(text.lines().filter(|l| l.contains("upgrading")).count())
+                let text = String::from_utf8_lossy(&out.stdout);
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let combined = format!("{text}\n{stderr}");
+                Ok(if upgrade_available_in_output(&combined) {
+                    1
+                } else {
+                    0
+                })
+            } else {
+                // Non-NixOS Nix profile: check manifest version.
+                let use_legacy_nix_env = {
+                    let manifest_path =
+                        std::path::Path::new(&std::env::var("HOME").unwrap_or_default())
+                            .join(".nix-profile/manifest.json");
+                    if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+                        !content.contains("\"version\": 2")
+                    } else {
+                        false
+                    }
+                };
+                if use_legacy_nix_env {
+                    let out = tokio::process::Command::new("nix-env")
+                        .args(["-u", "--dry-run"])
+                        .output()
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    // nix-env --dry-run writes "upgrading ..." lines to stderr
+                    let text = String::from_utf8_lossy(&out.stderr);
+                    Ok(text.lines().filter(|l| l.contains("upgrading")).count())
+                } else {
+                    // nix profile upgrade has no dry-run equivalent
+                    Ok(0)
+                }
             }
         })
     }
@@ -427,21 +515,81 @@ impl Backend for NixBackend {
             if is_nixos() && is_nixos_flake() {
                 // Flake-based NixOS: return changed input names.
                 nixos_flake_changed_inputs().await
-            } else {
-                // Non-NixOS Nix profile or legacy NixOS channels.
-                let out = tokio::process::Command::new("nix-env")
-                    .args(["-u", "--dry-run"])
+            } else if is_determinate_nix() {
+                // Determinate Nix: check version output for upgrade availability.
+                let out = tokio::process::Command::new("determinate-nixd")
+                    .arg("version")
                     .output()
                     .await
                     .map_err(|e| e.to_string())?;
-                // nix-env --dry-run emits "upgrading 'name-1.0' to 'name-2.0'" on stderr
-                let text = String::from_utf8_lossy(&out.stderr);
-                Ok(text
-                    .lines()
-                    .filter(|l| l.contains("upgrading"))
-                    .filter_map(|l| l.split('\'').nth(1).map(|s| s.to_string()))
-                    .collect())
+                let text = String::from_utf8_lossy(&out.stdout);
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let combined = format!("{text}\n{stderr}");
+                Ok(if upgrade_available_in_output(&combined) {
+                    vec!["determinate-nix".to_string()]
+                } else {
+                    Vec::new()
+                })
+            } else {
+                // Non-NixOS Nix profile: check manifest version.
+                let use_legacy_nix_env = {
+                    let manifest_path =
+                        std::path::Path::new(&std::env::var("HOME").unwrap_or_default())
+                            .join(".nix-profile/manifest.json");
+                    if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+                        !content.contains("\"version\": 2")
+                    } else {
+                        false
+                    }
+                };
+                if use_legacy_nix_env {
+                    let out = tokio::process::Command::new("nix-env")
+                        .args(["-u", "--dry-run"])
+                        .output()
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    // nix-env --dry-run emits "upgrading 'name-1.0' to 'name-2.0'" on stderr
+                    let text = String::from_utf8_lossy(&out.stderr);
+                    Ok(text
+                        .lines()
+                        .filter(|l| l.contains("upgrading"))
+                        .filter_map(|l| l.split('\'').nth(1).map(|s| s.to_string()))
+                        .collect())
+                } else {
+                    // nix profile upgrade has no dry-run equivalent
+                    Ok(Vec::new())
+                }
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{count_determinate_upgraded, upgrade_available_in_output};
+
+    #[test]
+    fn upgrade_available_in_output_detects_upgrade() {
+        assert!(upgrade_available_in_output(
+            "Determinate Nix v3.6.2\nAn upgrade is available: v3.7.0\nRun `sudo determinate-nixd upgrade` to upgrade."
+        ));
+    }
+
+    #[test]
+    fn upgrade_available_in_output_no_upgrade() {
+        assert!(!upgrade_available_in_output("Determinate Nix v3.6.2\n"));
+    }
+
+    #[test]
+    fn count_determinate_upgraded_nothing_to_upgrade() {
+        assert_eq!(count_determinate_upgraded("nothing to upgrade\n"), 0);
+    }
+
+    #[test]
+    fn count_determinate_upgraded_success() {
+        assert_eq!(
+            count_determinate_upgraded("Successfully upgraded determinate-nix\n"),
+            1
+        );
     }
 }
