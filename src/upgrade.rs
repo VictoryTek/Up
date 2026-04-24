@@ -95,10 +95,16 @@ pub fn detect_distro() -> DistroInfo {
         .cloned()
         .unwrap_or_else(|| "0".into());
 
-    let upgrade_supported = matches!(
-        id.as_str(),
-        "ubuntu" | "fedora" | "opensuse-leap" | "debian" | "nixos"
-    );
+    let upgrade_supported = match id.as_str() {
+        // Guard Ubuntu behind tool availability — do-release-upgrade is not
+        // installed on all Ubuntu variants (e.g. minimal server images).
+        "ubuntu" => which::which("do-release-upgrade").is_ok(),
+        "fedora" => true, // plugin installed dynamically by upgrade_fedora()
+        "opensuse-leap" => true,
+        "nixos" => true,
+        // "debian" intentionally omitted — no safe automated upgrade path
+        _ => false,
+    };
 
     DistroInfo {
         id,
@@ -158,7 +164,7 @@ pub fn run_prerequisite_checks(
 
 fn check_packages_up_to_date(distro: &DistroInfo) -> CheckResult {
     let (cmd, args): (&str, &[&str]) = match distro.id.as_str() {
-        "ubuntu" | "debian" => ("apt", &["list", "--upgradable"]),
+        "ubuntu" => ("apt", &["list", "--upgradable"]),
         "fedora" => ("dnf", &["check-update"]),
         "opensuse-leap" => ("zypper", &["list-updates"]),
         "nixos" => {
@@ -272,8 +278,7 @@ pub fn check_upgrade_available(distro: &DistroInfo) -> String {
     match distro.id.as_str() {
         "ubuntu" => check_ubuntu_upgrade(),
         "fedora" => check_fedora_upgrade(&distro.version_id),
-        "debian" => check_debian_upgrade(),
-        "opensuse-leap" => check_opensuse_upgrade(),
+        "opensuse-leap" => check_opensuse_upgrade(&distro.version_id),
         "nixos" => check_nixos_upgrade(&distro.version_id),
         _ => "Not supported for this distribution".to_string(),
     }
@@ -326,12 +331,52 @@ fn check_fedora_upgrade(current_version_id: &str) -> String {
     }
 }
 
-fn check_debian_upgrade() -> String {
-    "Check manually at https://www.debian.org/releases/".to_string()
+/// Compute the next openSUSE Leap version from a "X.Y" `version_id`.
+///
+/// openSUSE Leap increments the minor component: 15.5 → 15.6.
+/// The curl availability check acts as the authoritative gate for whether
+/// the computed next version actually exists.
+fn next_opensuse_leap_version(version_id: &str) -> Option<String> {
+    let parts: Vec<&str> = version_id.split('.').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let major: u32 = parts[0].parse().ok()?;
+    let minor: u32 = parts[1].parse().ok()?;
+    Some(format!("{}.{}", major, minor + 1))
 }
 
-fn check_opensuse_upgrade() -> String {
-    "Check manually at https://get.opensuse.org/leap/".to_string()
+fn check_opensuse_upgrade(version_id: &str) -> String {
+    let Some(next_version) = next_opensuse_leap_version(version_id) else {
+        return "Could not parse current openSUSE Leap version".to_string();
+    };
+    match Command::new("curl")
+        .args([
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            &format!(
+                "https://download.opensuse.org/distribution/leap/{}/repo/oss/",
+                next_version
+            ),
+        ])
+        .output()
+    {
+        Ok(output) => {
+            let code = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if code == "200" || code == "301" || code == "302" {
+                format!("Yes \u{2014} openSUSE Leap {} is available", next_version)
+            } else {
+                format!(
+                    "No \u{2014} openSUSE Leap {} not yet released",
+                    next_version
+                )
+            }
+        }
+        Err(_) => "Could not check (curl not found)".to_string(),
+    }
 }
 
 /// Compute the next NixOS stable channel name from a YY.MM `version_id`.
@@ -397,13 +442,13 @@ pub fn execute_upgrade(
     ));
 
     match distro.id.as_str() {
-        "ubuntu" | "debian" => upgrade_ubuntu(tx),
+        "ubuntu" => upgrade_ubuntu(tx),
         "fedora" => upgrade_fedora(tx),
         "opensuse-leap" => upgrade_opensuse(tx),
         "nixos" => upgrade_nixos(distro, tx),
         _ => {
             let msg = format!(
-                "Upgrade is not yet supported for '{}'. Supported: Ubuntu, Debian, Fedora, openSUSE Leap, NixOS.",
+                "Upgrade is not yet supported for '{}'. Supported: Ubuntu, Fedora, openSUSE Leap, NixOS.",
                 distro.name
             );
             let _ = tx.send_blocking(msg.clone());
@@ -627,7 +672,8 @@ fn detect_next_fedora_version() -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_upgrade, next_nixos_channel, parse_df_avail_bytes, validate_hostname, DistroInfo,
+        execute_upgrade, next_nixos_channel, next_opensuse_leap_version, parse_df_avail_bytes,
+        validate_hostname, DistroInfo,
     };
 
     #[test]
@@ -738,5 +784,18 @@ mod tests {
         // Locale-formatted number — parse::<u64>() does not accept commas
         let output = "     Avail\n10,737,418,240\n";
         assert!(parse_df_avail_bytes(output).is_err());
+    }
+
+    #[test]
+    fn next_opensuse_leap_version_increments_minor() {
+        assert_eq!(next_opensuse_leap_version("15.5"), Some("15.6".to_string()));
+        assert_eq!(next_opensuse_leap_version("15.6"), Some("15.7".to_string()));
+    }
+
+    #[test]
+    fn next_opensuse_leap_version_invalid_returns_none() {
+        assert_eq!(next_opensuse_leap_version("invalid"), None);
+        assert_eq!(next_opensuse_leap_version(""), None);
+        assert_eq!(next_opensuse_leap_version("15"), None);
     }
 }
