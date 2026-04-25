@@ -42,8 +42,6 @@ impl UpWindow {
             "Upgrade",
             "software-update-urgent-symbolic",
         );
-        // Hidden by default; revealed only when distro detection confirms upgrade support.
-        upgrade_stack_page.set_visible(false);
 
         // Spawn single distro detection, fanning out to update-page sysinfo and upgrade page.
         {
@@ -70,8 +68,10 @@ impl UpWindow {
                     sysinfo_distro_row.set_subtitle(&info.name);
                     sysinfo_version_row.set_subtitle(&info.version);
 
-                    // 2. Gate upgrade tab visibility
-                    upgrade_stack_page.set_visible(info.upgrade_supported);
+                    // 2. Gate upgrade tab visibility — hide for unsupported distros.
+                    if !info.upgrade_supported {
+                        upgrade_stack_page.set_visible(false);
+                    }
 
                     // 3. Forward to upgrade page
                     if info.upgrade_supported {
