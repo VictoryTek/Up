@@ -283,6 +283,73 @@ fn upgrade_available_in_output(output: &str) -> bool {
         .any(|l| l.to_ascii_lowercase().contains("an upgrade is available"))
 }
 
+/// Run `nix profile upgrade` in a way that works across Nix versions.
+///
+/// Nix ≥ 2.18 uses `--all`; older versions used a regex argument (`.*`).
+/// We try `--all` first and silently fall back to `.*` when Nix complains
+/// about an unrecognised option.
+async fn nix_profile_upgrade_all() -> Result<String, String> {
+    let new_style = tokio::process::Command::new("nix")
+        .args([
+            "--extra-experimental-features",
+            "nix-command",
+            "profile",
+            "upgrade",
+            "--all",
+        ])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&new_style.stdout),
+        String::from_utf8_lossy(&new_style.stderr)
+    );
+
+    if new_style.status.success() {
+        return Ok(combined);
+    }
+
+    // Detect unsupported --all flag (Nix < 2.18) — fall back to regex syntax.
+    let unrecognised = combined.contains("unrecognised flag")
+        || combined.contains("unrecognized flag")
+        || combined.contains("unknown option")
+        || combined.contains("unexpected argument");
+
+    if !unrecognised {
+        return Err(format!(
+            "nix profile upgrade --all failed: {}",
+            combined.trim()
+        ));
+    }
+
+    // Legacy: `nix profile upgrade '.*'`
+    let old_style = tokio::process::Command::new("nix")
+        .args([
+            "--extra-experimental-features",
+            "nix-command",
+            "profile",
+            "upgrade",
+            ".*",
+        ])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let out = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&old_style.stdout),
+        String::from_utf8_lossy(&old_style.stderr)
+    );
+
+    if old_style.status.success() {
+        Ok(out)
+    } else {
+        Err(format!("nix profile upgrade failed: {}", out.trim()))
+    }
+}
+
 /// Parse upgraded/already-up-to-date status from `determinate-nixd upgrade` output.
 fn count_determinate_upgraded(output: &str) -> usize {
     let lower = output.to_ascii_lowercase();
@@ -435,19 +502,9 @@ impl Backend for NixBackend {
                             Err(e) => UpdateResult::Error(e),
                         }
                     } else {
-                        match runner
-                            .run(
-                                "nix",
-                                &[
-                                    "--extra-experimental-features",
-                                    "nix-command",
-                                    "profile",
-                                    "upgrade",
-                                    ".*",
-                                ],
-                            )
-                            .await
-                        {
+                        // Use the version-aware helper: tries `--all` (Nix ≥ 2.18)
+                        // then falls back to the legacy `.*` regex argument.
+                        match nix_profile_upgrade_all().await {
                             Ok(output) => UpdateResult::Success {
                                 updated_count: count_nix_store_operations(&output),
                             },

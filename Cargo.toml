@@ -1,6 +1,6 @@
 [package]
 name = "up"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 description = "A modern system update & upgrade app for Linux"
 license = "GPL-3.0-or-later"
