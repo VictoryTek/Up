@@ -325,7 +325,7 @@ impl Backend for NixBackend {
     }
 
     fn needs_root(&self) -> bool {
-        is_nixos()
+        is_nixos() || is_determinate_nix()
     }
 
     fn run_update<'a>(
@@ -402,7 +402,7 @@ impl Backend for NixBackend {
                 //
                 // Check for Determinate Nix first — it runs unprivileged via its daemon.
                 if is_determinate_nix() {
-                    match runner.run("determinate-nixd", &["upgrade"]).await {
+                    match runner.run("pkexec", &["determinate-nixd", "upgrade"]).await {
                         Ok(output) => UpdateResult::Success {
                             updated_count: count_determinate_upgraded(&output),
                         },
