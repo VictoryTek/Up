@@ -33,6 +33,21 @@ pub struct UpgradePageInit {
     pub nixos_extra: Option<(NixOsConfigType, String)>,
 }
 
+/// Structured result of an Ubuntu upgrade availability check.
+#[derive(Debug, Clone)]
+pub enum UbuntuUpgradeInfo {
+    /// A newer Ubuntu release is available and the upgrade path is officially open.
+    Available { name: String, version: String },
+    /// A newer Ubuntu release has been released but Canonical has not yet opened
+    /// the upgrade path (Supported: 0 in meta-release). Typically takes 4-8 weeks
+    /// after release before Canonical opens the LTS upgrade path.
+    ReleasedNotPromoted { name: String, version: String },
+    /// No newer Ubuntu release exists in the meta-release file.
+    NotAvailable,
+    /// The check could not be completed (network error, missing curl, parse error).
+    CheckFailed(String),
+}
+
 pub fn detect_nixos_config_type() -> NixOsConfigType {
     if std::path::Path::new("/etc/nixos/flake.nix").exists() {
         NixOsConfigType::Flake
@@ -279,7 +294,7 @@ fn check_disk_space() -> CheckResult {
 /// Check if a distribution upgrade is available.
 pub fn check_upgrade_available(distro: &DistroInfo) -> String {
     match distro.id.as_str() {
-        "ubuntu" => check_ubuntu_upgrade(),
+        "ubuntu" => check_ubuntu_upgrade(&distro.version_id),
         "fedora" => check_fedora_upgrade(&distro.version_id),
         "opensuse-leap" => check_opensuse_upgrade(&distro.version_id),
         "nixos" => check_nixos_upgrade(&distro.version_id),
@@ -287,21 +302,159 @@ pub fn check_upgrade_available(distro: &DistroInfo) -> String {
     }
 }
 
-fn check_ubuntu_upgrade() -> String {
-    match Command::new("do-release-upgrade").args(["-c"]).output() {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if stdout.contains("New release") || stdout.contains("new release") {
-                let line = stdout
-                    .lines()
-                    .find(|l| l.contains("New release") || l.contains("new release"))
-                    .unwrap_or("New release available");
-                format!("Yes — {}", line.trim())
-            } else {
-                "No upgrade available".to_string()
+/// Read /etc/update-manager/release-upgrades and return the Prompt= value.
+/// Returns "lts" as default if the file is missing or unparseable.
+fn read_upgrade_prompt_policy() -> String {
+    let content =
+        std::fs::read_to_string("/etc/update-manager/release-upgrades").unwrap_or_default();
+    for line in content.lines() {
+        let line = line.trim();
+        if let Some(val) = line.strip_prefix("Prompt=") {
+            let v = val.trim().to_lowercase();
+            if v == "lts" || v == "normal" || v == "never" {
+                return v;
             }
         }
-        Err(_) => "Could not check (do-release-upgrade not found)".to_string(),
+    }
+    "lts".to_string()
+}
+
+/// Parse an Ubuntu version string "X.YY" or "X.YY LTS" into (major, minor).
+fn parse_ubuntu_version(version: &str) -> Option<(u32, u32)> {
+    let numeric = version.split_whitespace().next()?;
+    let mut parts = numeric.splitn(2, '.');
+    let major: u32 = parts.next()?.parse().ok()?;
+    let minor: u32 = parts.next()?.parse().ok()?;
+    Some((major, minor))
+}
+
+/// Fetch the Ubuntu meta-release file via curl and return its content.
+fn fetch_ubuntu_meta_release(policy: &str) -> Result<String, String> {
+    let url = match policy {
+        "normal" => "https://changelogs.ubuntu.com/meta-release",
+        _ => "https://changelogs.ubuntu.com/meta-release-lts",
+    };
+    let output = Command::new("curl")
+        .args(["-sf", "--max-time", "10", url])
+        .output()
+        .map_err(|e| format!("curl not found: {e}"))?;
+    if !output.status.success() {
+        let code = output.status.code().unwrap_or(-1);
+        return Err(format!("curl exited with code {code}"));
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|e| format!("meta-release response is not valid UTF-8: {e}"))
+}
+
+/// Parse the Ubuntu meta-release content and find the first release newer than
+/// `current_version_id` (e.g., "24.04").
+fn parse_meta_release_for_upgrade(content: &str, current_version_id: &str) -> UbuntuUpgradeInfo {
+    let current = match parse_ubuntu_version(current_version_id) {
+        Some(v) => v,
+        None => {
+            return UbuntuUpgradeInfo::CheckFailed(format!(
+                "Cannot parse current version: {:?}",
+                current_version_id
+            ))
+        }
+    };
+
+    for block in content.split("\n\n") {
+        let mut name = String::new();
+        let mut version_str = String::new();
+        let mut supported: i32 = -1;
+
+        for line in block.lines() {
+            let line = line.trim();
+            if let Some(v) = line.strip_prefix("Name: ") {
+                name = v.trim().to_string();
+            } else if let Some(v) = line.strip_prefix("Version: ") {
+                version_str = v.trim().to_string();
+            } else if let Some(v) = line.strip_prefix("Supported: ") {
+                supported = v.trim().parse().unwrap_or(-1);
+            }
+        }
+
+        if version_str.is_empty() {
+            continue;
+        }
+
+        let candidate = match parse_ubuntu_version(&version_str) {
+            Some(v) => v,
+            None => continue,
+        };
+
+        if candidate > current {
+            return if supported == 1 {
+                UbuntuUpgradeInfo::Available {
+                    name,
+                    version: version_str,
+                }
+            } else {
+                UbuntuUpgradeInfo::ReleasedNotPromoted {
+                    name,
+                    version: version_str,
+                }
+            };
+        }
+    }
+
+    UbuntuUpgradeInfo::NotAvailable
+}
+
+/// Fallback upgrade check using do-release-upgrade -c when curl is unavailable.
+/// Returns Some(message) if the tool is available, None otherwise.
+fn check_ubuntu_upgrade_via_tool() -> Option<String> {
+    let output = Command::new("do-release-upgrade")
+        .args(["-c", "-f", "DistUpgradeViewNonInteractive"])
+        .output()
+        .ok()?;
+
+    let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
+    combined.push_str(&String::from_utf8_lossy(&output.stderr));
+
+    if combined.contains("New release") || combined.contains("new release") {
+        let line = combined
+            .lines()
+            .find(|l| l.contains("New release") || l.contains("new release"))
+            .unwrap_or("New release available");
+        Some(format!("Yes \u{2014} {}", line.trim()))
+    } else if combined.contains("No new release") {
+        Some("No \u{2014} No newer Ubuntu release available".to_string())
+    } else {
+        Some("No \u{2014} No upgrade available".to_string())
+    }
+}
+
+fn check_ubuntu_upgrade(version_id: &str) -> String {
+    let policy = read_upgrade_prompt_policy();
+
+    if policy == "never" {
+        return "Upgrades are disabled in /etc/update-manager/release-upgrades".to_string();
+    }
+
+    match fetch_ubuntu_meta_release(&policy) {
+        Err(e) => check_ubuntu_upgrade_via_tool()
+            .unwrap_or_else(|| format!("Could not check for upgrades: {e}")),
+        Ok(content) => match parse_meta_release_for_upgrade(&content, version_id) {
+            UbuntuUpgradeInfo::Available { name, version } => {
+                format!("Yes \u{2014} {} {} is available", name, version)
+            }
+            UbuntuUpgradeInfo::ReleasedNotPromoted { name, version } => {
+                format!(
+                    "No \u{2014} {} {} is released but the upgrade is not yet available. \
+                     Canonical typically opens the LTS upgrade path 4\u{2013}8 weeks \
+                     after release.",
+                    name, version
+                )
+            }
+            UbuntuUpgradeInfo::NotAvailable => {
+                "No \u{2014} No newer Ubuntu release available".to_string()
+            }
+            UbuntuUpgradeInfo::CheckFailed(reason) => {
+                format!("Could not check for upgrades: {}", reason)
+            }
+        },
     }
 }
 
@@ -461,16 +614,59 @@ pub fn execute_upgrade(
 }
 
 fn upgrade_ubuntu(tx: &async_channel::Sender<String>) -> Result<(), String> {
-    let _ = tx.send_blocking("Running: do-release-upgrade -f DistUpgradeViewNonInteractive".into());
+    let _ = tx.send_blocking("Preparing Ubuntu distribution upgrade...".into());
+    let _ = tx.send_blocking(
+        "This operation downloads and installs many packages. It may take 30\u{2013}60 \
+         minutes. Do not power off the system."
+            .into(),
+    );
 
-    if !crate::runner::run_command_sync(
+    let log_path = "/var/log/dist-upgrade/main.log";
+    let tx_tail = tx.clone();
+    let tail_handle = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        use std::io::{BufRead, BufReader, Seek, SeekFrom};
+        let Ok(mut file) = std::fs::File::open(log_path) else {
+            return;
+        };
+        let _ = file.seek(SeekFrom::End(0));
+        let mut reader = BufReader::new(file);
+        let mut line = String::new();
+        loop {
+            match reader.read_line(&mut line) {
+                Ok(0) => {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                Ok(_) => {
+                    let trimmed = line.trim_end_matches('\n').to_string();
+                    if !trimmed.is_empty() {
+                        let _ = tx_tail.send_blocking(format!("[log] {}", trimmed));
+                    }
+                    line.clear();
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let result = if !crate::runner::run_command_sync(
         "pkexec",
-        &["do-release-upgrade", "-f", "DistUpgradeViewNonInteractive"],
+        &[
+            "do-release-upgrade",
+            "-f",
+            "DistUpgradeViewNonInteractive",
+            "-e",
+            "DEBIAN_FRONTEND=noninteractive",
+        ],
         tx,
     ) {
-        return Err("Ubuntu/Debian upgrade command failed (see log for details)".to_string());
-    }
-    Ok(())
+        Err("Ubuntu distribution upgrade failed (see log for details)".to_string())
+    } else {
+        Ok(())
+    };
+
+    drop(tail_handle);
+    result
 }
 
 fn upgrade_fedora(tx: &async_channel::Sender<String>) -> Result<(), String> {
