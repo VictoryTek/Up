@@ -26,6 +26,7 @@ A modern Linux system update & upgrade application built with Rust, GTK4, and li
 
 | Distro | Update | Upgrade |
 |--------|--------|---------|
+| Nixos  | ✅ NIX | ❌ (Declarative)
 | Ubuntu / Debian | ✅ APT | ✅ do-release-upgrade |
 | Fedora | ✅ DNF | ✅ dnf system-upgrade |
 | Arch Linux | ✅ Pacman | ❌ (rolling release) |
