@@ -43,6 +43,11 @@ impl UpWindow {
             "software-update-urgent-symbolic",
         );
 
+        let view_switcher_bar = adw::ViewSwitcherBar::builder()
+            .stack(&view_stack)
+            .reveal(true)
+            .build();
+
         // Spawn single distro detection, fanning out to update-page sysinfo and upgrade page.
         {
             let (detect_tx, detect_rx) = async_channel::bounded::<(
@@ -62,6 +67,7 @@ impl UpWindow {
                 let _ = detect_tx.send((info, nixos_extra)).await;
             });
 
+            let view_switcher_bar = view_switcher_bar.clone();
             glib::spawn_future_local(async move {
                 if let Ok((info, nixos_extra)) = detect_rx.recv().await {
                     // 1. Populate update-page system info rows
@@ -71,6 +77,7 @@ impl UpWindow {
                     // 2. Gate upgrade tab visibility — hide for unsupported distros.
                     if !info.upgrade_supported {
                         upgrade_stack_page.set_visible(false);
+                        view_switcher_bar.set_reveal(false);
                     }
 
                     // 3. Forward to upgrade page
@@ -84,11 +91,6 @@ impl UpWindow {
                 }
             });
         }
-
-        let view_switcher_bar = adw::ViewSwitcherBar::builder()
-            .stack(&view_stack)
-            .reveal(true)
-            .build();
 
         let header = adw::HeaderBar::new();
 
