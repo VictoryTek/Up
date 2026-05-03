@@ -392,7 +392,7 @@ impl Backend for NixBackend {
     }
 
     fn needs_root(&self) -> bool {
-        is_nixos() || is_determinate_nix()
+        is_nixos()
     }
 
     fn run_update<'a>(
@@ -469,7 +469,9 @@ impl Backend for NixBackend {
                 //
                 // Check for Determinate Nix first — it runs unprivileged via its daemon.
                 if is_determinate_nix() {
-                    match runner.run("pkexec", &["determinate-nixd", "upgrade"]).await {
+                    // determinate-nixd communicates with its privileged daemon via IPC;
+                    // the client itself runs unprivileged — no pkexec needed.
+                    match runner.run("determinate-nixd", &["upgrade"]).await {
                         Ok(output) => UpdateResult::Success {
                             updated_count: count_determinate_upgraded(&output),
                         },
