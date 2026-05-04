@@ -476,9 +476,11 @@ impl Backend for NixBackend {
                     // path to the binary — otherwise pkexec cannot find it.
                     let nixd_path = match which::which("determinate-nixd") {
                         Ok(p) => p.to_string_lossy().to_string(),
-                        Err(_) => return UpdateResult::Error(
-                            "determinate-nixd not found on PATH".to_string()
-                        ),
+                        Err(_) => {
+                            return UpdateResult::Error(
+                                "determinate-nixd not found on PATH".to_string(),
+                            )
+                        }
                     };
                     match runner.run("pkexec", &[nixd_path.as_str(), "upgrade"]).await {
                         Ok(output) => UpdateResult::Success {
