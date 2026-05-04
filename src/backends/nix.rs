@@ -392,7 +392,9 @@ impl Backend for NixBackend {
     }
 
     fn needs_root(&self) -> bool {
-        is_nixos()
+        // NixOS rebuilds require root. Determinate Nix `upgrade` also requires
+        // root (it upgrades the Nix installation, not just user packages).
+        is_nixos() || is_determinate_nix()
     }
 
     fn run_update<'a>(
@@ -469,9 +471,16 @@ impl Backend for NixBackend {
                 //
                 // Check for Determinate Nix first — it runs unprivileged via its daemon.
                 if is_determinate_nix() {
-                    // determinate-nixd communicates with its privileged daemon via IPC;
-                    // the client itself runs unprivileged — no pkexec needed.
-                    match runner.run("determinate-nixd", &["upgrade"]).await {
+                    // `determinate-nixd upgrade` upgrades the Nix installation itself and
+                    // requires root. pkexec resets PATH so we must pass the resolved absolute
+                    // path to the binary — otherwise pkexec cannot find it.
+                    let nixd_path = match which::which("determinate-nixd") {
+                        Ok(p) => p.to_string_lossy().to_string(),
+                        Err(_) => return UpdateResult::Error(
+                            "determinate-nixd not found on PATH".to_string()
+                        ),
+                    };
+                    match runner.run("pkexec", &[nixd_path.as_str(), "upgrade"]).await {
                         Ok(output) => UpdateResult::Success {
                             updated_count: count_determinate_upgraded(&output),
                         },
