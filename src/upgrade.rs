@@ -670,15 +670,24 @@ fn upgrade_ubuntu(tx: &async_channel::Sender<String>) -> Result<(), String> {
 }
 
 fn upgrade_fedora(tx: &async_channel::Sender<String>) -> Result<(), String> {
-    // Step 1: Install upgrade plugin
-    let _ = tx.send_blocking("Installing system-upgrade plugin...".into());
+    // Step 1: Ensure the system-upgrade plugin is present (best-effort; it is
+    // usually pre-installed on Fedora 41+ as part of dnf5-plugins).
+    let _ = tx.send_blocking("Ensuring system-upgrade plugin is installed...".into());
+    // Try the DNF5 plugin name first (Fedora 41+), then the DNF4 name as fallback.
+    // Failure is non-fatal because the plugin ships pre-installed on most systems.
     if !crate::runner::run_command_sync(
         "pkexec",
-        &["dnf", "install", "-y", "dnf-plugin-system-upgrade"],
+        &["dnf", "install", "-y", "dnf5-plugin-system-upgrade"],
         tx,
     ) {
-        return Err(
-            "Failed to install dnf-plugin-system-upgrade (see log for details)".to_string(),
+        let _ = tx.send_blocking(
+            "dnf5-plugin-system-upgrade not found; trying dnf-plugin-system-upgrade...".into(),
+        );
+        // Ignore failure — the plugin is typically already present.
+        let _ = crate::runner::run_command_sync(
+            "pkexec",
+            &["dnf", "install", "-y", "dnf-plugin-system-upgrade"],
+            tx,
         );
     }
 
@@ -706,6 +715,7 @@ fn upgrade_fedora(tx: &async_channel::Sender<String>) -> Result<(), String> {
             "download",
             "--releasever",
             &ver_str,
+            "--allow-downgrade",
             "-y",
         ],
         tx,
@@ -716,13 +726,30 @@ fn upgrade_fedora(tx: &async_channel::Sender<String>) -> Result<(), String> {
         ));
     }
 
-    // Step 3: Trigger reboot into upgrade
-    let _ =
-        tx.send_blocking("Download complete. The system will reboot to apply the upgrade.".into());
-    if !crate::runner::run_command_sync("pkexec", &["dnf", "system-upgrade", "reboot"], tx) {
-        return Err("Failed to trigger Fedora upgrade reboot (see log for details)".to_string());
+    // Step 3: Trigger the offline upgrade reboot.
+    // `dnf system-upgrade reboot` prepares the offline transaction and immediately
+    // calls `systemctl reboot`. We spawn it without waiting because:
+    //   • If the reboot succeeds, systemd will kill our process via SIGTERM before
+    //     the child exits, so `run_command_sync` would return false (a spurious error).
+    //   • Spawning fire-and-forget lets the OS shut us down naturally while the
+    //     reboot dialog gives the user a visible confirmation.
+    let _ = tx.send_blocking("Download complete. Scheduling upgrade for next reboot...".into());
+    use std::process::Stdio;
+    match std::process::Command::new("pkexec")
+        .args(["dnf", "system-upgrade", "reboot"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(_child) => {
+            let _ = tx.send_blocking(
+                "Upgrade reboot triggered. The system will restart to apply the upgrade.".into(),
+            );
+            Ok(())
+        }
+        Err(e) => Err(format!("Failed to start upgrade reboot: {e}")),
     }
-    Ok(())
 }
 
 fn upgrade_opensuse(tx: &async_channel::Sender<String>) -> Result<(), String> {
