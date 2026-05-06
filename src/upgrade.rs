@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DistroInfo {
@@ -69,6 +71,7 @@ pub fn detect_hostname() -> String {
 /// This mirrors the identical guard in `src/backends/nix.rs`. Both upgrade
 /// paths that embed a hostname in `/etc/nixos#<hostname>` must apply this
 /// check before constructing the flake reference.
+#[allow(dead_code)]
 fn validate_hostname(hostname: &str) -> Result<&str, String> {
     if hostname.is_empty() {
         return Err("hostname is empty".to_string());
@@ -201,7 +204,12 @@ fn check_packages_up_to_date(distro: &DistroInfo) -> CheckResult {
         }
     };
 
-    match Command::new(cmd).args(args).output() {
+    match Command::new(cmd)
+        .args(args)
+        .env("LANG", "C")
+        .env("LC_ALL", "C")
+        .output()
+    {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let upgradable = stdout
@@ -623,6 +631,8 @@ fn upgrade_ubuntu(tx: &async_channel::Sender<String>) -> Result<(), String> {
 
     let log_path = "/var/log/dist-upgrade/main.log";
     let tx_tail = tx.clone();
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let cancel_flag_thread = Arc::clone(&cancel_flag);
     let tail_handle = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(3));
         use std::io::{BufRead, BufReader, Seek, SeekFrom};
@@ -633,6 +643,9 @@ fn upgrade_ubuntu(tx: &async_channel::Sender<String>) -> Result<(), String> {
         let mut reader = BufReader::new(file);
         let mut line = String::new();
         loop {
+            if cancel_flag_thread.load(Ordering::Relaxed) {
+                break;
+            }
             match reader.read_line(&mut line) {
                 Ok(0) => {
                     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -665,7 +678,10 @@ fn upgrade_ubuntu(tx: &async_channel::Sender<String>) -> Result<(), String> {
         Ok(())
     };
 
-    drop(tail_handle);
+    // Set cancellation flag so the tail thread exits its loop.
+    cancel_flag.store(true, Ordering::Relaxed);
+    // Wait for the tail thread to finish draining any remaining lines.
+    let _ = tail_handle.join();
     result
 }
 
@@ -735,21 +751,42 @@ fn upgrade_fedora(tx: &async_channel::Sender<String>) -> Result<(), String> {
     //     reboot dialog gives the user a visible confirmation.
     let _ = tx.send_blocking("Download complete. Scheduling upgrade for next reboot...".into());
     use std::process::Stdio;
-    match std::process::Command::new("pkexec")
+    let mut child = match std::process::Command::new("pkexec")
         .args(["dnf", "system-upgrade", "reboot"])
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
     {
-        Ok(_child) => {
-            let _ = tx.send_blocking(
-                "Upgrade reboot triggered. The system will restart to apply the upgrade.".into(),
-            );
-            Ok(())
-        }
-        Err(e) => Err(format!("Failed to start upgrade reboot: {e}")),
+        Ok(child) => child,
+        Err(e) => return Err(format!("Failed to start upgrade reboot: {e}")),
+    };
+
+    // Forward stdout to the log channel in a background thread.
+    // This thread is naturally killed when the process is rebooted by systemd.
+    if let Some(stdout) = child.stdout.take() {
+        let tx_out = tx.clone();
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                let _ = tx_out.send_blocking(line);
+            }
+        });
     }
+    if let Some(stderr) = child.stderr.take() {
+        let tx_err = tx.clone();
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                let _ = tx_err.send_blocking(format!("[stderr] {line}"));
+            }
+        });
+    }
+
+    let _ = tx.send_blocking(
+        "Upgrade reboot triggered. The system will restart to apply the upgrade.".into(),
+    );
+    Ok(())
 }
 
 fn upgrade_opensuse(tx: &async_channel::Sender<String>) -> Result<(), String> {
@@ -823,20 +860,19 @@ fn upgrade_nixos(distro: &DistroInfo, tx: &async_channel::Sender<String>) -> Res
                     "Failed to update flake inputs in /etc/nixos (see log for details)".to_string(),
                 );
             }
-            // Validate before embedding in the Nix flake URL. An unvalidated hostname
-            // containing '#', '?', spaces, or control characters can confuse
-            // nixos-rebuild's flake-reference parser and may cause an incorrect rebuild
-            // or a cryptic failure. This mirrors the identical guard in nix.rs.
-            let raw_hostname = detect_hostname();
-            let hostname = match validate_hostname(&raw_hostname) {
-                Ok(h) => h,
+            // Resolve the flake attribute name using the same mechanism as
+            // NixBackend::run_update() — reads /etc/nixos/vexos-variant and
+            // validates with validate_flake_attr(). This ensures both upgrade
+            // paths use the same configuration attribute name.
+            let config_attr = match crate::backends::nix::resolve_nixos_flake_attr() {
+                Ok(attr) => attr,
                 Err(e) => {
                     let msg = format!("Upgrade aborted: {e}");
                     let _ = tx.send_blocking(msg.clone());
                     return Err(msg);
                 }
             };
-            let flake_target = format!("/etc/nixos#{}", hostname);
+            let flake_target = format!("/etc/nixos#{}", config_attr);
             let _ = tx.send_blocking(format!("Rebuilding NixOS configuration: {flake_target}"));
             if !crate::runner::run_command_sync(
                 "pkexec",

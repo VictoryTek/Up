@@ -11,6 +11,14 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
+type UpdatePageResult = (
+    gtk::Box,
+    Rc<dyn Fn()>,
+    adw::ActionRow,
+    adw::ActionRow,
+    Rc<Cell<bool>>,
+);
+
 pub struct UpWindow;
 
 impl UpWindow {
@@ -25,7 +33,7 @@ impl UpWindow {
         let view_stack = adw::ViewStack::new();
 
         // --- Update Page ---
-        let (update_page, run_checks, sysinfo_distro_row, sysinfo_version_row) =
+        let (update_page, run_checks, sysinfo_distro_row, sysinfo_version_row, update_in_progress) =
             Self::build_update_page();
         view_stack.add_titled_with_icon(
             &update_page,
@@ -99,7 +107,13 @@ impl UpWindow {
             .tooltip_text("Check for updates")
             .build();
         let run_checks_btn = run_checks.clone();
-        refresh_button.connect_clicked(move |_| (*run_checks_btn)());
+        let update_in_progress_ref = update_in_progress.clone();
+        refresh_button.connect_clicked(move |_| {
+            if update_in_progress_ref.get() {
+                return; // silently ignore clicks during active update
+            }
+            (*run_checks_btn)()
+        });
         header.pack_start(&refresh_button);
 
         // Application overflow menu (three-dot button on the end/right slot).
@@ -142,7 +156,7 @@ impl UpWindow {
         window
     }
 
-    fn build_update_page() -> (gtk::Box, Rc<dyn Fn()>, adw::ActionRow, adw::ActionRow) {
+    fn build_update_page() -> UpdatePageResult {
         let page_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
         let scrolled = gtk::ScrolledWindow::builder()
@@ -240,8 +254,12 @@ impl UpWindow {
         let detected_clone = detected.clone();
         let restart_banner_clone = restart_banner.clone();
 
+        let updating: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let updating_for_btn = updating.clone();
+
         update_button.connect_clicked(move |button| {
             button.set_sensitive(false);
+            updating_for_btn.set(true);
             log_clone.clear();
 
             let rows_ref = rows_clone.clone();
@@ -250,6 +268,7 @@ impl UpWindow {
             let button_ref = button.clone();
             let backends = detected_clone.borrow().clone();
             let banner_ref = restart_banner_clone.clone();
+            let updating_ref = updating_for_btn.clone();
 
             // Check if any backend requires root privileges.
             let any_needs_root = backends.iter().any(|b| b.needs_root());
@@ -389,6 +408,7 @@ impl UpWindow {
                 } else {
                     status_ref.set_label("Update complete.");
                 }
+                updating_ref.set(false);
                 button_ref.set_sensitive(true);
 
                 if !has_error {
@@ -432,10 +452,13 @@ impl UpWindow {
                 let my_epoch = check_epoch.get();
                 status_label_checks.set_label("Checking for updates...");
 
-                for (idx, backend) in detected.borrow().iter().enumerate() {
+                for backend in detected.borrow().iter() {
+                    let kind = backend.kind();
                     {
                         let borrowed = rows.borrow();
-                        borrowed[idx].1.set_status_checking();
+                        if let Some((_, row)) = borrowed.iter().find(|(k, _)| *k == kind) {
+                            row.set_status_checking();
+                        }
                     }
                     let backend_clone = backend.clone();
                     let rows_ref = rows.clone();
@@ -457,7 +480,16 @@ impl UpWindow {
                             if epoch_ref.get() != my_epoch {
                                 return;
                             }
-                            let row = rows_ref.borrow()[idx].1.clone();
+                            let row = {
+                                let borrowed = rows_ref.borrow();
+                                borrowed
+                                    .iter()
+                                    .find(|(k, _)| *k == kind)
+                                    .map(|(_, r)| r.clone())
+                            };
+                            let Some(row) = row else {
+                                return;
+                            };
                             match count_result {
                                 Ok(count) => {
                                     row.set_status_available(count);
@@ -532,6 +564,6 @@ impl UpWindow {
             });
         }
 
-        (page_box, run_checks, distro_row, version_row)
+        (page_box, run_checks, distro_row, version_row, updating)
     }
 }

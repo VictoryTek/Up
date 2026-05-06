@@ -15,6 +15,15 @@ pub fn is_available() -> bool {
 /// 2. `ID=nixos` in `/etc/os-release` — standard OS identifier.
 /// 3. `/etc/nixos` — legacy fallback for traditional config locations.
 fn is_nixos() -> bool {
+    if crate::backends::flatpak::is_running_in_flatpak() {
+        // Inside the Flatpak sandbox, probe the host filesystem via flatpak-spawn.
+        // /run/current-system is the most reliable NixOS-specific indicator.
+        return std::process::Command::new("flatpak-spawn")
+            .args(["--host", "test", "-e", "/run/current-system"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+    }
     if std::path::Path::new("/run/current-system").exists() {
         return true;
     }
@@ -28,6 +37,13 @@ fn is_nixos() -> bool {
 
 /// True when the NixOS config is flake-based (/etc/nixos/flake.nix exists).
 fn is_nixos_flake() -> bool {
+    if crate::backends::flatpak::is_running_in_flatpak() {
+        return std::process::Command::new("flatpak-spawn")
+            .args(["--host", "test", "-e", "/etc/nixos/flake.nix"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+    }
     std::path::Path::new("/etc/nixos/flake.nix").exists()
 }
 
@@ -62,7 +78,7 @@ fn validate_flake_attr(name: &str) -> Result<String, String> {
 ///    Example: `sudo sh -c 'echo vexos-nvidia > /etc/nixos/vexos-variant'`
 ///
 /// 2. Return an error with instructions for creating the file.
-fn resolve_nixos_flake_attr() -> Result<String, String> {
+pub(crate) fn resolve_nixos_flake_attr() -> Result<String, String> {
     const VARIANT_FILE: &str = "/etc/nixos/vexos-variant";
 
     // Step 1: Read the variant file (mandatory, primary source of truth).
@@ -271,6 +287,19 @@ async fn nixos_flake_changed_inputs() -> Result<Vec<String>, String> {
 /// 1. `/nix/receipt.json` — created exclusively by the Determinate Nix installer.
 /// 2. `determinate-nixd` binary on PATH — confirms the daemon is installed.
 fn is_determinate_nix() -> bool {
+    if crate::backends::flatpak::is_running_in_flatpak() {
+        let receipt_ok = std::process::Command::new("flatpak-spawn")
+            .args(["--host", "test", "-e", "/nix/receipt.json"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        let daemon_ok = std::process::Command::new("flatpak-spawn")
+            .args(["--host", "which", "determinate-nixd"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        return receipt_ok && daemon_ok;
+    }
     std::path::Path::new("/nix/receipt.json").exists() && which::which("determinate-nixd").is_ok()
 }
 

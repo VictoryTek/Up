@@ -160,10 +160,9 @@ impl UpgradePage {
         let upgrade_available_clone = upgrade_available.clone();
         let all_checks_passed_clone = all_checks_passed.clone();
         check_button.connect_clicked(move |button| {
-            let distro = distro_state_for_check
-                .borrow()
-                .clone()
-                .expect("distro info must be available before check button is sensitive");
+            let Some(distro) = distro_state_for_check.borrow().clone() else {
+                return;
+            };
             button.set_sensitive(false);
             log_clone.clear();
 
@@ -239,10 +238,9 @@ impl UpgradePage {
         let nixos_config_type_for_upgrade = nixos_config_type.clone();
 
         upgrade_button.connect_clicked(move |button| {
-            let distro = distro_state_for_upgrade
-                .borrow()
-                .clone()
-                .expect("distro info must be available before upgrade button is active");
+            let Some(distro) = distro_state_for_upgrade.borrow().clone() else {
+                return;
+            };
 
             // NixOS Flake: show informational dialog only — do NOT run an upgrade
             if *nixos_config_type_for_upgrade.borrow() == Some(upgrade::NixOsConfigType::Flake) {

@@ -158,8 +158,11 @@ impl Backend for DnfBackend {
                 .output()
                 .await
                 .map_err(|e| e.to_string())?;
-            if out.status.code() == Some(0) {
-                return Ok(0);
+            match out.status.code() {
+                Some(0) => return Ok(0), // No updates available
+                Some(1) => return Err("dnf check-update failed".to_string()), // DNF error
+                Some(100) => {}          // Updates available — continue to count
+                _ => return Ok(0),       // Unknown exit code, safe default
             }
             let text = String::from_utf8_lossy(&out.stdout);
             let count = text

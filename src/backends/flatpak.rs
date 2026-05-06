@@ -11,10 +11,6 @@ const GITHUB_REPO: &str = "VictoryTek/Up";
 /// is rejected before it is embedded in a shell command.
 const GITHUB_RELEASE_DOWNLOAD_PREFIX: &str = "https://github.com/VictoryTek/Up/releases/download/";
 
-/// Temporary path on the host where the self-update bundle is downloaded
-/// before installation.
-const SELF_UPDATE_TMP_PATH: &str = "/tmp/up-self-update.flatpak";
-
 /// Returns `true` when the current process is running inside a Flatpak sandbox.
 ///
 /// Detection relies on the presence of `/.flatpak-info`, a metadata file that
@@ -177,10 +173,10 @@ async fn download_and_install_bundle(runner: &CommandRunner, url: &str) -> Resul
     // GitHub release URLs contain only HTTPS-safe characters and never include
     // single-quote characters, so single-quoting in bash is safe here.
     let script = format!(
-        "curl -fsSL --connect-timeout 10 --max-time 300 -o '{tmp}' '{url}' && \
-         flatpak install --bundle --reinstall --user -y '{tmp}'; \
-         rm -f '{tmp}'",
-        tmp = SELF_UPDATE_TMP_PATH,
+        "tmp=$(mktemp \"${{XDG_RUNTIME_DIR:-/tmp}}/up-self-update-XXXXXX.flatpak\") \
+         && curl -fsSL --connect-timeout 10 --max-time 300 -o \"$tmp\" '{url}' \
+         && flatpak install --bundle --reinstall --user -y \"$tmp\"; \
+         rm -f \"$tmp\"",
         url = url,
     );
 
@@ -293,12 +289,19 @@ impl Backend for FlatpakBackend {
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
         Box::pin(async move {
-            // Use `flatpak update --no-deploy -y --user` to detect pending updates
-            // without applying them. The `--user` flag is intentional: the `--system`
-            // variant triggers a polkit prompt on every background check, which is
-            // poor UX. System Flatpak installs are uncommon on desktop systems, so
-            // only user installations are checked here.
-            let (cmd, args) = build_flatpak_cmd(&["update", "--no-deploy", "-y", "--user"]);
+            // Use `flatpak update --no-deploy -y --user --columns=application` to detect
+            // pending updates without applying them. The `--columns=application` flag
+            // ensures one application ID per line for predictable parsing.
+            // The `--user` flag is intentional: the `--system` variant triggers a polkit
+            // prompt on every background check, which is poor UX. System Flatpak installs
+            // are uncommon on desktop systems, so only user installations are checked here.
+            let (cmd, args) = build_flatpak_cmd(&[
+                "update",
+                "--no-deploy",
+                "-y",
+                "--user",
+                "--columns=application",
+            ]);
             let out = tokio::process::Command::new(&cmd)
                 .args(&args)
                 .output()
@@ -314,18 +317,12 @@ impl Backend for FlatpakBackend {
             let mut apps: Vec<String> = Vec::new();
             for line in text.lines() {
                 let t = line.trim();
-                // Update rows look like: "1.  com.example.App  stable  u  flathub  ..."
-                // Token 0 is a 1-based index ending with '.'; token 1 is the app ID.
-                // Header ("ID ...") and progress lines ("49%", "5.0 MB") are skipped
-                // because they either don't start with a digit or lack the trailing '.'.
-                let mut tokens = t.split_whitespace();
-                if let Some(index) = tokens.next() {
-                    if index.starts_with(|c: char| c.is_ascii_digit()) && index.ends_with('.') {
-                        if let Some(app_id) = tokens.next() {
-                            if !apps.contains(&app_id.to_string()) {
-                                apps.push(app_id.to_string());
-                            }
-                        }
+                // With --columns=application, each line is one application ID.
+                // Skip empty lines and the header line ("Application").
+                if !t.is_empty() && !t.eq_ignore_ascii_case("application") {
+                    let app_id = t.to_string();
+                    if !apps.contains(&app_id) {
+                        apps.push(app_id);
                     }
                 }
             }

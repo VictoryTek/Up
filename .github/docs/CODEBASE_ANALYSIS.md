@@ -22,30 +22,30 @@
 ## Progress Tracker
 
 ### 1. Quick Fixes (URLs, dead code, docs)
-- [ ] Fix placeholder URL in `Cargo.toml` (`repository = "https://github.com/user/up"`)
-- [ ] Fix placeholder URLs in `data/io.github.up.metainfo.xml` (homepage + bugtracker)
-- [ ] Remove or wire up `CheckMsg::Error` dead code in `src/ui/upgrade_page.rs`
-- [ ] Remove unused `gettext` / `libunwind-dev` from `.github/workflows/ci.yml`
-- [ ] Fix `cargo test --release` double-compile in CI (drop `--release` from test step)
-- [ ] Reconcile Flatpak docs: either ship the manifest/scripts/workflow or rewrite `docs/FLATPAK_CI_SUMMARY.md`
+- [x] Fix placeholder URL in `Cargo.toml` (`repository = "https://github.com/user/up"`)
+- [x] Fix placeholder URLs in `data/io.github.up.metainfo.xml` (homepage + bugtracker)
+- [x] Remove or wire up `CheckMsg::Error` dead code in `src/ui/upgrade_page.rs`
+- [x] Remove unused `gettext` / `libunwind-dev` from `.github/workflows/ci.yml`
+- [x] Fix `cargo test --release` double-compile in CI (drop `--release` from test step)
+- [x] Reconcile Flatpak docs: either ship the manifest/scripts/workflow or rewrite `docs/FLATPAK_CI_SUMMARY.md`
 
 ### 2. Bugs & Risks
 - [ ] **[HIGH]** Harden `PrivilegedShell` stdout-sentinel: reject `\n`/`\0` in args at minimum (`src/runner.rs`)
 - [ ] **[HIGH]** Add per-command timeout to `PrivilegedShell::run_command` and surface pkexec 126/127 as auth-cancelled
-- [ ] **[HIGH]** Replace `rows.borrow()[idx]` index lookup with lookup-by-`BackendKind` or pass row clone into closure (`src/ui/window.rs`)
-- [ ] **[HIGH]** Replace `.expect("distro info must be available …")` with `if let Some(…) else { return; }` (`src/ui/upgrade_page.rs`)
-- [ ] **[HIGH]** Fix NixOS/Determinate detection when running inside Flatpak sandbox (`src/backends/nix.rs`)
-- [ ] **[MED]** Fix Ubuntu upgrade tail-thread leak — use `Arc<AtomicBool>` cancellation flag (`src/upgrade.rs`)
-- [ ] **[MED]** Fix DNF `count_available` — treat exit 100 as "updates available", not any non-zero exit (`src/backends/os_package_manager.rs`)
-- [ ] **[MED]** Surface `reboot` failures to user (toast on non-zero exit, especially under Flatpak) (`src/reboot.rs`)
-- [ ] **[MED]** Force `LANG=C` on all subprocess invocations used for parsing (prevents locale-dependent breakage)
-- [ ] **[MED]** Fix Nix flake target inconsistency — use `resolve_nixos_flake_attr()` in `upgrade_nixos` (`src/upgrade.rs`)
-- [ ] **[MED]** Fix Flatpak self-update to use a fixed `$XDG_RUNTIME_DIR` temp path instead of predictable `/tmp/up-self-update.flatpak`
-- [ ] **[MED]** Add cancellation / disable refresh button while an update is in progress (`src/ui/window.rs`)
+- [x] **[HIGH]** Replace `rows.borrow()[idx]` index lookup with lookup-by-`BackendKind` or pass row clone into closure (`src/ui/window.rs`)
+- [x] **[HIGH]** Replace `.expect("distro info must be available …")` with `if let Some(…) else { return; }` (`src/ui/upgrade_page.rs`)
+- [x] **[HIGH]** Fix NixOS/Determinate detection when running inside Flatpak sandbox (`src/backends/nix.rs`)
+- [x] **[MED]** Fix Ubuntu upgrade tail-thread leak — use `Arc<AtomicBool>` cancellation flag (`src/upgrade.rs`)
+- [x] **[MED]** Fix DNF `count_available` — treat exit 100 as "updates available", not any non-zero exit (`src/backends/os_package_manager.rs`)
+- [x] **[MED]** Surface `reboot` failures to user (toast on non-zero exit, especially under Flatpak) (`src/reboot.rs`)
+- [x] **[MED]** Force `LANG=C` on all subprocess invocations used for parsing (prevents locale-dependent breakage)
+- [x] **[MED]** Fix Nix flake target inconsistency — use `resolve_nixos_flake_attr()` in `upgrade_nixos` (`src/upgrade.rs`)
+- [x] **[MED]** Fix Flatpak self-update to use a fixed `$XDG_RUNTIME_DIR` temp path instead of predictable `/tmp/up-self-update.flatpak`
+- [x] **[MED]** Add cancellation / disable refresh button while an update is in progress (`src/ui/window.rs`)
 - [ ] **[LOW]** Add `LANG=C` to Zypper `updated_count` parser (counts "done" lines instead of actual packages)
-- [ ] **[LOW]** Pipe Fedora `dnf system-upgrade reboot` stdout to `tx` instead of `Stdio::null` (`src/upgrade.rs`)
+- [x] **[LOW]** Pipe Fedora `dnf system-upgrade reboot` stdout to `tx` instead of `Stdio::null` (`src/upgrade.rs`)
 - [ ] **[LOW]** Use `flatpak remote-ls --updates` instead of `flatpak update --no-deploy` for list_available (`src/backends/flatpak.rs`)
-- [ ] **[LOW]** Use `--columns=application` for stable Flatpak column layout (`src/backends/flatpak.rs`)
+- [x] **[LOW]** Use `--columns=application` for stable Flatpak column layout (`src/backends/flatpak.rs`)
 
 ### 3. Security
 - [ ] **[HIGH]** Ship `io.github.up.policy` with scoped polkit actions (`update.system`, `upgrade.system`) instead of relying on default `org.freedesktop.policykit.exec` rule

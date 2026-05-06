@@ -1,21 +1,33 @@
-use log::{error, info};
+use log::info;
 use std::path::Path;
 use std::process::Command;
 
 /// Issue a system reboot.
 /// Inside a Flatpak sandbox, tunnels through `flatpak-spawn --host` to reach
 /// the host systemd. Outside Flatpak, calls `systemctl reboot` directly.
-/// Uses `Command::spawn` (fire-and-forget) so the GTK loop is not blocked.
-pub fn reboot() {
+///
+/// Returns `Ok(())` if the command was successfully dispatched (in practice
+/// this is unreachable on success because systemd kills the process), or
+/// `Err(reason)` if the reboot command itself failed.
+pub fn reboot() -> Result<(), String> {
     info!("Reboot requested");
-    if Path::new("/.flatpak-info").exists() {
-        if let Err(e) = Command::new("flatpak-spawn")
+    let status = if Path::new("/.flatpak-info").exists() {
+        Command::new("flatpak-spawn")
             .args(["--host", "systemctl", "reboot"])
-            .spawn()
-        {
-            error!("Failed to spawn reboot command: {e}");
-        }
-    } else if let Err(e) = Command::new("systemctl").arg("reboot").spawn() {
-        error!("Failed to spawn reboot command: {e}");
+            .status()
+            .map_err(|e| format!("Failed to start reboot command: {e}"))?
+    } else {
+        Command::new("systemctl")
+            .arg("reboot")
+            .status()
+            .map_err(|e| format!("Failed to start reboot command: {e}"))?
+    };
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Reboot command exited with code {:?}",
+            status.code()
+        ))
     }
 }
