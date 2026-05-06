@@ -6,14 +6,11 @@ use std::rc::Rc;
 use crate::ui::log_panel::LogPanel;
 use crate::upgrade;
 
-#[allow(dead_code)]
 enum CheckMsg {
     /// A plain log line to display in the terminal output panel.
     Log(String),
     /// Structured results from all prerequisite checks.
     Results(Vec<upgrade::CheckResult>),
-    /// A fatal error that prevented checks from completing.
-    Error(String),
 }
 
 pub struct UpgradePage;
@@ -220,10 +217,6 @@ impl UpgradePage {
                                     }
                                 }
                             }
-                        }
-                        CheckMsg::Error(e) => {
-                            all_passed = false;
-                            log_ref.append_line(&format!("Error: {e}"));
                         }
                     }
                 }

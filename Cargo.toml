@@ -5,7 +5,7 @@ edition = "2021"
 description = "A modern system update & upgrade app for Linux"
 license = "GPL-3.0-or-later"
 authors = ["Up Contributors"]
-repository = "https://github.com/user/up"
+repository = "https://github.com/VictoryTek/Up"
 
 [dependencies]
 gtk = { version = "0.9", package = "gtk4", features = ["v4_12"] }
