@@ -30,8 +30,8 @@
 - [x] Reconcile Flatpak docs: either ship the manifest/scripts/workflow or rewrite `docs/FLATPAK_CI_SUMMARY.md`
 
 ### 2. Bugs & Risks
-- [ ] **[HIGH]** Harden `PrivilegedShell` stdout-sentinel: reject `\n`/`\0` in args at minimum (`src/runner.rs`)
-- [ ] **[HIGH]** Add per-command timeout to `PrivilegedShell::run_command` and surface pkexec 126/127 as auth-cancelled
+- [x] **[HIGH]** Harden `PrivilegedShell` stdout-sentinel: reject `\n`/`\0` in args at minimum (`src/runner.rs`)
+- [x] **[HIGH]** Add per-command timeout to `PrivilegedShell::run_command` and surface pkexec 126/127 as auth-cancelled
 - [x] **[HIGH]** Replace `rows.borrow()[idx]` index lookup with lookup-by-`BackendKind` or pass row clone into closure (`src/ui/window.rs`)
 - [x] **[HIGH]** Replace `.expect("distro info must be available …")` with `if let Some(…) else { return; }` (`src/ui/upgrade_page.rs`)
 - [x] **[HIGH]** Fix NixOS/Determinate detection when running inside Flatpak sandbox (`src/backends/nix.rs`)
@@ -48,12 +48,12 @@
 - [x] **[LOW]** Use `--columns=application` for stable Flatpak column layout (`src/backends/flatpak.rs`)
 
 ### 3. Security
-- [ ] **[HIGH]** Ship `io.github.up.policy` with scoped polkit actions (`update.system`, `upgrade.system`) instead of relying on default `org.freedesktop.policykit.exec` rule
-- [ ] **[MED]** Pass Flatpak self-update URL as positional bash arg rather than interpolating into script body (`src/backends/flatpak.rs`)
-- [ ] **[MED]** Add checksum/signature verification for self-update `.flatpak` bundle; or rely solely on Flathub OSTree signing and remove the GitHub-direct path
-- [ ] **[MED]** Feed inline Python script via stdin rather than `format!` in `fetch_github_latest_release` (`src/backends/flatpak.rs`)
-- [ ] **[LOW]** Make `shell_quote` always single-quote; remove the "no quoting needed" fast-path whitelist (`src/runner.rs`)
-- [ ] **[LOW]** Strip ANSI escape sequences in `LogPanel` output for readability (`src/ui/log_panel.rs`)
+- [x] **[HIGH]** Ship `io.github.up.policy` with scoped polkit actions (`update.system`, `upgrade.system`) instead of relying on default `org.freedesktop.policykit.exec` rule
+- [x] **[MED]** Pass Flatpak self-update URL as positional bash arg rather than interpolating into script body (`src/backends/flatpak.rs`)
+- [x] **[MED]** Add checksum/signature verification for self-update `.flatpak` bundle; or rely solely on Flathub OSTree signing and remove the GitHub-direct path
+- [x] **[MED]** Feed inline Python script via stdin rather than `format!` in `fetch_github_latest_release` (`src/backends/flatpak.rs`)
+- [x] **[LOW]** Make `shell_quote` always single-quote; remove the "no quoting needed" fast-path whitelist (`src/runner.rs`)
+- [x] **[LOW]** Strip ANSI escape sequences in `LogPanel` output for readability (`src/ui/log_panel.rs`)
 
 ### 4. Architecture & Code Quality
 - [ ] **[HIGH]** Introduce `CommandExecutor` trait with `MockExecutor` for testing — unblocks all downstream test work

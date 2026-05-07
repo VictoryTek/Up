@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+    "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+    "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+
+  <vendor>Up — System Updater</vendor>
+  <vendor_url>https://github.com/VictoryTek/Up</vendor_url>
+  <icon_name>io.github.up</icon_name>
+
+  <!--
+    Action used when Up runs system package-manager updates through its
+    persistent pkexec shell session (pkexec /bin/sh).
+
+    Authentication is required once per desktop session (auth_admin_keep).
+    The credential is cached by polkit for the duration of the session so
+    that updating multiple backends does not prompt repeatedly.
+
+    NOTE: This action matches any caller of `pkexec /bin/sh`, not only Up.
+    True per-application scoping requires a D-Bus backend service. This file
+    is a significant improvement over the default org.freedesktop.policykit.exec
+    action and enables sysadmin rule customisation via polkit JS rules.
+  -->
+  <action id="io.github.up.pkexec.update">
+    <description>Update system packages</description>
+    <description xml:lang="en">Update system packages</description>
+    <message>Up needs administrator privileges to update system packages.</message>
+    <message xml:lang="en">Up needs administrator privileges to update system packages.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/bin/sh</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+  <!--
+    Action used when Up runs distribution upgrade commands via pkexec
+    with /usr/bin/env (NixOS upgrade path, see upgrade.rs).
+
+    Distribution upgrades are a more impactful operation than routine updates;
+    they use the same authentication level but a distinct action ID so that
+    sysadmins can apply stricter rules specifically for upgrades.
+  -->
+  <action id="io.github.up.pkexec.upgrade">
+    <description>Upgrade the system distribution</description>
+    <description xml:lang="en">Upgrade the system distribution</description>
+    <message>Up needs administrator privileges to upgrade the system to a new release.</message>
+    <message xml:lang="en">Up needs administrator privileges to upgrade the system to a new release.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/env</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+</policyconfig>

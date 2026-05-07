@@ -45,9 +45,10 @@ impl LogPanel {
     }
 
     pub fn append_line(&self, line: &str) {
+        let clean = strip_ansi(line);
         let buffer = self.text_view.buffer();
         let mut end = buffer.end_iter();
-        buffer.insert(&mut end, line);
+        buffer.insert(&mut end, &clean);
         buffer.insert(&mut end, "\n");
 
         // Auto-scroll to bottom
@@ -59,4 +60,46 @@ impl LogPanel {
         let buffer = self.text_view.buffer();
         buffer.set_text("");
     }
+}
+
+/// Remove ANSI/VT100 escape sequences from `s`.
+///
+/// Handles:
+/// - CSI sequences: ESC `[` followed by parameter bytes (`0x30–0x3F`),
+///   intermediate bytes (`0x20–0x2F`), and a final byte (`0x40–0x7E`).
+/// - Simple two-byte ESC sequences: ESC followed by any ASCII letter.
+///
+/// Any other byte sequence starting with ESC is passed through unchanged
+/// rather than silently discarding legitimate content.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        // ESC seen — inspect next character.
+        match chars.peek().copied() {
+            Some('[') => {
+                // CSI sequence: consume '[' and everything up to and including
+                // the final byte (first byte in 0x40–0x7E range).
+                chars.next(); // consume '['
+                for ch in chars.by_ref() {
+                    if ('\x40'..='\x7e').contains(&ch) {
+                        break; // final byte consumed; sequence complete
+                    }
+                }
+            }
+            Some(ch) if ch.is_ascii_alphabetic() => {
+                // Simple two-byte escape (e.g., ESC M for reverse index).
+                chars.next(); // consume the letter
+            }
+            _ => {
+                // Unrecognised; emit ESC as-is rather than silently dropping.
+                out.push('\x1b');
+            }
+        }
+    }
+    out
 }

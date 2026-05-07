@@ -800,9 +800,12 @@ fn upgrade_opensuse(tx: &async_channel::Sender<String>) -> Result<(), String> {
 }
 
 fn upgrade_nixos(distro: &DistroInfo, tx: &async_channel::Sender<String>) -> Result<(), String> {
-    // pkexec resets PATH, excluding NixOS tooling; export the required paths explicitly.
-    const NIX_PATH_EXPORT: &str =
-        "export PATH=/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin:$PATH";
+    /// Colon-separated PATH prepended for NixOS tool access under pkexec.
+    ///
+    /// pkexec resets PATH to a minimal set, excluding NixOS-specific tool paths.
+    /// We set PATH explicitly via `/usr/bin/env` to avoid a shell wrapper.
+    const NIX_PATH: &str =
+        "/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin";
     let config_type = detect_nixos_config_type();
     match config_type {
         NixOsConfigType::LegacyChannel => {
@@ -824,11 +827,21 @@ fn upgrade_nixos(distro: &DistroInfo, tx: &async_channel::Sender<String>) -> Res
 
             // Step 1: Register the new channel
             let _ = tx.send_blocking(format!("Switching channel to {}...", next_channel));
-            let add_cmd = format!(
-                "{NIX_PATH_EXPORT} && nix-channel --add {} nixos",
-                channel_url
-            );
-            if !crate::runner::run_command_sync("pkexec", &["sh", "-c", &add_cmd], tx) {
+            // Pass channel_url as a positional argument; no sh -c needed.
+            // /usr/bin/env sets PATH without requiring a shell.
+            let path_arg = format!("PATH={}", NIX_PATH);
+            if !crate::runner::run_command_sync(
+                "pkexec",
+                &[
+                    "/usr/bin/env",
+                    &path_arg,
+                    "nix-channel",
+                    "--add",
+                    &channel_url,
+                    "nixos",
+                ],
+                tx,
+            ) {
                 return Err(format!(
                     "Failed to register NixOS channel {} (see log for details)",
                     next_channel
@@ -854,8 +867,20 @@ fn upgrade_nixos(distro: &DistroInfo, tx: &async_channel::Sender<String>) -> Res
         NixOsConfigType::Flake => {
             let _ = tx.send_blocking("Detected: flake-based NixOS config".into());
             let _ = tx.send_blocking("Updating flake inputs in /etc/nixos...".into());
-            let cmd = format!("{NIX_PATH_EXPORT} && nix flake update --flake /etc/nixos");
-            if !crate::runner::run_command_sync("pkexec", &["sh", "-c", &cmd], tx) {
+            let path_arg = format!("PATH={}", NIX_PATH);
+            if !crate::runner::run_command_sync(
+                "pkexec",
+                &[
+                    "/usr/bin/env",
+                    &path_arg,
+                    "nix",
+                    "flake",
+                    "update",
+                    "--flake",
+                    "/etc/nixos",
+                ],
+                tx,
+            ) {
                 return Err(
                     "Failed to update flake inputs in /etc/nixos (see log for details)".to_string(),
                 );

@@ -31,10 +31,15 @@ pub struct PrivilegedShell {
     child: tokio::process::Child,
     stdin: Option<tokio::process::ChildStdin>,
     reader: BufReader<tokio::process::ChildStdout>,
+    /// Unique token included in every sentinel for this session.
+    /// Prevents any subprocess from spoofing exit-code markers by guessing
+    /// the fixed compile-time constant.
+    session_id: String,
 }
 
-/// Sentinel that marks the end of a command's output inside the shell.
-const RC_MARKER: &str = "___UP_RC_";
+/// Maximum wall-clock time a single privileged command may run.
+/// Commands that exceed this limit return an error; the shell is closed.
+const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600); // 1 hour
 
 impl PrivilegedShell {
     /// Spawn `pkexec sh` and verify that authentication succeeded.
@@ -51,10 +56,18 @@ impl PrivilegedShell {
         let stdout = child.stdout.take().ok_or("No stdout from pkexec")?;
         let reader = BufReader::new(stdout);
 
+        let pid = std::process::id();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
+        let session_id = format!("{:x}_{:x}", pid, ts);
+
         let mut shell = Self {
             child,
             stdin,
             reader,
+            session_id,
         };
 
         // Write a trivial command; if auth was cancelled or pkexec failed the
@@ -78,7 +91,12 @@ impl PrivilegedShell {
             // Process exited before responding — authentication was cancelled or denied.
             let status = shell.child.wait().await.ok();
             let code = status.and_then(|s| s.code()).unwrap_or(-1);
-            return Err(format!("Authentication cancelled (exit code {code})"));
+            let reason = match code {
+                126 => "authentication was cancelled".to_string(),
+                127 => "not authorised or pkexec not found".to_string(),
+                _ => format!("exit code {code}"),
+            };
+            return Err(format!("pkexec failed: {reason}"));
         }
 
         if line.trim() != "___UP_READY___" {
@@ -97,15 +115,35 @@ impl PrivilegedShell {
         tx: &async_channel::Sender<BackendEvent>,
         kind: BackendKind,
     ) -> Result<String, String> {
+        // Reject arguments containing control characters that could be interpreted
+        // by the root shell as command separators or terminators.
+        for arg in args {
+            if arg.contains(['\n', '\r', '\0']) {
+                return Err(format!(
+                    "Security: argument contains forbidden control character: {:?}",
+                    arg
+                ));
+            }
+        }
+
         let cmd_line = args
             .iter()
             .map(|a| shell_quote(a))
             .collect::<Vec<_>>()
             .join(" ");
 
+        // Build per-session sentinel strings; unpredictable to any subprocess.
+        let rc_prefix = format!("___UP_RC_{}_", self.session_id);
+        let rc_suffix = "___";
+
         // Run the command with stderr merged into stdout, then print a
         // sentinel carrying the exit code so we know where output ends.
-        let script = format!("{cmd_line} 2>&1\necho '{RC_MARKER}'$?'___'\n");
+        // Use printf instead of echo to avoid interpretation of special flags.
+        let script = format!(
+            "{cmd_line} 2>&1\nprintf '%s%d%s\\n' '{rc_prefix}' $? '{rc_suffix}'\n",
+            rc_prefix = rc_prefix,
+            rc_suffix = rc_suffix,
+        );
         let s = self.stdin.as_mut().ok_or("Shell stdin closed")?;
         s.write_all(script.as_bytes())
             .await
@@ -114,31 +152,45 @@ impl PrivilegedShell {
             .await
             .map_err(|e| format!("Failed to flush command: {e}"))?;
 
-        let mut full_output = String::new();
-        loop {
-            let mut line = String::new();
-            let n = self
-                .reader
-                .read_line(&mut line)
-                .await
-                .map_err(|e| format!("Failed to read output: {e}"))?;
-            if n == 0 {
-                return Err("Privileged shell closed unexpectedly".to_string());
-            }
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix(RC_MARKER) {
-                if let Some(code_str) = rest.strip_suffix("___") {
-                    let code: i32 = code_str.parse().unwrap_or(-1);
-                    if code == 0 {
-                        return Ok(full_output);
-                    }
-                    return Err(format!("Command exited with code {code}"));
+        let result = tokio::time::timeout(COMMAND_TIMEOUT, async {
+            let mut full_output = String::new();
+            loop {
+                let mut line = String::new();
+                let n = self
+                    .reader
+                    .read_line(&mut line)
+                    .await
+                    .map_err(|e| format!("Failed to read output: {e}"))?;
+                if n == 0 {
+                    return Err("Privileged shell closed unexpectedly".to_string());
                 }
+                let trimmed = line.trim();
+                if let Some(rest) = trimmed.strip_prefix(&rc_prefix) {
+                    if let Some(code_str) = rest.strip_suffix(rc_suffix) {
+                        let code: i32 = code_str.parse().unwrap_or(-1);
+                        if code == 0 {
+                            return Ok(full_output);
+                        }
+                        return Err(format!("Command exited with code {code}"));
+                    }
+                }
+                let content = line.trim_end_matches('\n').to_string();
+                full_output.push_str(&content);
+                full_output.push('\n');
+                let _ = tx.send(BackendEvent::LogLine(kind, content)).await;
             }
-            let content = line.trim_end_matches('\n').to_string();
-            full_output.push_str(&content);
-            full_output.push('\n');
-            let _ = tx.send(BackendEvent::LogLine(kind, content)).await;
+        })
+        .await;
+
+        match result {
+            Ok(inner) => inner,
+            Err(_elapsed) => {
+                self.close().await;
+                Err(format!(
+                    "Command timed out after {} seconds",
+                    COMMAND_TIMEOUT.as_secs()
+                ))
+            }
         }
     }
 
@@ -151,19 +203,15 @@ impl PrivilegedShell {
 }
 
 /// Quote a string for safe interpolation inside a POSIX shell command line.
+///
+/// Every value is wrapped in single quotes. Embedded single quotes are escaped
+/// with the `'\''` idiom. This is unconditionally safe for all POSIX sh
+/// implementations and removes the need to maintain a character allow-list.
 fn shell_quote(s: &str) -> String {
     if s.is_empty() {
         return "''".to_string();
     }
-    if s.bytes().all(|b| {
-        b.is_ascii_alphanumeric()
-            || matches!(b, b'-' | b'_' | b'/' | b'.' | b'=' | b':' | b'+' | b',')
-    }) {
-        s.to_string()
-    } else {
-        // Wrap in single quotes; escape embedded single quotes.
-        format!("'{}'", s.replace('\'', "'\\''"))
-    }
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 // ── CommandRunner ────────────────────────────────────────────────────────

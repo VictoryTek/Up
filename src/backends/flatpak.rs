@@ -3,14 +3,6 @@ use crate::runner::CommandRunner;
 use std::future::Future;
 use std::pin::Pin;
 
-/// GitHub repository slug (owner/repo) used for self-update release checks.
-const GITHUB_REPO: &str = "VictoryTek/Up";
-
-/// Expected URL prefix for validated release asset downloads.
-/// Any URL from the GitHub Releases API that does not start with this prefix
-/// is rejected before it is embedded in a shell command.
-const GITHUB_RELEASE_DOWNLOAD_PREFIX: &str = "https://github.com/VictoryTek/Up/releases/download/";
-
 /// Returns `true` when the current process is running inside a Flatpak sandbox.
 ///
 /// Detection relies on the presence of `/.flatpak-info`, a metadata file that
@@ -53,138 +45,6 @@ fn build_flatpak_cmd(sub_args: &[&str]) -> (String, Vec<String>) {
             sub_args.iter().map(|s| s.to_string()).collect(),
         )
     }
-}
-
-/// Parse a semver-like string (`"1.2.3"` or `"v1.2.3"`) into a
-/// `(major, minor, patch)` tuple. Returns `None` if the string cannot be
-/// parsed as three non-negative integers; the caller treats `None` as
-/// "do not update" (safe default).
-fn parse_semver(s: &str) -> Option<(u32, u32, u32)> {
-    let s = s.trim().trim_start_matches('v');
-    let mut parts = s.splitn(3, '.');
-    let major = parts.next()?.parse::<u32>().ok()?;
-    let minor = parts.next()?.parse::<u32>().ok()?;
-    // Split on the first non-digit so pre-release suffixes (e.g. "-beta.1")
-    // do not prevent parsing entirely.
-    let patch = parts
-        .next()?
-        .split(|c: char| !c.is_ascii_digit())
-        .next()?
-        .parse::<u32>()
-        .ok()?;
-    Some((major, minor, patch))
-}
-
-/// Returns `true` if `candidate_tag` (e.g., `"v1.2.0"`) is strictly newer
-/// than the version compiled into this binary (`CARGO_PKG_VERSION`).
-///
-/// Returns `false` on any parse failure — safe default is to not self-update.
-fn is_newer_than_current(candidate_tag: &str) -> bool {
-    let current = parse_semver(env!("CARGO_PKG_VERSION"));
-    let candidate = parse_semver(candidate_tag);
-    match (current, candidate) {
-        (Some(cur), Some(cand)) => cand > cur,
-        _ => false,
-    }
-}
-
-/// Query the GitHub Releases API for the latest release of Up and return
-/// `(tag_name, download_url)`.
-///
-/// Inside the Flatpak sandbox the request is routed through
-/// `flatpak-spawn --host` so the host network stack is used (no
-/// `--share=network` permission required).  Outside the sandbox `python3`
-/// is invoked directly — useful for local development and testing.
-///
-/// Returns `Err` if the command fails or the output cannot be parsed into
-/// a non-empty tag line.
-async fn fetch_github_latest_release(runner: &CommandRunner) -> Result<(String, String), String> {
-    let output = if is_running_in_flatpak() {
-        // Use curl + python3 on the host; the script prints exactly two lines:
-        // the release tag and the first .flatpak asset URL.
-        let script = format!(
-            "curl -fsSL --connect-timeout 10 --max-time 30 --user-agent 'io.github.up/{ver}' \
-             'https://api.github.com/repos/{repo}/releases/latest' \
-             | python3 -c \
-             \"import sys,json;\
-r=json.load(sys.stdin);\
-t=r.get('tag_name','');\
-a=[x.get('browser_download_url','') for x in r.get('assets',[]) \
-if x.get('name','').endswith('.flatpak')];\
-print(t);print(a[0] if a else '')\"",
-            ver = env!("CARGO_PKG_VERSION"),
-            repo = GITHUB_REPO,
-        );
-        runner
-            .run("flatpak-spawn", &["--host", "bash", "-c", &*script])
-            .await
-    } else {
-        // Outside the sandbox: python3 can reach the network directly.
-        let script = format!(
-            "import urllib.request,json;\
-r=urllib.request.urlopen(\
-'https://api.github.com/repos/{repo}/releases/latest',timeout=10);\
-d=json.loads(r.read());\
-t=d.get('tag_name','');\
-a=[x.get('browser_download_url','') for x in d.get('assets',[]) \
-if x.get('name','').endswith('.flatpak')];\
-print(t);print(a[0] if a else '')",
-            repo = GITHUB_REPO,
-        );
-        runner.run("python3", &["-c", &*script]).await
-    };
-
-    let output = output.map_err(|e| format!("GitHub release check failed: {e}"))?;
-
-    let mut lines = output.lines();
-    let tag = lines.next().unwrap_or("").trim().to_string();
-    let url = lines.next().unwrap_or("").trim().to_string();
-
-    if tag.is_empty() {
-        return Err("GitHub API returned no release tag".to_string());
-    }
-
-    Ok((tag, url))
-}
-
-/// Download the Flatpak bundle at `url` to a temporary path on the host and
-/// reinstall it via `flatpak install --bundle --reinstall --user -y`.
-///
-/// **Security**: `url` must start with [`GITHUB_RELEASE_DOWNLOAD_PREFIX`].
-/// Any other prefix is rejected before the URL is embedded in a shell command.
-///
-/// The running process is not terminated by the reinstall; the new version
-/// takes effect on the next launch — exactly what the restart banner prompts.
-async fn download_and_install_bundle(runner: &CommandRunner, url: &str) -> Result<(), String> {
-    // Reject URLs that do not originate from the expected GitHub release path.
-    if !url.starts_with(GITHUB_RELEASE_DOWNLOAD_PREFIX) {
-        return Err(format!(
-            "Rejected download URL with unexpected prefix: {url}"
-        ));
-    }
-
-    // Reject URLs that contain a single-quote, which would break bash quoting.
-    if url.contains('\'') {
-        return Err(format!(
-            "Rejected download URL containing invalid character: {url}"
-        ));
-    }
-
-    // GitHub release URLs contain only HTTPS-safe characters and never include
-    // single-quote characters, so single-quoting in bash is safe here.
-    let script = format!(
-        "tmp=$(mktemp \"${{XDG_RUNTIME_DIR:-/tmp}}/up-self-update-XXXXXX.flatpak\") \
-         && curl -fsSL --connect-timeout 10 --max-time 300 -o \"$tmp\" '{url}' \
-         && flatpak install --bundle --reinstall --user -y \"$tmp\"; \
-         rm -f \"$tmp\"",
-        url = url,
-    );
-
-    runner
-        .run("flatpak-spawn", &["--host", "bash", "-c", &*script])
-        .await
-        .map(|_| ())
-        .map_err(|e| format!("Self-update install failed: {e}"))
 }
 
 pub struct FlatpakBackend;
@@ -231,40 +91,13 @@ impl Backend for FlatpakBackend {
                             t.starts_with(|c: char| c.is_ascii_digit()) && t.contains(crate::APP_ID)
                         });
 
-                    // If running inside the Flatpak sandbox and Up was NOT
-                    // updated via an OSTree remote, check GitHub Releases for
-                    // a bundle update. Errors and "already up-to-date" cases
-                    // are logged as warnings but do not prevent the normal
-                    // success result from being returned.
-                    let github_self_updated = if !updated_self && is_running_in_flatpak() {
-                        match fetch_github_latest_release(runner).await {
-                            Ok((tag, url)) if is_newer_than_current(&tag) && !url.is_empty() => {
-                                match download_and_install_bundle(runner, &url).await {
-                                    Ok(()) => {
-                                        log::info!(
-                                            "Self-update from GitHub Releases: installed {}",
-                                            tag
-                                        );
-                                        true
-                                    }
-                                    Err(e) => {
-                                        log::warn!("Self-update install error: {e}");
-                                        false
-                                    }
-                                }
-                            }
-                            Ok((tag, _)) => {
-                                log::info!("Self-update check: already at latest ({tag})");
-                                false
-                            }
-                            Err(e) => {
-                                log::warn!("Self-update check error: {e}");
-                                false
-                            }
-                        }
-                    } else {
-                        false
-                    };
+                    // SECURITY: GitHub-direct self-update has been removed. Downloading and
+                    // installing a Flatpak bundle without GPG/checksum verification is not
+                    // acceptable. When Up is distributed via Flathub, `flatpak update -y` above
+                    // handles self-updates via OSTree with full signature verification. A
+                    // GitHub-direct path should only be re-added with minisign or GPG verification
+                    // of the downloaded bundle against a key pinned in the source code.
+                    let github_self_updated = false;
 
                     if updated_self || github_self_updated {
                         UpdateResult::SuccessWithSelfUpdate {

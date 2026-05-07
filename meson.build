@@ -43,6 +43,10 @@ install_data('data/io.github.up.metainfo.xml',
   install_dir: join_paths(datadir, 'metainfo'),
 )
 
+install_data('data/io.github.up.policy',
+  install_dir: join_paths(datadir, 'polkit-1', 'actions'),
+)
+
 foreach size : ['256x256', '128x128', '48x48']
   png = 'data/icons/hicolor' / size / 'apps/io.github.up.png'
   if fs.exists(png)
