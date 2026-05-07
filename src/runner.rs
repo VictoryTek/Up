@@ -1,6 +1,7 @@
 use crate::backends::{BackendError, BackendKind};
 use crate::executor::CommandExecutor;
 use log::{info, warn};
+use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
 use std::process::Stdio;
@@ -8,6 +9,11 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
+
+/// Maximum number of tail lines retained in memory per stream for error
+/// context and post-process parsing.  All lines are still forwarded to the
+/// UI in real time through the async channel.
+const OUTPUT_TAIL_LINES: usize = 100;
 
 /// Unified event type that carries all backend activity through a single ordered channel.
 /// The worker sends `LogLine` events; the orchestrator owns `BackendStarted`/`BackendFinished`
@@ -151,7 +157,8 @@ impl PrivilegedShell {
             .map_err(|e| format!("Failed to flush command: {e}"))?;
 
         let result = tokio::time::timeout(COMMAND_TIMEOUT, async {
-            let mut full_output = String::new();
+            let mut tail: VecDeque<String> = VecDeque::with_capacity(OUTPUT_TAIL_LINES + 1);
+            let mut evicted = false;
             loop {
                 let mut line = String::new();
                 let n = self
@@ -166,15 +173,24 @@ impl PrivilegedShell {
                 if let Some(rest) = trimmed.strip_prefix(&rc_prefix) {
                     if let Some(code_str) = rest.strip_suffix(rc_suffix) {
                         let code: i32 = code_str.parse().unwrap_or(-1);
+                        let tail_str = tail.into_iter().collect::<Vec<_>>().join("\n");
+                        let output = if evicted {
+                            format!("...\n{tail_str}")
+                        } else {
+                            tail_str
+                        };
                         if code == 0 {
-                            return Ok(full_output);
+                            return Ok(output);
                         }
                         return Err(format!("Command exited with code {code}"));
                     }
                 }
                 let content = line.trim_end_matches('\n').to_string();
-                full_output.push_str(&content);
-                full_output.push('\n');
+                if tail.len() >= OUTPUT_TAIL_LINES {
+                    tail.pop_front();
+                    evicted = true;
+                }
+                tail.push_back(content.clone());
                 let _ = tx.send(BackendEvent::LogLine(kind, content)).await;
             }
         })
@@ -268,35 +284,53 @@ impl CommandRunner {
         let tx_stdout = self.tx.clone();
         let kind_stdout = self.kind;
         let stdout_task = async move {
-            let mut out = String::new();
+            let mut tail: VecDeque<String> = VecDeque::with_capacity(OUTPUT_TAIL_LINES + 1);
+            let mut evicted = false;
             if let Some(pipe) = stdout {
                 let mut reader = BufReader::new(pipe).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
-                    out.push_str(&line);
-                    out.push('\n');
+                    if tail.len() >= OUTPUT_TAIL_LINES {
+                        tail.pop_front();
+                        evicted = true;
+                    }
+                    tail.push_back(line.clone());
                     let _ = tx_stdout
                         .send(BackendEvent::LogLine(kind_stdout, line))
                         .await;
                 }
             }
-            out
+            let tail_str = tail.into_iter().collect::<Vec<_>>().join("\n");
+            if evicted {
+                format!("...\n{tail_str}")
+            } else {
+                tail_str
+            }
         };
 
         let tx_stderr = self.tx.clone();
         let kind_stderr = self.kind;
         let stderr_task = async move {
-            let mut out = String::new();
+            let mut tail: VecDeque<String> = VecDeque::with_capacity(OUTPUT_TAIL_LINES + 1);
+            let mut evicted = false;
             if let Some(pipe) = stderr {
                 let mut reader = BufReader::new(pipe).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
-                    out.push_str(&line);
-                    out.push('\n');
+                    if tail.len() >= OUTPUT_TAIL_LINES {
+                        tail.pop_front();
+                        evicted = true;
+                    }
+                    tail.push_back(line.clone());
                     let _ = tx_stderr
                         .send(BackendEvent::LogLine(kind_stderr, line))
                         .await;
                 }
             }
-            out
+            let tail_str = tail.into_iter().collect::<Vec<_>>().join("\n");
+            if evicted {
+                format!("...\n{tail_str}")
+            } else {
+                tail_str
+            }
         };
 
         let (stdout_output, stderr_output) = tokio::join!(stdout_task, stderr_task);

@@ -67,12 +67,12 @@
 - [x] **[LOW]** Use `glib::clone!` macro to reduce verbose `Rc::clone()` chains in UI code
 
 ### 5. Performance
-- [ ] **[MED]** Create a single shared Tokio runtime in `main` instead of one fresh runtime per background spawn (`src/ui/mod.rs`)
+- [x] **[MED]** Create a single shared Tokio runtime in `main` instead of one fresh runtime per background spawn (`src/ui/mod.rs`)
 - [x] **[MED]** Cap `LogPanel` buffer at ~5000 lines with FIFO eviction (`src/ui/log_panel.rs`)
 - [x] **[LOW]** Debounce `scroll_mark_onscreen` to ~50–100 ms instead of per-line (`src/ui/log_panel.rs`)
 - [x] **[LOW]** Drop fake progress bar — replaced with `gtk::Spinner` (`src/ui/update_row.rs`)
 - [x] **[LOW]** Replace `curl` shell-outs in `upgrade.rs` with `ureq` (removes runtime dep, gives proper timeouts)
-- [ ] **[LOW]** Use `rt-multi-thread` Tokio feature + a shared runtime instead of per-thread `current_thread` runtimes
+- [x] **[LOW]** Use `rt-multi-thread` Tokio feature + a shared runtime instead of per-thread `current_thread` runtimes
 
 ### 6. Build / Packaging / CI
 - ~~**[CRIT]** Create missing `io.github.up.json` Flatpak manifest~~ — N/A: Flatpak distribution retired; Nix flake is the sole release target
