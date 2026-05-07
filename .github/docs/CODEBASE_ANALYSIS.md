@@ -6,10 +6,9 @@
 
 ## Executive Summary
 
-- **Doc/reality drift around Flatpak packaging is severe.** `docs/FLATPAK_CI_SUMMARY.md` and `README.md` reference `io.github.up.json`, `scripts/build-flatpak.sh`, `scripts/verify-flatpak.sh`, `.github/docs/FLATPAK_CI_README.md`, `.github/docs/FLATPAK_CI_IMPLEMENTATION.md`, a Flatpak CI job, and a Flathub-style release pipeline — **none of these files exist**.
-- **Wrong upstream URL embedded in shipped metadata.** `Cargo.toml` and `data/io.github.up.metainfo.xml` point to `github.com/user/up`; the rest of the codebase uses `VictoryTek/Up`.
+- **Flatpak distribution retired.** Up is distributed exclusively via Nix flake. All Flatpak manifest, CI, and packaging scripts (`io.github.up.json`, `build-flatpak.sh`, `flatpak-ci.yml`) are out of scope. `cargo-sources.json` at the repo root is an orphan and should be deleted.
+- **Wrong upstream URL — FIXED.** `Cargo.toml` and `data/io.github.up.metainfo.xml` now correctly reference `VictoryTek/Up`.
 - **Persistent privileged `pkexec sh` shell** in `src/runner.rs` uses a stdout sentinel (`___UP_RC_<n>___`) that any spawned subprocess can spoof, causing Up to misreport exit status. No per-command timeout, no cancellation, no SIGINT forwarding.
-- **NixOS detection breaks inside the Flatpak sandbox.** `src/backends/nix.rs` probes `/run/current-system`, `/etc/os-release`, `/etc/nixos`, and `which("determinate-nixd")` — none behave correctly inside Flatpak.
 - **Significant code duplication**: `validate_hostname` exists in both `upgrade.rs` and `nix.rs`; availability-check and `pkexec` scaffolding are repeated across every backend with subtle parsing differences.
 - **Hidden panics**: `.expect("distro info must be available …")` in `src/ui/upgrade_page.rs` and `rows.borrow()[idx]` in `src/ui/window.rs` can panic the GTK main loop.
 - **Fake progress UI**: `src/ui/update_row.rs` animates a progress bar 0→0.95 on a timer, unrelated to actual progress.
@@ -44,7 +43,7 @@
 - [x] **[MED]** Add cancellation / disable refresh button while an update is in progress (`src/ui/window.rs`)
 - [ ] **[LOW]** Add `LANG=C` to Zypper `updated_count` parser (counts "done" lines instead of actual packages)
 - [x] **[LOW]** Pipe Fedora `dnf system-upgrade reboot` stdout to `tx` instead of `Stdio::null` (`src/upgrade.rs`)
-- [ ] **[LOW]** Use `flatpak remote-ls --updates` instead of `flatpak update --no-deploy` for list_available (`src/backends/flatpak.rs`)
+- [ ] **[LOW]** Use `flatpak remote-ls --updates` instead of `flatpak update --no-deploy` for list_available (`src/backends/flatpak.rs`) — affects FlatpakBackend (user's system packages)
 - [x] **[LOW]** Use `--columns=application` for stable Flatpak column layout (`src/backends/flatpak.rs`)
 
 ### 3. Security
@@ -76,15 +75,16 @@
 - [ ] **[LOW]** Use `rt-multi-thread` Tokio feature + a shared runtime instead of per-thread `current_thread` runtimes
 
 ### 6. Build / Packaging / CI
-- [ ] **[CRIT]** Create missing `io.github.up.json` Flatpak manifest
-- [ ] **[HIGH]** Create missing `scripts/build-flatpak.sh` and `scripts/verify-flatpak.sh`
-- [ ] **[HIGH]** Create missing `.github/workflows/flatpak-ci.yml` and release-tag workflow
+- ~~**[CRIT]** Create missing `io.github.up.json` Flatpak manifest~~ — N/A: Flatpak distribution retired; Nix flake is the sole release target
+- ~~**[HIGH]** Create missing `scripts/build-flatpak.sh` and `scripts/verify-flatpak.sh`~~ — N/A: Flatpak distribution retired
+- ~~**[HIGH]** Create missing `.github/workflows/flatpak-ci.yml`~~ — N/A: Flatpak distribution retired
+- [ ] **[HIGH]** Create release-tag GitHub Actions workflow with Nix flake artifact upload
 - [ ] **[MED]** Auto-source version from `Cargo.toml` in `meson.build` and `flake.nix` to eliminate hand-sync
 - [ ] **[MED]** Fix `meson.build` out-of-tree build hygiene (`build_always_stale: true`, `target/<profile>` clobber)
 - [ ] **[LOW]** Add `cargo audit` / `cargo deny` and `nix flake check` to `scripts/preflight.sh` and CI
 - [ ] **[LOW]** Add `rust-toolchain.toml` to pin Rust toolchain for reproducible builds
 - [ ] **[LOW]** Add `.editorconfig`
-- [ ] **[LOW]** Resolve orphaned `cargo-sources.json` at repo root (reference it from the Flatpak manifest or delete it)
+- [ ] **[LOW]** Delete orphaned `cargo-sources.json` at repo root (leftover from retired Flatpak build)
 
 ### 7. New Features (by priority)
 
@@ -114,7 +114,7 @@
 - [ ] **Backend plugin/discovery system** — YAML descriptors under `/usr/lib/up/backends.d/` for community-added backends (apk, xbps, eopkg, etc.)
 
 #### Out of Scope
-- ~~System tray / always-running daemon~~ — conflicts with Flatpak distribution model and stated scope
+- ~~System tray / always-running daemon~~ — conflicts with stated scope and daemon-free design
 
 ---
 
@@ -143,14 +143,14 @@
 |---|---|---|---|---|
 | 3.1 | `src/runner.rs` `PrivilegedShell::run_command` | High | The `___UP_RC_<n>___` exit-code sentinel is parsed from the command's own stdout stream (stderr merged via `2>&1`). Any subprocess that prints a matching line spoofs exit codes. | Use a second FD for the sentinel, or read `wait()` exit status directly. |
 | 3.2 | `src/runner.rs` | High | No per-command timeout, no cancel, no SIGINT forwarding. Stuck `apt` (dpkg lock) hangs the whole UI. | Add `tokio::time::timeout`; surface pkexec exit 126/127 as auth-cancelled vs auth-failed. |
-| 3.3 | `src/backends/nix.rs` `is_nixos`, `is_determinate_nix` | High | All probes refer to sandbox paths/PATH when running in Flatpak — `is_nixos()` returns `false` on a NixOS host running Up via Flatpak. | Detect via `flatpak-spawn --host test -e /run/current-system` when `is_running_in_flatpak()`. |
+| 3.3 | `src/backends/nix.rs` `is_nixos`, `is_determinate_nix` | ~~High~~ N/A | Flatpak distribution retired; Up will not run inside a Flatpak sandbox. Fix was applied; now moot. | — |
 | 3.4 | `src/ui/upgrade_page.rs` | High | `.expect("distro info must be available before check button is sensitive")` panics the GTK main loop. | Replace with `if let Some(distro) = … else { return; }`. |
 | 3.5 | `src/ui/window.rs` | High | `rows.borrow()[idx]` — index captured from outer loop; panics if backend list ever mutates between detect and future execution. | Look up by `BackendKind` or pass the `UpdateRow` clone directly into the closure. |
 | 3.6 | `src/upgrade.rs` Ubuntu tail thread | Medium | `drop(tail_handle)` does not terminate threads. After every Ubuntu upgrade attempt a thread leaks, tailing `main.log` forever. | Use `Arc<AtomicBool>` cancellation flag. |
-| 3.7 | `src/backends/flatpak.rs` self-update | Medium | URL is concatenated into `bash -c` via `format!`. The prefix-allowlist is the only barrier to root-side shell injection inside `flatpak-spawn --host`. | Pass URL as a positional arg to a bash script so `$url` is never interpolated into the script body. |
-| 3.8 | `src/backends/flatpak.rs` `fetch_github_latest_release` | Medium | Inlines a multi-line Python script via `format!`. Any stray apostrophe in `CARGO_PKG_VERSION` or `GITHUB_REPO` would break shell quoting. | Use `python3 -` and feed the script via stdin; or pass `repo`/`ver` as `--args`. |
+| 3.7 | `src/backends/flatpak.rs` self-update | ~~Medium~~ N/A | Flatpak self-update mechanism retired with Flatpak distribution. | — |
+| 3.8 | `src/backends/flatpak.rs` `fetch_github_latest_release` | ~~Medium~~ N/A | Flatpak self-update mechanism retired with Flatpak distribution. | — |
 | 3.9 | `src/runner.rs` `Self::new` | Medium | Readiness probe has no timeout. If `pkexec` blocks indefinitely (no polkit agent), UI hangs forever with no feedback. | Wrap `read_line` in `tokio::time::timeout`; surface "no PolicyKit agent" diagnostically. |
-| 3.10 | `src/reboot.rs` | Medium | `systemctl reboot` is fire-and-forget; failure is logged to stderr but not surfaced to the user. Silently does nothing inside Flatpak without the systemd D-Bus talk permission. | Capture exit status; show a toast on failure. |
+| 3.10 | `src/reboot.rs` | Medium | `systemctl reboot` is fire-and-forget; failure is logged to stderr but not surfaced to the user. | Capture exit status; show a toast on failure. |
 | 3.11 | `src/ui/log_panel.rs` | Medium | `TextBuffer` grows unbounded. A multi-GB Fedora system-upgrade can produce hundreds of thousands of lines → memory bloat and UI sluggishness. | Cap to N lines (delete from head when over budget). |
 | 3.12 | `src/upgrade.rs` `check_packages_up_to_date` | Medium | Parses `zypper list-updates` and `apt` output without forcing `LANG=C`; non-English locales emit different prefixes → miscounting. | Lock `LANG=C` for all parsed subprocess output. |
 | 3.13 | `src/backends/flatpak.rs` `list_available` | Low | Detection of update rows assumes Flatpak's column layout; column numbering changes between Flatpak versions. Failures are silent. | Use `--columns=application` for stable output. |
@@ -160,7 +160,7 @@
 | 3.17 | `src/runner.rs` | Low | First `program == "pkexec"` check uses string equality; callers using a wrapped path (`/usr/bin/pkexec`) bypass the elevated shell and trigger a second polkit prompt. | Resolve via `which` once at startup. |
 | 3.18 | `src/ui/window.rs` refresh button | Low | Refresh can be clicked while Update All is in progress — runs `apt list --upgradable` against an in-progress dpkg lock, which can hang. | Disable refresh while updating. |
 | 3.19 | `src/upgrade.rs` `upgrade_nixos` Flake path | Low | Uses detected hostname rather than `resolve_nixos_flake_attr()` used for normal updates; inconsistency may target a non-existent attr on VexOS. | Use `resolve_nixos_flake_attr()` here too. |
-| 3.20 | `/tmp/up-self-update.flatpak` | Low | Predictable path in shared `/tmp`. Symlink race on multi-user systems. | Use `mktemp` under `$XDG_RUNTIME_DIR`. |
+| 3.20 | `/tmp/up-self-update.flatpak` | ~~Low~~ N/A | Flatpak self-update retired with Flatpak distribution. | — |
 
 ---
 
@@ -189,13 +189,13 @@
 |---|---|---|---|---|---|
 | 5.1 | `src/runner.rs` `PrivilegedShell` | High | A03 Injection | Any `args` value containing a literal newline followed by a crafted command would be executed as root. Currently safe (compile-time static strings only), but one refactor away from disaster. | Reject `\n`/`\0` in args; pass via `printf '%s\0'` and `xargs -0`; or skip the persistent shell for arbitrary args. |
 | 5.2 | `src/runner.rs` `shell_quote` | Medium | A03 | "No quoting needed" fast path. Always single-quoting is safer. | Always single-quote; complexity savings aren't worth the audit burden. |
-| 5.3 | `src/backends/flatpak.rs` self-update | Medium | A08 Software & Data Integrity | URL allow-list is hostname-prefix only. No checksum or signature verification of the downloaded `.flatpak` bundle. | Require a signed checksum file (minisign/GPG) or rely solely on Flathub OSTree signing. |
-| 5.4 | `src/backends/flatpak.rs` `fetch_github_latest_release` | Medium | A03 | Inlines `flatpak-spawn --host bash -c <python script>`. Making the version dynamic would open an injection. | Pass user-agent via a separate quoted argv element. |
+| 5.3 | `src/backends/flatpak.rs` self-update | ~~Medium~~ N/A | A08 | Flatpak self-update retired with Flatpak distribution. | — |
+| 5.4 | `src/backends/flatpak.rs` `fetch_github_latest_release` | ~~Medium~~ N/A | A03 | Flatpak self-update retired with Flatpak distribution. | — |
 | 5.5 | `src/upgrade.rs` `parse_os_release` | Low | A04 | `trim_matches('"')` instead of POSIX shell-style unescaping. Root-owned file, so low risk. | Acceptable; document the assumption. |
 | 5.6 | `src/upgrade.rs` upgrade shell scripts | Medium | A03 | Several `pkexec sh -c "<format!>"` constructions interpolate detected values. | Prefer `pkexec <prog> <argv>` whenever possible; reserve `sh -c` for genuinely needed shell features. |
 | 5.7 | Polkit policy | Medium | A05 Security Misconfiguration | Project does not ship a `.policy` file. Every prompt asks to authorize `/bin/sh` with no scope. | Ship `io.github.up.policy` with explicit, scoped actions. |
 | 5.8 | `src/ui/log_panel.rs` | Low | A03 | Subprocess output appended verbatim to GTK `TextBuffer`. Not interpreted as markup — safe. ANSI sequences render as garbage. | Optional: strip ANSI for readability. |
-| 5.9 | `/tmp/up-self-update.flatpak` | Low | A01 Broken Access Control | Predictable path in shared `/tmp`. Symlink race on multi-user systems. | Use `mktemp` under `$XDG_RUNTIME_DIR`. |
+| 5.9 | `/tmp/up-self-update.flatpak` | ~~Low~~ N/A | A01 | Flatpak self-update retired with Flatpak distribution. | — |
 
 ---
 
@@ -218,9 +218,9 @@
 
 | # | Location | Severity | Finding |
 |---|---|---|---|
-| 7.1 | Project root | **Critical** | No `io.github.up.json` Flatpak manifest exists, despite README, docs, and orchestrator instructions referring to one. |
-| 7.2 | `.github/workflows/` | High | Only `ci.yml` and `gitlab-mirror.yml` exist. No `flatpak-ci.yml`, no release-tag workflow, no artifact upload. |
-| 7.3 | `scripts/` | High | `build-flatpak.sh` and `verify-flatpak.sh` referenced in README/docs do not exist. |
+| 7.1 | Project root | ~~Critical~~ N/A | Flatpak distribution retired. `io.github.up.json` will not be created. |
+| 7.2 | `.github/workflows/` | High | No release-tag workflow or artifact upload. Flatpak CI is N/A (distribution retired). |
+| 7.3 | `scripts/` | ~~High~~ N/A | `build-flatpak.sh` and `verify-flatpak.sh` will not be created (Flatpak distribution retired). |
 | 7.4 | `Cargo.toml` | High | `repository = "https://github.com/user/up"` is a placeholder. |
 | 7.5 | `data/io.github.up.metainfo.xml` | High | `<url type="homepage">` and `bugtracker` point to `github.com/user/up`. |
 | 7.6 | `meson.build` | Medium | `cargo_build` shells out to `cargo` and copies from `target/<profile>` from `srcdir`. Bypasses out-of-tree build hygiene; `build_always_stale: true` defeats incremental builds. |
@@ -228,7 +228,7 @@
 | 7.8 | `scripts/preflight.sh` | Medium | Does not validate `flake.nix` (`nix flake check`), does not run `cargo audit`/`cargo deny`. |
 | 7.9 | `.github/workflows/ci.yml` | Low | Installs `libunwind-dev` and `gettext` for no observable use. |
 | 7.10 | `.github/workflows/ci.yml` | Low | Builds with `--release` then runs tests with `--release` — two full compiles. |
-| 7.11 | `cargo-sources.json` | Info | Present at root; presumably for `flatpak-builder`. Currently orphaned (no manifest references it). |
+| 7.11 | `cargo-sources.json` | Low | Present at root; leftover from retired Flatpak build. Should be deleted. |
 | 7.12 | No `rust-toolchain.toml` | Low | CI installs latest stable per build; project does not pin Rust toolchain. |
 | 7.13 | No `cargo-deny.toml` | Low | Supply-chain checks absent. |
 | 7.14 | `data/io.github.up.desktop` | Low | Missing conventional `Version=1.5` Desktop Entry spec key. |
@@ -237,15 +237,15 @@
 
 ## Recommended Backlog (Prioritized)
 
-1. Fix placeholder URLs — `Cargo.toml` and `data/io.github.up.metainfo.xml`
-2. Reconcile Flatpak docs with reality (ship manifest/scripts/workflow, or rewrite docs)
-3. Harden `PrivilegedShell` stdout-sentinel; reject `\n` in args at minimum
-4. Ship `io.github.up.policy` with scoped polkit actions
-5. Introduce `CommandExecutor` trait + `MockExecutor` + parser unit tests per backend
-6. Replace `String` errors with `thiserror` enums
-7. Cap `LogPanel` buffer; debounce auto-scroll; drop fake progress
-8. Sandbox-aware NixOS / Determinate detection
-9. Add timeouts + cancellation to all command execution
+1. ~~Fix placeholder URLs — `Cargo.toml` and `data/io.github.up.metainfo.xml`~~ ✓
+2. ~~Reconcile Flatpak docs~~ — N/A: Flatpak distribution retired; Nix flake is the sole release target ✓
+3. ~~Harden `PrivilegedShell` stdout-sentinel; reject `\n` in args at minimum~~ ✓
+4. ~~Ship `io.github.up.policy` with scoped polkit actions~~ ✓
+5. ~~Introduce `CommandExecutor` trait + `MockExecutor` + parser unit tests per backend~~ ✓
+6. ~~Replace `String` errors with `thiserror` enums~~ ✓
+7. **Cap `LogPanel` buffer; debounce auto-scroll; drop fake progress** ← NEXT
+8. ~~Sandbox-aware NixOS / Determinate detection~~ ✓
+9. ~~Add timeouts + cancellation to all command execution~~ ✓
 10. Replace `curl` shell-outs with `ureq`
 11. Auto-source version in `meson.build` and `flake.nix`
 12. Ship per-backend skip checkboxes + Preview button

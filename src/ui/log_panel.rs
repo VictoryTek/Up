@@ -1,10 +1,20 @@
+use gtk::glib;
 use gtk::prelude::*;
+use std::cell::Cell;
+use std::rc::Rc;
+use std::time::Duration;
+
+/// Maximum number of lines retained in the log panel buffer.
+const LINE_CAP: i32 = 5_000;
+/// Number of lines to evict from the top when the cap is exceeded.
+const EVICT_BATCH: i32 = 100;
 
 #[derive(Clone)]
 pub struct LogPanel {
     pub expander: gtk::Expander,
     text_view: gtk::TextView,
     scroll_mark: gtk::TextMark,
+    scroll_pending: Rc<Cell<bool>>,
 }
 
 impl LogPanel {
@@ -41,6 +51,7 @@ impl LogPanel {
             expander,
             text_view,
             scroll_mark,
+            scroll_pending: Rc::new(Cell::new(false)),
         }
     }
 
@@ -51,14 +62,43 @@ impl LogPanel {
         buffer.insert(&mut end, &clean);
         buffer.insert(&mut end, "\n");
 
-        // Auto-scroll to bottom
-        buffer.move_mark(&self.scroll_mark, &buffer.end_iter());
-        self.text_view.scroll_mark_onscreen(&self.scroll_mark);
+        // FIFO eviction: keep buffer at most LINE_CAP lines.
+        if buffer.line_count() > LINE_CAP {
+            let mut start = buffer.start_iter();
+            if let Some(mut evict_end) = buffer.iter_at_line(EVICT_BATCH) {
+                buffer.delete(&mut start, &mut evict_end);
+            }
+        }
+
+        // Debounced scroll to bottom.
+        self.schedule_scroll();
     }
 
     pub fn clear(&self) {
         let buffer = self.text_view.buffer();
         buffer.set_text("");
+    }
+
+    /// Schedules a single scroll-to-bottom, coalescing rapid calls into one.
+    fn schedule_scroll(&self) {
+        if self.scroll_pending.get() {
+            return;
+        }
+        self.scroll_pending.set(true);
+
+        let pending = self.scroll_pending.clone();
+        let weak_view = self.text_view.downgrade();
+
+        glib::timeout_add_local_once(Duration::from_millis(80), move || {
+            pending.set(false);
+            if let Some(view) = weak_view.upgrade() {
+                let buffer = view.buffer();
+                if let Some(mark) = buffer.mark("scroll-end") {
+                    buffer.move_mark(&mark, &buffer.end_iter());
+                    view.scroll_mark_onscreen(&mark);
+                }
+            }
+        });
     }
 }
 
