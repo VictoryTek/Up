@@ -133,32 +133,35 @@ impl UpgradePage {
             .build();
         content_box.append(&backup_check);
 
+        // Shared closure to recompute upgrade button sensitivity from the three state variables.
+        let recompute_state: Rc<dyn Fn()> = {
+            let upgrade_btn = upgrade_button.clone();
+            let upgrade_available = upgrade_available.clone();
+            let all_checks_passed = all_checks_passed.clone();
+            let backup_check = backup_check.clone();
+            Rc::new(move || {
+                let enabled = backup_check.is_active()
+                    && *all_checks_passed.borrow()
+                    && *upgrade_available.borrow();
+                upgrade_btn.set_sensitive(enabled);
+            })
+        };
+
         // Wire the backup checkbox once (unconditional) so it doesn't accumulate signal handlers.
         {
-            let upgrade_btn_toggled = upgrade_button.clone();
-            let all_checks_passed_toggled = all_checks_passed.clone();
-            let upgrade_available_toggled = upgrade_available.clone();
-            backup_check.connect_toggled(move |check| {
-                if check.is_active()
-                    && *all_checks_passed_toggled.borrow()
-                    && *upgrade_available_toggled.borrow()
-                {
-                    upgrade_btn_toggled.set_sensitive(true);
-                } else {
-                    upgrade_btn_toggled.set_sensitive(false);
-                }
+            let recompute_for_toggle = recompute_state.clone();
+            backup_check.connect_toggled(move |_| {
+                recompute_for_toggle();
             });
         }
 
         // Wire up check button
         let check_rows_clone = check_rows.clone();
         let check_icons_clone = check_icons.clone();
-        let upgrade_btn_clone = upgrade_button.clone();
         let log_clone = log_panel.clone();
-        let backup_clone = backup_check.clone();
         let distro_state_for_check = distro_info_state.clone();
-        let upgrade_available_clone = upgrade_available.clone();
         let all_checks_passed_clone = all_checks_passed.clone();
+        let recompute_state_for_check = recompute_state.clone();
         check_button.connect_clicked(move |button| {
             let Some(distro) = distro_state_for_check.borrow().clone() else {
                 return;
@@ -168,12 +171,10 @@ impl UpgradePage {
 
             let check_rows_ref = check_rows_clone.clone();
             let check_icons_ref = check_icons_clone.clone();
-            let upgrade_ref = upgrade_btn_clone.clone();
             let log_ref = log_clone.clone();
             let button_ref = button.clone();
-            let backup_ref = backup_clone.clone();
-            let upgrade_available_ref = upgrade_available_clone.clone();
             let all_checks_passed_ref = all_checks_passed_clone.clone();
+            let recompute_ref = recompute_state_for_check.clone();
 
             glib::spawn_future_local(async move {
                 let (check_tx, check_rx) = async_channel::unbounded::<CheckMsg>();
@@ -221,12 +222,7 @@ impl UpgradePage {
                 }
 
                 *all_checks_passed_ref.borrow_mut() = all_passed;
-                // Re-evaluate button sensitivity now that checks have completed.
-                if all_passed && *upgrade_available_ref.borrow() && backup_ref.is_active() {
-                    upgrade_ref.set_sensitive(true);
-                } else if !all_passed {
-                    upgrade_ref.set_sensitive(false);
-                }
+                recompute_ref();
 
                 button_ref.set_sensitive(true);
             });
@@ -360,8 +356,8 @@ impl UpgradePage {
             let info_group_fill = info_group.clone();
             let check_rows_fill = check_rows.clone();
             let upgrade_available_fill = upgrade_available.clone();
-            let upgrade_btn_fill = upgrade_button.clone();
             let check_btn_fill = check_button.clone();
+            let recompute_state_for_init = recompute_state.clone();
 
             glib::spawn_future_local(async move {
                 if let Ok(init) = init_rx.recv().await {
@@ -411,7 +407,7 @@ impl UpgradePage {
                         let upgrade_row_clone = upgrade_available_row_fill.clone();
                         let distro_check = info.clone();
                         let upgrade_available_clone = upgrade_available_fill.clone();
-                        let upgrade_btn_for_avail = upgrade_btn_fill.clone();
+                        let recompute_for_avail = recompute_state_for_init.clone();
                         glib::spawn_future_local(async move {
                             let (tx, rx) = async_channel::unbounded::<String>();
                             std::thread::spawn(move || {
@@ -423,9 +419,7 @@ impl UpgradePage {
                                 let is_available = result_msg.starts_with("Yes");
                                 *upgrade_available_clone.borrow_mut() = is_available;
                                 upgrade_row_clone.set_subtitle(&result_msg);
-                                if !is_available {
-                                    upgrade_btn_for_avail.set_sensitive(false);
-                                }
+                                recompute_for_avail();
                             } else {
                                 upgrade_row_clone
                                     .set_subtitle("Could not determine upgrade availability");

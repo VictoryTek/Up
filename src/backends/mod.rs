@@ -11,6 +11,59 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+/// Structured error type for backend operations.
+#[derive(Debug, thiserror::Error, Clone)]
+pub enum BackendError {
+    /// pkexec exited with code 126 (auth cancelled) or 127 (not authorised).
+    #[error("Authentication cancelled or denied")]
+    AuthCancelled,
+    /// The command could not be spawned (binary not found, permission error).
+    #[error("Failed to spawn process: {0}")]
+    Spawn(String),
+    /// The command was spawned but exited with a non-zero status code.
+    #[error("Command failed (exit {code}): {message}")]
+    Exit { code: i32, message: String },
+    /// Output from the command could not be parsed.
+    #[error("Failed to parse command output: {0}")]
+    #[allow(dead_code)]
+    Parse(String),
+    /// A network operation failed.
+    #[error("Network error: {0}")]
+    #[allow(dead_code)]
+    Network(String),
+}
+
+impl BackendError {
+    /// Convert a raw error string into the most specific BackendError variant.
+    /// Used as a bridge during migration from String-based errors.
+    pub fn from_string(s: String) -> Self {
+        let lower = s.to_ascii_lowercase();
+        if lower.contains("authentication was cancelled")
+            || lower.contains("not authorised")
+            || s.contains("exit code 126")
+            || s.contains("exit code 127")
+        {
+            return BackendError::AuthCancelled;
+        }
+        if lower.contains("failed to start") || lower.contains("no such file or directory") {
+            return BackendError::Spawn(s);
+        }
+        if lower.contains("exited with code") {
+            let code = s
+                .split("code ")
+                .nth(1)
+                .and_then(|rest| rest.split_whitespace().next())
+                .and_then(|n| n.parse::<i32>().ok())
+                .unwrap_or(-1);
+            return BackendError::Exit { code, message: s };
+        }
+        BackendError::Exit {
+            code: -1,
+            message: s,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BackendKind {
     Apt,
@@ -36,7 +89,7 @@ impl fmt::Display for BackendKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum UpdateResult {
     Success {
         updated_count: usize,
@@ -47,7 +100,8 @@ pub enum UpdateResult {
     SuccessWithSelfUpdate {
         updated_count: usize,
     },
-    Error(String),
+    Error(BackendError),
+    #[allow(dead_code)]
     Skipped(String),
 }
 
@@ -71,9 +125,9 @@ pub trait Backend: Send + Sync {
 
     /// Count packages available for update (read-only, no privilege required).
     /// Returns Ok(0) if up to date, Ok(N) if N updates available, Err(_) on failure.
-    /// Default implementation returns Ok(0) for backends that do not support checking.
+    /// Default implementation delegates to list_available to avoid duplicating command logic.
     fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
-        Box::pin(async { Ok(0) })
+        Box::pin(async move { self.list_available().await.map(|v| v.len()) })
     }
 
     /// Return a human-readable list of package names pending update.

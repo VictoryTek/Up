@@ -56,15 +56,15 @@
 - [x] **[LOW]** Strip ANSI escape sequences in `LogPanel` output for readability (`src/ui/log_panel.rs`)
 
 ### 4. Architecture & Code Quality
-- [ ] **[HIGH]** Introduce `CommandExecutor` trait with `MockExecutor` for testing — unblocks all downstream test work
-- [ ] **[HIGH]** Replace `Result<_, String>` errors with `thiserror`-derived enums per backend (`BackendError::{AuthCancelled, Spawn, Exit, Parse, Network}`)
-- [ ] **[MED]** Extract `UpdateOrchestrator` from `src/ui/window.rs` into a non-UI module (`src/orchestrator.rs`)
-- [ ] **[MED]** Make `Backend::count_available` a trait default that calls `list_available().map(|v| v.len())`; backends override only when cheap-counting is faster
-- [ ] **[MED]** De-duplicate `validate_hostname` / `validate_flake_attr` into a single `nixos::validate_attr` helper
-- [ ] **[MED]** Consolidate backend parsers into `pub(crate) fn parse_*(&str) -> Vec<String>` and unit-test against captured fixtures
-- [ ] **[MED]** Centralise upgrade-page state recomputation into a single `recompute_state()` closure (`src/ui/upgrade_page.rs`)
-- [ ] **[LOW]** Use single source of truth for backend ordering (remove sort in `window.rs`, trust detection order)
-- [ ] **[LOW]** Split `src/upgrade.rs` into `upgrade/check.rs`, `upgrade/version.rs`, `upgrade/execute.rs`
+- [x] **[HIGH]** Introduce `CommandExecutor` trait with `MockExecutor` for testing — unblocks all downstream test work
+- [x] **[HIGH]** Replace `Result<_, String>` errors with `thiserror`-derived enums per backend (`BackendError::{AuthCancelled, Spawn, Exit, Parse, Network}`)
+- [x] **[MED]** Extract `UpdateOrchestrator` from `src/ui/window.rs` into a non-UI module (`src/orchestrator.rs`)
+- [x] **[MED]** Make `Backend::count_available` a trait default that calls `list_available().map(|v| v.len())`; backends override only when cheap-counting is faster
+- [x] **[MED]** De-duplicate `validate_hostname` / `validate_flake_attr` into a single `nixos::validate_attr` helper
+- [x] **[MED]** Consolidate backend parsers into `pub(crate) fn parse_*(&str) -> Vec<String>` and unit-test against captured fixtures
+- [x] **[MED]** Centralise upgrade-page state recomputation into a single `recompute_state()` closure (`src/ui/upgrade_page.rs`)
+- [x] **[LOW]** Use single source of truth for backend ordering (remove sort in `window.rs`, trust detection order)
+- [x] **[LOW]** Split `src/upgrade.rs` into `upgrade/check.rs`, `upgrade/version.rs`, `upgrade/execute.rs`
 - [ ] **[LOW]** Use `glib::clone!` macro to reduce verbose `Rc::clone()` chains in UI code
 
 ### 5. Performance

@@ -68,18 +68,6 @@ impl Backend for AptBackend {
         })
     }
 
-    fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
-        Box::pin(async move {
-            let out = tokio::process::Command::new("apt")
-                .args(["list", "--upgradable"])
-                .output()
-                .await
-                .map_err(|e| e.to_string())?;
-            let text = String::from_utf8_lossy(&out.stdout);
-            Ok(text.lines().filter(|l| l.contains('/')).count())
-        })
-    }
-
     fn list_available(
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
@@ -90,17 +78,22 @@ impl Backend for AptBackend {
                 .await
                 .map_err(|e| e.to_string())?;
             let text = String::from_utf8_lossy(&out.stdout);
-            // Lines like: "htop/noble,now 3.3.0 amd64 [upgradable from: 3.2.2]"
-            Ok(text
-                .lines()
-                .filter(|l| l.contains('/'))
-                .filter_map(|l| l.split('/').next().map(|s| s.to_string()))
-                .collect())
+            Ok(parse_apt_list_upgradable(&text))
         })
     }
 }
 
-fn count_apt_upgraded(output: &str) -> usize {
+pub(crate) fn parse_apt_list_upgradable(output: &str) -> Vec<String> {
+    // Lines like: "htop/noble,now 3.3.0 amd64 [upgradable from: 3.2.2]"
+    // Skip the "Listing..." header and any line without a '/'.
+    output
+        .lines()
+        .filter(|l| l.contains('/'))
+        .filter_map(|l| l.split('/').next().map(|s| s.to_string()))
+        .collect()
+}
+
+pub(crate) fn count_apt_upgraded(output: &str) -> usize {
     // apt upgrade output: "N upgraded, ..."
     for line in output.lines() {
         if line.contains("upgraded") {
@@ -151,28 +144,6 @@ impl Backend for DnfBackend {
         })
     }
 
-    fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
-        Box::pin(async move {
-            let out = tokio::process::Command::new("dnf")
-                .args(["check-update"])
-                .output()
-                .await
-                .map_err(|e| e.to_string())?;
-            match out.status.code() {
-                Some(0) => return Ok(0), // No updates available
-                Some(1) => return Err("dnf check-update failed".to_string()), // DNF error
-                Some(100) => {}          // Updates available — continue to count
-                _ => return Ok(0),       // Unknown exit code, safe default
-            }
-            let text = String::from_utf8_lossy(&out.stdout);
-            let count = text
-                .lines()
-                .filter(|l| !l.is_empty() && !l.starts_with("Last") && !l.starts_with("Obsoleting"))
-                .count();
-            Ok(count)
-        })
-    }
-
     fn list_available(
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
@@ -187,21 +158,26 @@ impl Backend for DnfBackend {
                 return Err("dnf check-update failed".to_string());
             }
             let text = String::from_utf8_lossy(&out.stdout);
-            Ok(text
-                .lines()
-                .filter(|l| {
-                    !l.is_empty()
-                        && !l.starts_with("Last")
-                        && !l.starts_with("Obsoleting")
-                        && !l.starts_with("Security")
-                })
-                .filter_map(|l| l.split_whitespace().next().map(|s| s.to_string()))
-                .collect())
+            Ok(parse_dnf_list_upgrades(&text))
         })
     }
 }
 
-fn count_dnf_upgraded(output: &str) -> usize {
+pub(crate) fn parse_dnf_list_upgrades(output: &str) -> Vec<String> {
+    // Lines from `dnf check-update`: skip metadata headers, extract package name (first field).
+    output
+        .lines()
+        .filter(|l| {
+            !l.is_empty()
+                && !l.starts_with("Last")
+                && !l.starts_with("Obsoleting")
+                && !l.starts_with("Security")
+        })
+        .filter_map(|l| l.split_whitespace().next().map(|s| s.to_string()))
+        .collect()
+}
+
+pub(crate) fn count_dnf_upgraded(output: &str) -> usize {
     for line in output.lines() {
         let trimmed = line.trim();
         // DNF4 Transaction Summary: "  Upgrade  15 Packages"
@@ -247,28 +223,13 @@ impl Backend for PacmanBackend {
                 .await
             {
                 Ok(output) => {
-                    let count = output
-                        .lines()
-                        .filter(|l| l.starts_with("upgrading ") || l.starts_with("installing "))
-                        .count();
+                    let count = count_pacman_upgraded(&output);
                     UpdateResult::Success {
                         updated_count: count,
                     }
                 }
                 Err(e) => UpdateResult::Error(e),
             }
-        })
-    }
-
-    fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
-        Box::pin(async move {
-            let out = tokio::process::Command::new("pacman")
-                .args(["-Qu"])
-                .output()
-                .await
-                .map_err(|e| e.to_string())?;
-            let text = String::from_utf8_lossy(&out.stdout);
-            Ok(text.lines().filter(|l| !l.is_empty()).count())
         })
     }
 
@@ -282,12 +243,7 @@ impl Backend for PacmanBackend {
                 .await
                 .map_err(|e| e.to_string())?;
             let text = String::from_utf8_lossy(&out.stdout);
-            // Each line: "pkgname old-ver -> new-ver" — extract package name
-            Ok(text
-                .lines()
-                .filter(|l| !l.is_empty())
-                .filter_map(|l| l.split_whitespace().next().map(|s| s.to_string()))
-                .collect())
+            Ok(parse_checkupdates(&text))
         })
     }
 }
@@ -326,25 +282,13 @@ impl Backend for ZypperBackend {
                 .await
             {
                 Ok(output) => {
-                    let count = output.lines().filter(|l| l.contains("done")).count();
+                    let count = count_zypper_upgraded(&output);
                     UpdateResult::Success {
                         updated_count: count,
                     }
                 }
                 Err(e) => UpdateResult::Error(e),
             }
-        })
-    }
-
-    fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
-        Box::pin(async move {
-            let out = tokio::process::Command::new("zypper")
-                .args(["list-updates"])
-                .output()
-                .await
-                .map_err(|e| e.to_string())?;
-            let text = String::from_utf8_lossy(&out.stdout);
-            Ok(text.lines().filter(|l| l.starts_with("v ")).count())
         })
     }
 
@@ -358,13 +302,159 @@ impl Backend for ZypperBackend {
                 .await
                 .map_err(|e| e.to_string())?;
             let text = String::from_utf8_lossy(&out.stdout);
-            // Table rows starting with "v " — extract 3rd column (package name)
-            Ok(text
-                .lines()
-                .filter(|l| l.starts_with("v "))
-                .filter_map(|l| l.split('|').nth(2).map(|s| s.trim().to_string()))
-                .filter(|s| !s.is_empty())
-                .collect())
+            Ok(parse_zypper_list_updates(&text))
         })
+    }
+}
+
+pub(crate) fn parse_checkupdates(output: &str) -> Vec<String> {
+    // Lines from `pacman -Qu`: "pkgname old-ver -> new-ver" — extract package name.
+    output
+        .lines()
+        .filter(|l| !l.is_empty())
+        .filter_map(|l| l.split_whitespace().next().map(|s| s.to_string()))
+        .collect()
+}
+
+pub(crate) fn count_pacman_upgraded(output: &str) -> usize {
+    output
+        .lines()
+        .filter(|l| l.starts_with("upgrading ") || l.starts_with("installing "))
+        .count()
+}
+
+pub(crate) fn parse_zypper_list_updates(output: &str) -> Vec<String> {
+    // Table rows from `zypper list-updates` starting with "v " —
+    // extract 3rd pipe-delimited column (package name).
+    output
+        .lines()
+        .filter(|l| l.starts_with("v "))
+        .filter_map(|l| l.split('|').nth(2).map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+pub(crate) fn count_zypper_upgraded(output: &str) -> usize {
+    output.lines().filter(|l| l.contains("done")).count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_count_apt_upgraded_zero() {
+        let output = "0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.";
+        assert_eq!(count_apt_upgraded(output), 0);
+    }
+
+    #[test]
+    fn test_count_apt_upgraded_some() {
+        let output = "3 upgraded, 0 newly installed, 0 to remove and 1 not upgraded.";
+        assert_eq!(count_apt_upgraded(output), 3);
+    }
+
+    #[test]
+    fn test_count_apt_upgraded_no_match() {
+        let output = "Reading package lists...\nBuilding dependency tree...";
+        assert_eq!(count_apt_upgraded(output), 0);
+    }
+
+    #[test]
+    fn test_count_dnf_upgraded_dnf4() {
+        let output = "  Upgrade  15 Packages\n\nTransaction Summary";
+        assert_eq!(count_dnf_upgraded(output), 15);
+    }
+
+    #[test]
+    fn test_count_dnf_upgraded_dnf5() {
+        let output = "  Upgrading: 7 packages";
+        assert_eq!(count_dnf_upgraded(output), 7);
+    }
+
+    #[test]
+    fn test_count_dnf_upgraded_none() {
+        let output = "Nothing to do.\nComplete!";
+        assert_eq!(count_dnf_upgraded(output), 0);
+    }
+
+    #[test]
+    fn test_count_pacman_upgraded_some() {
+        let output = "resolving dependencies...\nupgrading htop\nupgrading curl\ninstalling dep\n";
+        assert_eq!(count_pacman_upgraded(output), 3);
+    }
+
+    #[test]
+    fn test_count_pacman_upgraded_none() {
+        let output = "there is nothing to do\n";
+        assert_eq!(count_pacman_upgraded(output), 0);
+    }
+
+    #[test]
+    fn test_count_zypper_upgraded_some() {
+        let output =
+            "Retrieving package htop.rpm (1/2)...done\nRetrieving package curl.rpm (2/2)...done\n";
+        assert_eq!(count_zypper_upgraded(output), 2);
+    }
+
+    #[test]
+    fn test_count_zypper_upgraded_none() {
+        let output = "Nothing to do.\n";
+        assert_eq!(count_zypper_upgraded(output), 0);
+    }
+
+    #[test]
+    fn test_parse_apt_list_upgradable_happy_path() {
+        let output = "Listing... Done\nhtop/noble 3.3.0-1 amd64 [upgradable from: 3.2.2-1]\ncurl/noble 8.5.0-1 amd64 [upgradable from: 8.4.0-1]\n";
+        let result = parse_apt_list_upgradable(output);
+        assert_eq!(result, vec!["htop".to_string(), "curl".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_apt_list_upgradable_only_header() {
+        assert!(parse_apt_list_upgradable("Listing... Done\n").is_empty());
+    }
+
+    #[test]
+    fn test_parse_dnf_list_upgrades_happy_path() {
+        let output = "Last metadata expiration check: 0:01:23 ago.\nhtop.x86_64   3.3.0-2.fc40  updates\ncurl.x86_64   8.5.0-1.fc40  updates\n";
+        let result = parse_dnf_list_upgrades(output);
+        assert_eq!(
+            result,
+            vec!["htop.x86_64".to_string(), "curl.x86_64".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_parse_dnf_list_upgrades_empty() {
+        assert!(
+            parse_dnf_list_upgrades("Last metadata expiration check: 0:01:23 ago.\n").is_empty()
+        );
+    }
+
+    #[test]
+    fn test_parse_checkupdates_happy_path() {
+        let output = "htop 3.2.2-1 -> 3.3.0-1\ncurl 8.4.0-1 -> 8.5.0-1\n";
+        let result = parse_checkupdates(output);
+        assert_eq!(result, vec!["htop".to_string(), "curl".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_checkupdates_empty() {
+        assert!(parse_checkupdates("").is_empty());
+    }
+
+    #[test]
+    fn test_parse_zypper_list_updates_happy_path() {
+        let output = "v | openSUSE-updates | htop | 3.2.2-1.1 | 3.3.0-1.1 | x86_64\nv | openSUSE-updates | curl | 8.4.0-1.1 | 8.5.0-1.1 | x86_64\n";
+        let result = parse_zypper_list_updates(output);
+        assert_eq!(result, vec!["htop".to_string(), "curl".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_zypper_list_updates_no_updates() {
+        assert!(
+            parse_zypper_list_updates("Loading repository data...\nNo updates found.\n").is_empty()
+        );
     }
 }

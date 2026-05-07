@@ -1,0 +1,116 @@
+use crate::backends::{Backend, BackendKind, UpdateResult};
+use crate::runner::{BackendEvent, CommandRunner, PrivilegedShell};
+use std::future::Future;
+use std::sync::Arc;
+
+/// Events emitted by the orchestrator to the UI layer during an update run.
+pub enum OrchestratorEvent {
+    /// Root authentication is required and has been initiated.
+    AuthStarted,
+    /// Authentication succeeded (or root was not required) — backends are starting.
+    AuthSucceeded,
+    /// Authentication failed; contains the error message.
+    AuthFailed(String),
+    /// The named backend has started its update operation.
+    BackendStarted(BackendKind),
+    /// A single line of log output produced by the named backend.
+    BackendLog(BackendKind, String),
+    /// The named backend has finished; carries its result.
+    BackendFinished(BackendKind, UpdateResult),
+    /// All backends have finished; no more events will be sent.
+    AllFinished,
+}
+
+/// Drives the update sequence for a set of backends, sending progress events
+/// to the UI via an [`async_channel`].  Does not hold any GTK types.
+pub struct UpdateOrchestrator {
+    backends: Vec<Arc<dyn Backend>>,
+}
+
+impl UpdateOrchestrator {
+    pub fn new(backends: Vec<Arc<dyn Backend>>) -> Self {
+        Self { backends }
+    }
+
+    /// Spawn the update work on a background OS thread and stream
+    /// [`OrchestratorEvent`] messages to `tx` in arrival order.
+    ///
+    /// The caller (GTK main thread) should receive from the matching receiver
+    /// and update the UI based on the events.
+    pub fn run_all(&self, tx: async_channel::Sender<OrchestratorEvent>) {
+        let backends = self.backends.clone();
+        spawn_background(move || async move {
+            let any_needs_root = backends.iter().any(|b| b.needs_root());
+
+            // --- Authentication phase ---
+            let shell: Option<Arc<tokio::sync::Mutex<PrivilegedShell>>> = if any_needs_root {
+                let _ = tx.send(OrchestratorEvent::AuthStarted).await;
+                match PrivilegedShell::new().await {
+                    Ok(s) => Some(Arc::new(tokio::sync::Mutex::new(s))),
+                    Err(e) => {
+                        let _ = tx.send(OrchestratorEvent::AuthFailed(e)).await;
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
+
+            // Signal that auth is done (or was not required) and backends are starting.
+            let _ = tx.send(OrchestratorEvent::AuthSucceeded).await;
+
+            // Internal channel: CommandRunner sends BackendEvent::LogLine here.
+            // The forwarding task relays them to the OrchestratorEvent stream in
+            // real time while run_update is awaited.
+            let (be_tx, be_rx) = async_channel::unbounded::<BackendEvent>();
+
+            let tx_fwd = tx.clone();
+            let fwd_handle = tokio::spawn(async move {
+                while let Ok(event) = be_rx.recv().await {
+                    let BackendEvent::LogLine(k, line) = event;
+                    let _ = tx_fwd.send(OrchestratorEvent::BackendLog(k, line)).await;
+                }
+            });
+
+            // --- Backend iteration ---
+            for backend in &backends {
+                let kind = backend.kind();
+                let _ = tx.send(OrchestratorEvent::BackendStarted(kind)).await;
+                let runner = CommandRunner::new(be_tx.clone(), kind, shell.clone());
+                let result = backend.run_update(&runner).await;
+                let _ = tx
+                    .send(OrchestratorEvent::BackendFinished(kind, result))
+                    .await;
+            }
+
+            // Close the internal channel so the forwarding task drains and exits.
+            drop(be_tx);
+            let _ = fwd_handle.await;
+
+            // Shut down the privileged shell now that all backends are done.
+            if let Some(s) = shell {
+                s.lock().await.close().await;
+            }
+
+            let _ = tx.send(OrchestratorEvent::AllFinished).await;
+        });
+    }
+}
+
+/// Spawns a background OS thread with a single-threaded Tokio runtime and
+/// drives the provided async closure to completion on it.
+fn spawn_background<F, Fut>(f: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = ()>,
+{
+    std::thread::spawn(move || {
+        match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt.block_on(f()),
+            Err(e) => eprintln!("Failed to build Tokio runtime: {e}"),
+        }
+    });
+}

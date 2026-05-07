@@ -1,4 +1,4 @@
-use crate::backends::{Backend, BackendKind, UpdateResult};
+use crate::backends::{Backend, BackendError, BackendKind, UpdateResult};
 use crate::runner::CommandRunner;
 use std::future::Future;
 use std::pin::Pin;
@@ -108,7 +108,7 @@ pub(crate) fn resolve_nixos_flake_attr() -> Result<String, String> {
 ///
 /// These lines are only present when real work is done. When the system is
 /// already up to date they are absent, so this function correctly returns 0.
-fn count_nix_store_operations(output: &str) -> usize {
+pub(crate) fn count_nix_store_operations(output: &str) -> usize {
     let mut total = 0usize;
     for line in output.lines() {
         let trimmed = line.trim();
@@ -128,7 +128,7 @@ fn count_nix_store_operations(output: &str) -> usize {
 /// Compare two flake.lock JSON values and return the names of inputs whose
 /// locked revision or `lastModified` timestamp changed between the two files.
 /// New inputs (present in `new` but absent in `old`) are also reported.
-fn compare_lock_nodes(old: &serde_json::Value, new: &serde_json::Value) -> Vec<String> {
+pub(crate) fn compare_lock_nodes(old: &serde_json::Value, new: &serde_json::Value) -> Vec<String> {
     let old_nodes = old["nodes"].as_object();
     let new_nodes = new["nodes"].as_object();
     let mut changed = Vec::new();
@@ -306,7 +306,7 @@ fn is_determinate_nix() -> bool {
 /// Parse `determinate-nixd version` output to detect if an upgrade is available.
 ///
 /// Returns `true` if the output contains the phrase "An upgrade is available".
-fn upgrade_available_in_output(output: &str) -> bool {
+pub(crate) fn upgrade_available_in_output(output: &str) -> bool {
     output
         .lines()
         .any(|l| l.to_ascii_lowercase().contains("an upgrade is available"))
@@ -380,7 +380,7 @@ async fn nix_profile_upgrade_all() -> Result<String, String> {
 }
 
 /// Parse upgraded/already-up-to-date status from `determinate-nixd upgrade` output.
-fn count_determinate_upgraded(output: &str) -> usize {
+pub(crate) fn count_determinate_upgraded(output: &str) -> usize {
     let lower = output.to_ascii_lowercase();
     if lower.contains("nothing to upgrade")
         || lower.contains("already up to date")
@@ -440,7 +440,7 @@ impl Backend for NixBackend {
                     // but configs are "vexos-nvidia", "vexos-intel", "vexos-vm").
                     let config_name = match resolve_nixos_flake_attr() {
                         Ok(n) => n,
-                        Err(e) => return UpdateResult::Error(e),
+                        Err(e) => return UpdateResult::Error(BackendError::from_string(e)),
                     };
                     // Single pkexec invocation so polkit only prompts once.
                     // pkexec resets PATH, so we restore the NixOS binary paths
@@ -506,9 +506,9 @@ impl Backend for NixBackend {
                     let nixd_path = match which::which("determinate-nixd") {
                         Ok(p) => p.to_string_lossy().to_string(),
                         Err(_) => {
-                            return UpdateResult::Error(
+                            return UpdateResult::Error(BackendError::Spawn(
                                 "determinate-nixd not found on PATH".to_string(),
-                            )
+                            ))
                         }
                     };
                     match runner.run("pkexec", &[nixd_path.as_str(), "upgrade"]).await {
@@ -550,58 +550,9 @@ impl Backend for NixBackend {
                             Ok(output) => UpdateResult::Success {
                                 updated_count: count_nix_store_operations(&output),
                             },
-                            Err(e) => UpdateResult::Error(e),
+                            Err(e) => UpdateResult::Error(BackendError::from_string(e)),
                         }
                     }
-                }
-            }
-        })
-    }
-
-    fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
-        Box::pin(async move {
-            if is_nixos() && is_nixos_flake() {
-                // Flake-based NixOS: detect changed inputs via --dry-run or temp-dir.
-                nixos_flake_changed_inputs().await.map(|v| v.len())
-            } else if is_determinate_nix() {
-                // Determinate Nix: check version output for upgrade availability.
-                let out = tokio::process::Command::new("determinate-nixd")
-                    .arg("version")
-                    .output()
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let text = String::from_utf8_lossy(&out.stdout);
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                let combined = format!("{text}\n{stderr}");
-                Ok(if upgrade_available_in_output(&combined) {
-                    1
-                } else {
-                    0
-                })
-            } else {
-                // Non-NixOS Nix profile: check manifest version.
-                let use_legacy_nix_env = {
-                    let manifest_path =
-                        std::path::Path::new(&std::env::var("HOME").unwrap_or_default())
-                            .join(".nix-profile/manifest.json");
-                    if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-                        !content.contains("\"version\": 2")
-                    } else {
-                        false
-                    }
-                };
-                if use_legacy_nix_env {
-                    let out = tokio::process::Command::new("nix-env")
-                        .args(["-u", "--dry-run"])
-                        .output()
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    // nix-env --dry-run writes "upgrading ..." lines to stderr
-                    let text = String::from_utf8_lossy(&out.stderr);
-                    Ok(text.lines().filter(|l| l.contains("upgrading")).count())
-                } else {
-                    // nix profile upgrade has no dry-run equivalent
-                    Ok(0)
                 }
             }
         })
@@ -665,7 +616,10 @@ impl Backend for NixBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_determinate_upgraded, upgrade_available_in_output};
+    use super::{
+        compare_lock_nodes, count_determinate_upgraded, count_nix_store_operations,
+        upgrade_available_in_output,
+    };
 
     #[test]
     fn upgrade_available_in_output_detects_upgrade() {
@@ -690,5 +644,43 @@ mod tests {
             count_determinate_upgraded("Successfully upgraded determinate-nix\n"),
             1
         );
+    }
+
+    #[test]
+    fn test_count_nix_store_ops_zero() {
+        assert_eq!(count_nix_store_operations("nothing to do"), 0);
+    }
+
+    #[test]
+    fn test_count_nix_store_ops_build_only() {
+        let output = "these 3 derivations will be built:\n  /nix/store/foo.drv\n";
+        assert_eq!(count_nix_store_operations(output), 3);
+    }
+
+    #[test]
+    fn test_count_nix_store_ops_fetch_only() {
+        let output = "these 5 paths will be fetched (10 MiB download, 50 MiB unpacked):\n";
+        assert_eq!(count_nix_store_operations(output), 5);
+    }
+
+    #[test]
+    fn test_count_nix_store_ops_build_and_fetch() {
+        let output =
+            "these 2 derivations will be built:\nthese 5 paths will be fetched (10 MiB download, 50 MiB unpacked):";
+        assert_eq!(count_nix_store_operations(output), 7);
+    }
+
+    #[test]
+    fn test_compare_lock_nodes_no_change() {
+        let json = serde_json::json!({"nodes": {"nixpkgs": {"locked": {"rev": "abc", "lastModified": 100}}}});
+        assert!(compare_lock_nodes(&json, &json).is_empty());
+    }
+
+    #[test]
+    fn test_compare_lock_nodes_changed_rev() {
+        let old = serde_json::json!({"nodes": {"nixpkgs": {"locked": {"rev": "abc", "lastModified": 100}}}});
+        let new = serde_json::json!({"nodes": {"nixpkgs": {"locked": {"rev": "def", "lastModified": 100}}}});
+        let changed = compare_lock_nodes(&old, &new);
+        assert_eq!(changed, vec!["nixpkgs"]);
     }
 }

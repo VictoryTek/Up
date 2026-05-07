@@ -1,5 +1,4 @@
 use crate::backends::{Backend, BackendKind, UpdateResult};
-use crate::runner::{BackendEvent, CommandRunner, PrivilegedShell};
 use crate::ui::log_panel::LogPanel;
 use crate::ui::update_row::UpdateRow;
 use crate::ui::upgrade_page::UpgradePage;
@@ -270,112 +269,46 @@ impl UpWindow {
             let banner_ref = restart_banner_clone.clone();
             let updating_ref = updating_for_btn.clone();
 
-            // Check if any backend requires root privileges.
-            let any_needs_root = backends.iter().any(|b| b.needs_root());
-
             glib::spawn_future_local(async move {
-                if any_needs_root {
-                    status_ref.set_label("Authenticating\u{2026}");
-                    log_ref.append_line("Requesting administrator privileges\u{2026}");
-                }
+                use crate::orchestrator::{OrchestratorEvent, UpdateOrchestrator};
 
-                // Reorder: privileged backends first, then unprivileged.
-                // This maximises the polkit credential cache benefit.
-                let mut ordered_backends = backends.clone();
-                ordered_backends.sort_by_key(|b| u8::from(!b.needs_root()));
+                let orchestrator = UpdateOrchestrator::new(backends);
+                let (event_tx, event_rx) = async_channel::unbounded::<OrchestratorEvent>();
+                orchestrator.run_all(event_tx);
 
-                let (event_tx, event_rx) = async_channel::unbounded::<BackendEvent>();
-
-                // Auth status: Ok(()) = authenticated (or not needed), Err(msg) = failed.
-                let (auth_status_tx, auth_status_rx) =
-                    async_channel::bounded::<Result<(), String>>(1);
-
-                let event_tx_thread = event_tx.clone();
-
-                // IMPORTANT: PrivilegedShell must be created AND used within the
-                // same Tokio runtime.  Its Tokio I/O handles (ChildStdin/ChildStdout)
-                // are bound to the reactor of the runtime that created them.  Passing
-                // them across spawn_background_async boundaries (each of which builds
-                // its own runtime) causes write operations to fail because the original
-                // reactor is no longer running.
-                super::spawn_background_async(move || async move {
-                    let shell: Option<Arc<tokio::sync::Mutex<PrivilegedShell>>> = if any_needs_root
-                    {
-                        match PrivilegedShell::new().await {
-                            Ok(s) => {
-                                let _ = auth_status_tx.send(Ok(())).await;
-                                Some(Arc::new(tokio::sync::Mutex::new(s)))
-                            }
-                            Err(e) => {
-                                let _ = auth_status_tx.send(Err(e)).await;
-                                return;
-                            }
-                        }
-                    } else {
-                        let _ = auth_status_tx.send(Ok(())).await;
-                        None
-                    };
-
-                    for backend in &ordered_backends {
-                        let kind = backend.kind();
-                        let _ = event_tx_thread.send(BackendEvent::Started(kind)).await;
-                        let runner =
-                            CommandRunner::new(event_tx_thread.clone(), kind, shell.clone());
-                        let result = backend.run_update(&runner).await;
-                        let _ = event_tx_thread
-                            .send(BackendEvent::Finished(kind, result))
-                            .await;
-                    }
-                    // Shut down the privileged shell now that all backends are done.
-                    if let Some(s) = shell {
-                        s.lock().await.close().await;
-                    }
-                });
-
-                // Drop the original sender so the channel closes when the thread finishes.
-                drop(event_tx);
-
-                // Wait for authentication result before updating the UI.
-                match auth_status_rx.recv().await {
-                    Ok(Ok(())) => {
-                        if any_needs_root {
-                            log_ref.append_line("Authentication successful.");
-                        }
-                    }
-                    Ok(Err(e)) => {
-                        log_ref.append_line(&format!("Authentication failed: {e}"));
-                        status_ref.set_label("Update cancelled.");
-                        button_ref.set_sensitive(true);
-                        return;
-                    }
-                    Err(_) => {
-                        log_ref.append_line("Authentication channel closed unexpectedly.");
-                        status_ref.set_label("Update cancelled.");
-                        button_ref.set_sensitive(true);
-                        return;
-                    }
-                }
-
-                // --- Begin updates ---
-                status_ref.set_label("Updating\u{2026}");
-
-                // Process all backend events in strict arrival order via a single loop.
-                // This ensures Started(A) → LogLine(A)* → Finished(A) → Started(B) …
-                // are always processed in sequence, eliminating the three-channel race.
+                let mut auth_started = false;
                 let mut has_error = false;
                 let mut self_updated = false;
+
                 while let Ok(event) = event_rx.recv().await {
                     match event {
-                        BackendEvent::Started(kind) => {
+                        OrchestratorEvent::AuthStarted => {
+                            auth_started = true;
+                            status_ref.set_label("Authenticating\u{2026}");
+                            log_ref.append_line("Requesting administrator privileges\u{2026}");
+                        }
+                        OrchestratorEvent::AuthSucceeded => {
+                            if auth_started {
+                                log_ref.append_line("Authentication successful.");
+                            }
+                            status_ref.set_label("Updating\u{2026}");
+                        }
+                        OrchestratorEvent::AuthFailed(e) => {
+                            log_ref.append_line(&format!("Authentication failed: {e}"));
+                            status_ref.set_label("Update cancelled.");
+                            button_ref.set_sensitive(true);
+                            return;
+                        }
+                        OrchestratorEvent::BackendStarted(kind) => {
                             let rows_borrowed = rows_ref.borrow();
                             if let Some((_, row)) = rows_borrowed.iter().find(|(k, _)| *k == kind) {
                                 row.set_status_running();
                             }
                         }
-                        BackendEvent::LogLine(kind, line) => {
+                        OrchestratorEvent::BackendLog(kind, line) => {
                             log_ref.append_line(&format!("[{kind}] {line}"));
                         }
-                        BackendEvent::Finished(kind, result) => {
+                        OrchestratorEvent::BackendFinished(kind, result) => {
                             let rows_borrowed = rows_ref.borrow();
                             if let Some((_, row)) = rows_borrowed.iter().find(|(k, _)| *k == kind) {
                                 match &result {
@@ -387,7 +320,7 @@ impl UpWindow {
                                         self_updated = true;
                                     }
                                     UpdateResult::Error(msg) => {
-                                        row.set_status_error(msg);
+                                        row.set_status_error(&msg.to_string());
                                         has_error = true;
                                     }
                                     UpdateResult::Skipped(msg) => {
@@ -396,13 +329,15 @@ impl UpWindow {
                                 }
                             }
                         }
+                        OrchestratorEvent::AllFinished => {
+                            break;
+                        }
                     }
                 }
 
                 if self_updated {
                     banner_ref.set_revealed(true);
                 }
-
                 if has_error {
                     status_ref.set_label("Update completed with errors.");
                 } else {
@@ -410,7 +345,6 @@ impl UpWindow {
                 }
                 updating_ref.set(false);
                 button_ref.set_sensitive(true);
-
                 if !has_error {
                     crate::ui::reboot_dialog::show_reboot_dialog(&button_ref);
                 }

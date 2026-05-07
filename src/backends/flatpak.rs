@@ -114,10 +114,6 @@ impl Backend for FlatpakBackend {
         })
     }
 
-    fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
-        Box::pin(async move { self.list_available().await.map(|v| v.len()) })
-    }
-
     fn list_available(
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
@@ -147,19 +143,90 @@ impl Backend for FlatpakBackend {
             }
 
             let text = String::from_utf8_lossy(&out.stdout);
-            let mut apps: Vec<String> = Vec::new();
-            for line in text.lines() {
-                let t = line.trim();
-                // With --columns=application, each line is one application ID.
-                // Skip empty lines and the header line ("Application").
-                if !t.is_empty() && !t.eq_ignore_ascii_case("application") {
-                    let app_id = t.to_string();
-                    if !apps.contains(&app_id) {
-                        apps.push(app_id);
-                    }
-                }
-            }
-            Ok(apps)
+            Ok(parse_flatpak_updates(&text))
         })
+    }
+}
+
+/// Parse full output from `flatpak update --no-deploy --columns=application`,
+/// returning a deduplicated list of application IDs.
+pub(crate) fn parse_flatpak_updates(output: &str) -> Vec<String> {
+    let mut apps: Vec<String> = Vec::new();
+    for line in output.lines() {
+        if let Some(app_id) = parse_flatpak_app_line(line) {
+            if !apps.contains(&app_id) {
+                apps.push(app_id);
+            }
+        }
+    }
+    apps
+}
+
+/// Parse a line from `flatpak update --no-deploy --columns=application` output.
+/// Returns `Some(app_id)` for valid (non-empty, non-header) lines.
+pub(crate) fn parse_flatpak_app_line(line: &str) -> Option<String> {
+    let t = line.trim();
+    if !t.is_empty() && !t.eq_ignore_ascii_case("application") {
+        Some(t.to_string())
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_flatpak_app_line_valid() {
+        assert_eq!(
+            parse_flatpak_app_line("org.gnome.Calculator"),
+            Some("org.gnome.Calculator".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_flatpak_app_line_header_skipped() {
+        assert_eq!(parse_flatpak_app_line("Application"), None);
+        assert_eq!(parse_flatpak_app_line("application"), None);
+    }
+
+    #[test]
+    fn test_parse_flatpak_app_line_empty_skipped() {
+        assert_eq!(parse_flatpak_app_line(""), None);
+        assert_eq!(parse_flatpak_app_line("   "), None);
+    }
+
+    #[test]
+    fn test_parse_flatpak_app_line_trims_whitespace() {
+        assert_eq!(
+            parse_flatpak_app_line("  com.example.App  "),
+            Some("com.example.App".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_flatpak_updates_happy_path() {
+        let output = "Application\norg.gnome.Calculator\ncom.example.App\n";
+        let result = parse_flatpak_updates(output);
+        assert_eq!(
+            result,
+            vec![
+                "org.gnome.Calculator".to_string(),
+                "com.example.App".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_flatpak_updates_only_header() {
+        assert!(parse_flatpak_updates("Application\n").is_empty());
+    }
+
+    #[test]
+    fn test_parse_flatpak_updates_deduplicates() {
+        let output = "Application\norg.gnome.Calculator\norg.gnome.Calculator\n";
+        let result = parse_flatpak_updates(output);
+        assert_eq!(result, vec!["org.gnome.Calculator".to_string()]);
     }
 }

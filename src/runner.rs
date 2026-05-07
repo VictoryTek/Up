@@ -1,4 +1,4 @@
-use crate::backends::{BackendKind, UpdateResult};
+use crate::backends::{BackendError, BackendKind};
 use log::{info, warn};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -7,17 +7,12 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 
 /// Unified event type that carries all backend activity through a single ordered channel.
-/// The worker sends events in strict sequence: Started → LogLine(s) → Finished.
-/// The GTK receive loop processes one event at a time, eliminating any race between
-/// independent futures on separate channels.
+/// The worker sends `LogLine` events; the orchestrator owns `BackendStarted`/`BackendFinished`
+/// signalling via `OrchestratorEvent`.
 #[derive(Debug)]
 pub enum BackendEvent {
-    /// The named backend has started its update operation.
-    Started(BackendKind),
     /// A single line of log output produced by the named backend.
     LogLine(BackendKind, String),
-    /// The named backend has finished; carries its result.
-    Finished(BackendKind, UpdateResult),
 }
 
 // ── Persistent privileged shell ──────────────────────────────────────────
@@ -238,7 +233,7 @@ impl CommandRunner {
     /// If `program` is `"pkexec"` and a [`PrivilegedShell`] was provided at
     /// construction time, the command is routed through the already-elevated
     /// shell instead of spawning a new `pkexec` process.
-    pub async fn run(&self, program: &str, args: &[&str]) -> Result<String, String> {
+    pub async fn run(&self, program: &str, args: &[&str]) -> Result<String, BackendError> {
         let display_cmd = format!("{} {}", program, args.join(" "));
         self.send(format!("$ {display_cmd}")).await;
         info!("Running: {} {:?}", program, args);
@@ -247,7 +242,10 @@ impl CommandRunner {
         if program == "pkexec" {
             if let Some(shell) = &self.shell {
                 let mut guard = shell.lock().await;
-                return guard.run_command(args, &self.tx, self.kind).await;
+                return guard
+                    .run_command(args, &self.tx, self.kind)
+                    .await
+                    .map_err(BackendError::from_string);
             }
         }
 
@@ -256,7 +254,7 @@ impl CommandRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("Failed to start {program}: {e}"))?;
+            .map_err(|e| BackendError::Spawn(format!("Failed to start {program}: {e}")))?;
 
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
@@ -304,14 +302,17 @@ impl CommandRunner {
         let status = child
             .wait()
             .await
-            .map_err(|e| format!("Failed to wait for {program}: {e}"))?;
+            .map_err(|e| BackendError::Spawn(format!("Failed to wait for {program}: {e}")))?;
 
         if status.success() {
             Ok(full_output)
         } else {
             let code = status.code().unwrap_or(-1);
             warn!("{program} exited with code {code}");
-            Err(format!("{program} exited with code {code}"))
+            Err(BackendError::Exit {
+                code,
+                message: format!("{program} exited with code {code}"),
+            })
         }
     }
 
