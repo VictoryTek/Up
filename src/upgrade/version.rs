@@ -1,5 +1,4 @@
 use super::detect::DistroInfo;
-use std::io::Read;
 use std::process::Command;
 use std::time::Duration;
 
@@ -70,13 +69,12 @@ fn fetch_ubuntu_meta_release(policy: &str) -> Result<String, String> {
         _ => "https://changelogs.ubuntu.com/meta-release-lts",
     };
     let agent = http_agent();
-    let mut body = String::new();
-    agent
+    let body = agent
         .get(url)
         .call()
         .map_err(|e| format!("HTTP request failed: {e}"))?
         .into_body()
-        .read_to_string(&mut body)
+        .read_to_string()
         .map_err(|e| format!("meta-release response is not valid UTF-8: {e}"))?;
     Ok(body)
 }

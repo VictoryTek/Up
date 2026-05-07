@@ -1,5 +1,8 @@
 project('up',
-  version: '1.0.3',
+  version: run_command(
+    'grep', '-m', '1', '^version', 'Cargo.toml',
+    check: true,
+  ).stdout().strip().split('"')[1],
   license: 'GPL-3.0-or-later',
 )
 

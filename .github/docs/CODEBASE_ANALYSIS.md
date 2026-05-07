@@ -14,7 +14,7 @@
 - **Fake progress UI — FIXED.** `src/ui/update_row.rs` fake `ProgressBar` + 200 ms timer removed; `gtk::Spinner` is now the sole in-progress indicator.
 - **Two parallel command-execution code paths** — `tokio::process::Command` in `runner.rs` vs `std::process::Command` in `upgrade.rs` — no shared abstraction, divergent error reporting.
 - **No timeouts, no cancellation** anywhere. A stuck `apt`/`dnf` waiting on a dpkg lock will hang the UI button forever.
-- **Versioning is hand-synced across three places** (`Cargo.toml`, `meson.build`, `flake.nix`) — guaranteed to drift.
+- **Versioning — FIXED.** `meson.build` and `flake.nix` now auto-source the version from `Cargo.toml` at configure/eval time; no more hand-sync.
 
 ---
 
@@ -71,7 +71,7 @@
 - [x] **[MED]** Cap `LogPanel` buffer at ~5000 lines with FIFO eviction (`src/ui/log_panel.rs`)
 - [x] **[LOW]** Debounce `scroll_mark_onscreen` to ~50–100 ms instead of per-line (`src/ui/log_panel.rs`)
 - [x] **[LOW]** Drop fake progress bar — replaced with `gtk::Spinner` (`src/ui/update_row.rs`)
-- [ ] **[LOW]** Replace `curl` shell-outs in `upgrade.rs` with `ureq` or `reqwest` (removes runtime dep, gives proper timeouts)
+- [x] **[LOW]** Replace `curl` shell-outs in `upgrade.rs` with `ureq` (removes runtime dep, gives proper timeouts)
 - [ ] **[LOW]** Use `rt-multi-thread` Tokio feature + a shared runtime instead of per-thread `current_thread` runtimes
 
 ### 6. Build / Packaging / CI
@@ -79,7 +79,7 @@
 - ~~**[HIGH]** Create missing `scripts/build-flatpak.sh` and `scripts/verify-flatpak.sh`~~ — N/A: Flatpak distribution retired
 - ~~**[HIGH]** Create missing `.github/workflows/flatpak-ci.yml`~~ — N/A: Flatpak distribution retired
 - [ ] **[HIGH]** Create release-tag GitHub Actions workflow with Nix flake artifact upload
-- [ ] **[MED]** Auto-source version from `Cargo.toml` in `meson.build` and `flake.nix` to eliminate hand-sync
+- [x] **[MED]** Auto-source version from `Cargo.toml` in `meson.build` and `flake.nix` to eliminate hand-sync
 - [ ] **[MED]** Fix `meson.build` out-of-tree build hygiene (`build_always_stale: true`, `target/<profile>` clobber)
 - [ ] **[LOW]** Add `cargo audit` / `cargo deny` and `nix flake check` to `scripts/preflight.sh` and CI
 - [ ] **[LOW]** Add `rust-toolchain.toml` to pin Rust toolchain for reproducible builds
@@ -207,7 +207,7 @@
 | 6.2 | `Cargo.toml` tokio features | Low | `rt` only — no `rt-multi-thread`. `current_thread` runtime per-thread wastes one OS thread per concurrent backend. | `rt-multi-thread` + a process-wide runtime. |
 | 6.3 | `src/ui/log_panel.rs` | Low | `scroll_mark_onscreen` called for every line — extremely noisy during nix-store fetches (10k+ lines). | Debounce to 50–100 ms. |
 | 6.4 | `src/backends/flatpak.rs` `list_available` | Low | Runs `flatpak update --no-deploy -y --user` which contacts every remote and downloads metadata. | Use `flatpak remote-ls --updates` (faster, no full update protocol). |
-| 6.5 | `src/upgrade.rs` | Low | `Command::new("curl")` for upgrade availability adds a runtime dep and pays a process spawn. | Use a Rust HTTP client; remove curl runtime dep. |
+| 6.5 | `src/upgrade.rs` | ~~Low~~ FIXED | ~~`Command::new("curl")` for upgrade availability adds a runtime dep and pays a process spawn.~~ Replaced with `ureq = "3"`. |
 | 6.6 | `src/runner.rs` | Low | `full_output = stdout_output + &stderr_output` reallocates large strings for a 30-min Fedora upgrade. | Stream-only: pass a counter callback; don't accumulate. |
 | 6.7 | `src/ui/window.rs`, `src/ui/upgrade_page.rs` | Low | Verbose `Rc::clone()` chains. | Use `glib::clone!` macro. |
 | 6.8 | `src/ui/update_row.rs` | Low | 200 ms timer per running row; 7 rows = 35 fps of redraws competing with log panel. | Single shared timer driving all rows, or remove fake progress entirely. |
@@ -224,7 +224,7 @@
 | 7.4 | `Cargo.toml` | ~~High~~ FIXED | `repository` now correctly points to `https://github.com/VictoryTek/Up`. |
 | 7.5 | `data/io.github.up.metainfo.xml` | ~~High~~ FIXED | `<url type="homepage">` and `bugtracker` now correctly reference `VictoryTek/Up`. |
 | 7.6 | `meson.build` | Medium | `cargo_build` shells out to `cargo` and copies from `target/<profile>` from `srcdir`. Bypasses out-of-tree build hygiene; `build_always_stale: true` defeats incremental builds. |
-| 7.7 | Version sync | Medium | `1.0.3` is hard-coded in `Cargo.toml`, `meson.build`, `flake.nix`. Manual sync at every release. |
+| 7.7 | Version sync | ~~Medium~~ FIXED | `meson.build` reads version via `run_command('grep', …)` at configure time; `flake.nix` uses `builtins.fromTOML`. |
 | 7.8 | `scripts/preflight.sh` | Medium | Does not validate `flake.nix` (`nix flake check`), does not run `cargo audit`/`cargo deny`. |
 | 7.9 | `.github/workflows/ci.yml` | Low | Installs `libunwind-dev` and `gettext` for no observable use. |
 | 7.10 | `.github/workflows/ci.yml` | Low | Builds with `--release` then runs tests with `--release` — two full compiles. |
@@ -246,9 +246,9 @@
 7. ~~Cap `LogPanel` buffer; debounce auto-scroll; drop fake progress~~ ✓
 8. ~~Sandbox-aware NixOS / Determinate detection~~ ✓
 9. ~~Add timeouts + cancellation to all command execution~~ ✓
-10. **Replace `curl` shell-outs with `ureq`** ← NEXT
-11. Auto-source version in `meson.build` and `flake.nix`
-12. Ship per-backend skip checkboxes + Preview button
+10. ~~Replace `curl` shell-outs with `ureq`~~ ✓
+11. ~~Auto-source version in `meson.build` and `flake.nix`~~ ✓
+12. **Ship per-backend skip checkboxes + Preview button** ← NEXT
 13. Add `cargo audit` / `cargo deny` / `nix flake check` to preflight + CI
 14. Add fwupd backend and reboot-required detection
 15. Plan v2.0 D-Bus + polkit-action refactor

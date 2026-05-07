@@ -14,7 +14,7 @@
       {
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "up";
-          version = "1.0.3";
+          version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
           src = ./.;
 
           cargoLock = {
