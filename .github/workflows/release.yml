@@ -1,0 +1,102 @@
+# Release workflow for Up
+# Triggers on version tags (v*.*.*), runs CI checks then publishes a GitHub Release.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci-checks:
+    name: CI Checks
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install GTK4 and libadwaita dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libglib2.0-dev \
+            libcairo2-dev \
+            libpango1.0-dev \
+            pkg-config \
+            cmake \
+            ninja-build \
+            desktop-file-utils
+
+      - name: Run cargo fmt check
+        run: cargo fmt --check
+
+      - name: Run cargo clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Build with cargo
+        run: cargo build --release
+
+      - name: Run cargo test
+        run: cargo test
+
+      - name: Validate desktop file
+        run: desktop-file-validate data/io.github.up.desktop
+
+      - name: Validate AppStream metadata
+        run: |
+          if ! command -v appstreamcli &>/dev/null; then
+            sudo apt-get install -y appstream
+          fi
+          appstreamcli validate --no-net data/io.github.up.metainfo.xml
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-24.04
+    needs: [ci-checks]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build Nix package
+        run: nix build
+
+      - name: Prepare release binary
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cp ./result/bin/up "up-${VERSION}-linux-x86_64"
+          echo "BINARY_NAME=up-${VERSION}-linux-x86_64" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.BINARY_NAME }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

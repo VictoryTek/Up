@@ -60,4 +60,25 @@ else
     echo "Notice: appstreamcli not found, skipping metainfo validation."
 fi
 
+echo "--- Step 7: Security audit (cargo audit) ---"
+if command -v cargo-audit &>/dev/null || cargo audit --version &>/dev/null 2>&1; then
+    cargo audit
+else
+    echo "Notice: cargo-audit not installed, skipping audit."
+fi
+
+echo "--- Step 8: Nix flake check ---"
+if [[ -f flake.nix ]] && command -v nix &>/dev/null; then
+    nix_output=$(nix flake check 2>&1) && echo "Nix flake check passed." || {
+        if echo "$nix_output" | grep -q "Git tree"; then
+            echo "Notice: nix flake check skipped (dirty working tree — commit changes first)."
+        else
+            echo "$nix_output" >&2
+            exit 1
+        fi
+    }
+else
+    echo "Notice: Nix not available or no flake.nix found, skipping nix flake check."
+fi
+
 echo "All preflight checks passed."

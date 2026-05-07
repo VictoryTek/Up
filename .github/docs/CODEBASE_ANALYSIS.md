@@ -78,13 +78,13 @@
 - ~~**[CRIT]** Create missing `io.github.up.json` Flatpak manifest~~ — N/A: Flatpak distribution retired; Nix flake is the sole release target
 - ~~**[HIGH]** Create missing `scripts/build-flatpak.sh` and `scripts/verify-flatpak.sh`~~ — N/A: Flatpak distribution retired
 - ~~**[HIGH]** Create missing `.github/workflows/flatpak-ci.yml`~~ — N/A: Flatpak distribution retired
-- [ ] **[HIGH]** Create release-tag GitHub Actions workflow with Nix flake artifact upload
+- [x] **[HIGH]** Create release-tag GitHub Actions workflow with Nix flake artifact upload
 - [x] **[MED]** Auto-source version from `Cargo.toml` in `meson.build` and `flake.nix` to eliminate hand-sync
-- [ ] **[MED]** Fix `meson.build` out-of-tree build hygiene (`build_always_stale: true`, `target/<profile>` clobber)
-- [ ] **[LOW]** Add `cargo audit` / `cargo deny` and `nix flake check` to `scripts/preflight.sh` and CI
-- [ ] **[LOW]** Add `rust-toolchain.toml` to pin Rust toolchain for reproducible builds
-- [ ] **[LOW]** Add `.editorconfig`
-- [ ] **[LOW]** Delete orphaned `cargo-sources.json` at repo root (leftover from retired Flatpak build)
+- [x] **[MED]** Fix `meson.build` out-of-tree build hygiene (`build_always_stale: true`, `target/<profile>` clobber)
+- [x] **[LOW]** Add `cargo audit` / `cargo deny` and `nix flake check` to `scripts/preflight.sh` and CI
+- [x] **[LOW]** Add `rust-toolchain.toml` to pin Rust toolchain for reproducible builds
+- [x] **[LOW]** Add `.editorconfig`
+- [x] **[LOW]** Delete orphaned `cargo-sources.json` at repo root (leftover from retired Flatpak build)
 
 ### 7. New Features (by priority)
 

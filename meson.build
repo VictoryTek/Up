@@ -30,9 +30,10 @@ cargo_build = custom_target('cargo-build',
     cargo.full_path() + ' build ' +
     (rust_target == 'release' ? '--release ' : '') +
     '--manifest-path ' + srcdir / 'Cargo.toml' +
-    ' && cp ' + srcdir / 'target' / rust_target / 'up' + ' @OUTPUT@'
+    ' --target-dir ' + meson.build_root() / 'cargo-target' +
+    ' && cp ' + meson.build_root() / 'cargo-target' / rust_target / 'up' + ' @OUTPUT@'
   ],
-  build_always_stale: true,
+  depend_files: files('Cargo.toml', 'Cargo.lock'),
   console: true,
   install: true,
   install_dir: bindir,

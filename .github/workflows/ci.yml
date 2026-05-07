@@ -71,21 +71,35 @@ jobs:
           appstreamcli validate --no-net data/io.github.up.metainfo.xml
 
   # =============================================================================
+  # SECURITY AUDIT
+  # =============================================================================
+
+  audit:
+    name: Security audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  # =============================================================================
   # VALIDATION SUMMARY
   # =============================================================================
   
   validation:
     name: CI Validation
     runs-on: ubuntu-24.04
-    needs: [native-build]
+    needs: [native-build, audit]
     if: always()
     steps:
       - name: Check all jobs passed
         run: |
           echo "CI Pipeline Summary:"
           echo "✓ Native Build & Test: ${{ needs.native-build.result }}"
+          echo "✓ Security Audit:      ${{ needs.audit.result }}"
           echo ""
-          if [ "${{ needs.native-build.result }}" != "success" ]; then
+          if [ "${{ needs.native-build.result }}" != "success" ] || [ "${{ needs.audit.result }}" != "success" ]; then
             echo "❌ CI Pipeline failed"
             exit 1
           else
