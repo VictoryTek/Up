@@ -1,5 +1,5 @@
 use crate::backends::{Backend, BackendKind, UpdateResult};
-use crate::runner::CommandRunner;
+use crate::executor::CommandExecutor;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -25,7 +25,7 @@ impl Backend for HomebrewBackend {
 
     fn run_update<'a>(
         &'a self,
-        runner: &'a CommandRunner,
+        runner: &'a dyn CommandExecutor,
     ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
         Box::pin(async move {
             if let Err(e) = runner.run("brew", &["update"]).await {
@@ -80,6 +80,8 @@ pub(crate) fn count_homebrew_upgraded(output: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backends::BackendError;
+    use crate::executor::test_utils::MockExecutor;
 
     #[test]
     fn test_count_homebrew_upgraded_some() {
@@ -103,5 +105,45 @@ mod tests {
     #[test]
     fn test_parse_brew_outdated_empty() {
         assert!(parse_brew_outdated("").is_empty());
+    }
+
+    // --- run_update pipeline tests ---
+
+    #[tokio::test]
+    async fn test_homebrew_run_update_with_upgrades() {
+        let upgrade_output = "==> Upgrading 2 outdated packages:\n==> Upgrading htop\n==> Pouring htop--3.3.0.arm64_sonoma.bottle.tar.gz\n==> Upgrading curl\n==> Pouring curl--8.5.0.arm64_sonoma.bottle.tar.gz\n";
+        let mock = MockExecutor::new(vec![
+            Ok("Already up-to-date.\n".into()),
+            Ok(upgrade_output.into()),
+        ]);
+        let result = HomebrewBackend.run_update(&mock).await;
+        assert!(
+            matches!(result, UpdateResult::Success { updated_count: 4 }),
+            "Expected Success {{ updated_count: 4 }}, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_homebrew_run_update_brew_update_fails() {
+        let mock = MockExecutor::new(vec![Err(BackendError::Exit {
+            code: 1,
+            message: "brew update failed".into(),
+        })]);
+        let result = HomebrewBackend.run_update(&mock).await;
+        assert!(matches!(result, UpdateResult::Error(_)));
+    }
+
+    #[tokio::test]
+    async fn test_homebrew_run_update_brew_upgrade_fails() {
+        let mock = MockExecutor::new(vec![
+            Ok("Already up-to-date.\n".into()),
+            Err(BackendError::Exit {
+                code: 1,
+                message: "brew upgrade failed".into(),
+            }),
+        ]);
+        let result = HomebrewBackend.run_update(&mock).await;
+        assert!(matches!(result, UpdateResult::Error(_)));
     }
 }

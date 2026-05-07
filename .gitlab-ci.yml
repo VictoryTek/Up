@@ -1,0 +1,57 @@
+# GitLab CI/CD for Up
+# Equivalent to .github/workflows/ci.yml
+
+variables:
+  CARGO_TERM_COLOR: always
+  CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
+
+native-build:
+  image: ubuntu:24.04
+  interruptible: true
+
+  cache:
+    key:
+      files:
+        - Cargo.lock
+    paths:
+      - .cargo/registry/
+      - .cargo/git/
+      - target/
+
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y --no-install-recommends
+        libgtk-4-dev
+        libadwaita-1-dev
+        libglib2.0-dev
+        libcairo2-dev
+        libpango1.0-dev
+        pkg-config
+        cmake
+        ninja-build
+        desktop-file-utils
+        appstream
+        curl
+        ca-certificates
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+        sh -s -- -y --default-toolchain stable --component clippy,rustfmt
+    - source "${CARGO_HOME}/env"
+
+  script:
+    - source "${CARGO_HOME}/env"
+    - echo "--- Step 1: Formatting check ---"
+    - cargo fmt --check
+    - echo "--- Step 2: Lint check ---"
+    - cargo clippy -- -D warnings
+    - echo "--- Step 3: Build ---"
+    - cargo build --release
+    - echo "--- Step 4: Tests ---"
+    - cargo test
+    - echo "--- Step 5: Validate desktop entry ---"
+    - desktop-file-validate data/io.github.up.desktop
+    - echo "--- Step 6: Validate AppStream metainfo ---"
+    - appstreamcli validate --no-net data/io.github.up.metainfo.xml
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'

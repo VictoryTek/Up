@@ -1,5 +1,8 @@
 use crate::backends::{BackendError, BackendKind};
+use crate::executor::CommandExecutor;
 use log::{info, warn};
+use std::future::Future;
+use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -318,6 +321,26 @@ impl CommandRunner {
 
     async fn send(&self, msg: String) {
         let _ = self.tx.send(BackendEvent::LogLine(self.kind, msg)).await;
+    }
+}
+
+impl CommandExecutor for CommandRunner {
+    fn run<'a>(
+        &'a self,
+        program: &'a str,
+        args: &'a [&'a str],
+    ) -> Pin<Box<dyn Future<Output = Result<String, BackendError>> + Send + 'a>> {
+        // Clone owned data so the future has no borrows on `program` or `args`.
+        // CommandRunner::clone is cheap (Arc + channel-sender bump only).
+        let program = program.to_owned();
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let this = self.clone();
+        Box::pin(async move {
+            let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            // Method resolution prefers the inherent `async fn run` on `CommandRunner`
+            // over the trait method of the same name.
+            this.run(&program, &args_refs).await
+        })
     }
 }
 

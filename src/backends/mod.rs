@@ -3,7 +3,7 @@ pub mod homebrew;
 pub mod nix;
 pub mod os_package_manager;
 
-use crate::runner::CommandRunner;
+use crate::executor::CommandExecutor;
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -113,7 +113,7 @@ pub trait Backend: Send + Sync {
 
     fn run_update<'a>(
         &'a self,
-        runner: &'a CommandRunner,
+        runner: &'a dyn CommandExecutor,
     ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>>;
 
     /// Whether this backend requires root privileges (pkexec) to perform updates.

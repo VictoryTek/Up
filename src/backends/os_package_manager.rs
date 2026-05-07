@@ -1,5 +1,5 @@
 use crate::backends::{Backend, BackendKind, UpdateResult};
-use crate::runner::CommandRunner;
+use crate::executor::CommandExecutor;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -41,7 +41,7 @@ impl Backend for AptBackend {
 
     fn run_update<'a>(
         &'a self,
-        runner: &'a CommandRunner,
+        runner: &'a dyn CommandExecutor,
     ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
         Box::pin(async move {
             // Single pkexec invocation so polkit only prompts once.
@@ -129,7 +129,7 @@ impl Backend for DnfBackend {
 
     fn run_update<'a>(
         &'a self,
-        runner: &'a CommandRunner,
+        runner: &'a dyn CommandExecutor,
     ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
         Box::pin(async move {
             match runner.run("pkexec", &["dnf", "upgrade", "-y"]).await {
@@ -215,7 +215,7 @@ impl Backend for PacmanBackend {
 
     fn run_update<'a>(
         &'a self,
-        runner: &'a CommandRunner,
+        runner: &'a dyn CommandExecutor,
     ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
         Box::pin(async move {
             match runner
@@ -270,7 +270,7 @@ impl Backend for ZypperBackend {
 
     fn run_update<'a>(
         &'a self,
-        runner: &'a CommandRunner,
+        runner: &'a dyn CommandExecutor,
     ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
         Box::pin(async move {
             // Single pkexec invocation so polkit only prompts once.
@@ -341,6 +341,8 @@ pub(crate) fn count_zypper_upgraded(output: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backends::BackendError;
+    use crate::executor::test_utils::MockExecutor;
 
     #[test]
     fn test_count_apt_upgraded_zero() {
@@ -456,5 +458,91 @@ mod tests {
         assert!(
             parse_zypper_list_updates("Loading repository data...\nNo updates found.\n").is_empty()
         );
+    }
+
+    // --- run_update pipeline tests ---
+
+    #[tokio::test]
+    async fn test_apt_run_update_success() {
+        let output = "Reading package lists...\nBuilding dependency tree...\n3 upgraded, 0 newly installed, 0 to remove and 1 not upgraded.\n";
+        let mock = MockExecutor::with_output(output);
+        let result = AptBackend.run_update(&mock).await;
+        assert!(
+            matches!(result, UpdateResult::Success { updated_count: 3 }),
+            "Expected Success {{ updated_count: 3 }}, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apt_run_update_auth_cancelled() {
+        let mock = MockExecutor::new(vec![Err(BackendError::AuthCancelled)]);
+        let result = AptBackend.run_update(&mock).await;
+        assert!(
+            matches!(result, UpdateResult::Error(BackendError::AuthCancelled)),
+            "Expected Error(AuthCancelled), got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dnf_run_update_success() {
+        let output = "Last metadata expiration check: 0:00:01 ago.\nDependencies resolved.\n  Upgrading: 7 packages\nComplete!\n";
+        let mock = MockExecutor::with_output(output);
+        let result = DnfBackend.run_update(&mock).await;
+        assert!(
+            matches!(result, UpdateResult::Success { updated_count: 7 }),
+            "Expected Success {{ updated_count: 7 }}, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dnf_run_update_error() {
+        let mock = MockExecutor::with_error(1, "dnf upgrade failed");
+        let result = DnfBackend.run_update(&mock).await;
+        assert!(matches!(result, UpdateResult::Error(_)));
+    }
+
+    #[tokio::test]
+    async fn test_pacman_run_update_success() {
+        let output = "resolving dependencies...\nupgrading htop\nupgrading curl\nupgrading linux\n:: Running post-transaction hooks...\n";
+        let mock = MockExecutor::with_output(output);
+        let result = PacmanBackend.run_update(&mock).await;
+        assert!(
+            matches!(result, UpdateResult::Success { updated_count: 3 }),
+            "Expected Success {{ updated_count: 3 }}, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pacman_run_update_auth_cancelled() {
+        let mock = MockExecutor::new(vec![Err(BackendError::AuthCancelled)]);
+        let result = PacmanBackend.run_update(&mock).await;
+        assert!(
+            matches!(result, UpdateResult::Error(BackendError::AuthCancelled)),
+            "Expected Error(AuthCancelled), got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_zypper_run_update_success() {
+        let output = "Retrieving package htop-3.3.0.x86_64 (1/3)...done\nRetrieving package curl-8.5.0.x86_64 (2/3)...done\nRetrieving package openssl-3.1.4.x86_64 (3/3)...done\n";
+        let mock = MockExecutor::with_output(output);
+        let result = ZypperBackend.run_update(&mock).await;
+        assert!(
+            matches!(result, UpdateResult::Success { updated_count: 3 }),
+            "Expected Success {{ updated_count: 3 }}, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_zypper_run_update_error() {
+        let mock = MockExecutor::with_error(1, "zypper update failed");
+        let result = ZypperBackend.run_update(&mock).await;
+        assert!(matches!(result, UpdateResult::Error(_)));
     }
 }

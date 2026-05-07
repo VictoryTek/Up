@@ -1,5 +1,5 @@
 use crate::backends::{Backend, BackendError, BackendKind, UpdateResult};
-use crate::runner::CommandRunner;
+use crate::executor::CommandExecutor;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -428,7 +428,7 @@ impl Backend for NixBackend {
 
     fn run_update<'a>(
         &'a self,
-        runner: &'a CommandRunner,
+        runner: &'a dyn CommandExecutor,
     ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
         Box::pin(async move {
             if is_nixos() {
@@ -618,8 +618,10 @@ impl Backend for NixBackend {
 mod tests {
     use super::{
         compare_lock_nodes, count_determinate_upgraded, count_nix_store_operations,
-        upgrade_available_in_output,
+        is_determinate_nix, is_nixos, upgrade_available_in_output, validate_flake_attr, NixBackend,
     };
+    use crate::backends::{Backend, UpdateResult};
+    use crate::executor::test_utils::MockExecutor;
 
     #[test]
     fn upgrade_available_in_output_detects_upgrade() {
@@ -682,5 +684,117 @@ mod tests {
         let new = serde_json::json!({"nodes": {"nixpkgs": {"locked": {"rev": "def", "lastModified": 100}}}});
         let changed = compare_lock_nodes(&old, &new);
         assert_eq!(changed, vec!["nixpkgs"]);
+    }
+
+    #[test]
+    fn test_compare_lock_nodes_new_input_added() {
+        let old = serde_json::json!({"nodes": {"nixpkgs": {"locked": {"rev": "abc", "lastModified": 100}}}});
+        let new = serde_json::json!({"nodes": {
+            "nixpkgs": {"locked": {"rev": "abc", "lastModified": 100}},
+            "home-manager": {"locked": {"rev": "xyz", "lastModified": 200}}
+        }});
+        let changed = compare_lock_nodes(&old, &new);
+        assert_eq!(changed, vec!["home-manager"]);
+    }
+
+    // validate_flake_attr tests (pure function, no system access)
+
+    #[test]
+    fn validate_flake_attr_accepts_valid_names() {
+        assert!(validate_flake_attr("vexos-nvidia").is_ok());
+        assert!(validate_flake_attr("my_host.01").is_ok());
+        assert!(validate_flake_attr("a").is_ok());
+    }
+
+    #[test]
+    fn validate_flake_attr_rejects_empty() {
+        assert!(validate_flake_attr("").is_err());
+    }
+
+    #[test]
+    fn validate_flake_attr_rejects_special_chars() {
+        assert!(validate_flake_attr("host name").is_err());
+        assert!(validate_flake_attr("host@domain").is_err());
+        assert!(validate_flake_attr("host/path").is_err());
+    }
+
+    #[test]
+    fn validate_flake_attr_rejects_too_long() {
+        let long = "a".repeat(254);
+        assert!(validate_flake_attr(&long).is_err());
+    }
+
+    // run_update pipeline tests — legacy nix-env branch.
+    //
+    // The NixOS flake, NixOS channel, and Determinate Nix run_update branches each begin
+    // with OS-detection (is_nixos, is_nixos_flake, is_determinate_nix) that reads
+    // /run/current-system, /etc/os-release, /nix/receipt.json etc., making them impossible
+    // to exercise in unit tests without a SystemProber abstraction. The modern nix profile
+    // branch calls nix_profile_upgrade_all() directly without going through runner, so it
+    // is also not injectable via MockExecutor. Full run_update pipeline coverage for those
+    // paths is deferred until a SystemProber trait is introduced.
+    //
+    // The legacy nix-env branch reads $HOME/.nix-profile/manifest.json, which we control
+    // in tests by pointing HOME at a temporary directory.
+
+    #[tokio::test]
+    async fn run_update_legacy_nix_env_success() {
+        if is_nixos() || is_determinate_nix() {
+            return;
+        }
+        let tmp_home =
+            std::env::temp_dir().join(format!("up-test-nix-{}-legacy-ok", std::process::id()));
+        let nix_profile = tmp_home.join(".nix-profile");
+        std::fs::create_dir_all(&nix_profile).unwrap();
+        std::fs::write(
+            nix_profile.join("manifest.json"),
+            r#"{"version": 1, "elements": []}"#,
+        )
+        .unwrap();
+
+        let prev_home = std::env::var("HOME").unwrap_or_default();
+        std::env::set_var("HOME", &tmp_home);
+
+        let executor = MockExecutor::with_output("upgrading 'hello-2.10' to 'hello-2.12'\n");
+        let result = NixBackend.run_update(&executor).await;
+
+        std::env::set_var("HOME", prev_home);
+        let _ = std::fs::remove_dir_all(&tmp_home);
+
+        match result {
+            UpdateResult::Success { updated_count } => assert_eq!(updated_count, 1),
+            other => panic!("Expected Success {{ updated_count: 1 }}, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn run_update_legacy_nix_env_error() {
+        if is_nixos() || is_determinate_nix() {
+            return;
+        }
+        let tmp_home =
+            std::env::temp_dir().join(format!("up-test-nix-{}-legacy-err", std::process::id()));
+        let nix_profile = tmp_home.join(".nix-profile");
+        std::fs::create_dir_all(&nix_profile).unwrap();
+        std::fs::write(
+            nix_profile.join("manifest.json"),
+            r#"{"version": 1, "elements": []}"#,
+        )
+        .unwrap();
+
+        let prev_home = std::env::var("HOME").unwrap_or_default();
+        std::env::set_var("HOME", &tmp_home);
+
+        let executor = MockExecutor::with_error(1, "nix-env: error upgrading packages");
+        let result = NixBackend.run_update(&executor).await;
+
+        std::env::set_var("HOME", prev_home);
+        let _ = std::fs::remove_dir_all(&tmp_home);
+
+        assert!(
+            matches!(result, UpdateResult::Error(_)),
+            "Expected Error, got {:?}",
+            result
+        );
     }
 }

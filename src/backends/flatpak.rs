@@ -1,5 +1,5 @@
 use crate::backends::{Backend, BackendKind, UpdateResult};
-use crate::runner::CommandRunner;
+use crate::executor::CommandExecutor;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -65,7 +65,7 @@ impl Backend for FlatpakBackend {
 
     fn run_update<'a>(
         &'a self,
-        runner: &'a CommandRunner,
+        runner: &'a dyn CommandExecutor,
     ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
         Box::pin(async move {
             let (cmd, args) = build_flatpak_cmd(&["update", "-y"]);
@@ -176,6 +176,8 @@ pub(crate) fn parse_flatpak_app_line(line: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backends::BackendError;
+    use crate::executor::test_utils::MockExecutor;
 
     #[test]
     fn test_parse_flatpak_app_line_valid() {
@@ -228,5 +230,40 @@ mod tests {
         let output = "Application\norg.gnome.Calculator\norg.gnome.Calculator\n";
         let result = parse_flatpak_updates(output);
         assert_eq!(result, vec!["org.gnome.Calculator".to_string()]);
+    }
+
+    // --- run_update pipeline tests ---
+
+    #[tokio::test]
+    async fn test_flatpak_run_update_with_updates() {
+        let output = "Looking for updates...\n\n   ID                            Branch  Op  Remote  Download\n1. org.gnome.Calculator          stable  u   flathub 1.5 MB\n2. com.spotify.Client            stable  u   flathub 87.3 MB\n\nUpdating: org.gnome.Calculator/x86_64/stable from flathub\n";
+        let mock = MockExecutor::with_output(output);
+        let result = FlatpakBackend.run_update(&mock).await;
+        assert!(
+            matches!(result, UpdateResult::Success { updated_count: 2 }),
+            "Expected Success {{ updated_count: 2 }}, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_flatpak_run_update_nothing_to_do() {
+        let mock = MockExecutor::with_output("Looking for updates...\n\nNothing to do.\n");
+        let result = FlatpakBackend.run_update(&mock).await;
+        assert!(
+            matches!(result, UpdateResult::Success { updated_count: 0 }),
+            "Expected Success {{ updated_count: 0 }}, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_flatpak_run_update_error() {
+        let mock = MockExecutor::new(vec![Err(BackendError::Exit {
+            code: 1,
+            message: "flatpak: error".into(),
+        })]);
+        let result = FlatpakBackend.run_update(&mock).await;
+        assert!(matches!(result, UpdateResult::Error(_)));
     }
 }
