@@ -118,19 +118,14 @@ impl Backend for FlatpakBackend {
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
         Box::pin(async move {
-            // Use `flatpak update --no-deploy -y --user --columns=application` to detect
+            // Use `flatpak remote-ls --updates --user --columns=application` to detect
             // pending updates without applying them. The `--columns=application` flag
             // ensures one application ID per line for predictable parsing.
             // The `--user` flag is intentional: the `--system` variant triggers a polkit
             // prompt on every background check, which is poor UX. System Flatpak installs
             // are uncommon on desktop systems, so only user installations are checked here.
-            let (cmd, args) = build_flatpak_cmd(&[
-                "update",
-                "--no-deploy",
-                "-y",
-                "--user",
-                "--columns=application",
-            ]);
+            let (cmd, args) =
+                build_flatpak_cmd(&["remote-ls", "--updates", "--user", "--columns=application"]);
             let out = tokio::process::Command::new(&cmd)
                 .args(&args)
                 .output()
@@ -139,7 +134,7 @@ impl Backend for FlatpakBackend {
 
             if !out.status.success() {
                 let stderr = String::from_utf8_lossy(&out.stderr);
-                return Err(format!("flatpak update --no-deploy failed: {stderr}"));
+                return Err(format!("flatpak remote-ls --updates failed: {stderr}"));
             }
 
             let text = String::from_utf8_lossy(&out.stdout);
@@ -148,7 +143,7 @@ impl Backend for FlatpakBackend {
     }
 }
 
-/// Parse full output from `flatpak update --no-deploy --columns=application`,
+/// Parse full output from `flatpak remote-ls --updates --columns=application`,
 /// returning a deduplicated list of application IDs.
 pub(crate) fn parse_flatpak_updates(output: &str) -> Vec<String> {
     let mut apps: Vec<String> = Vec::new();

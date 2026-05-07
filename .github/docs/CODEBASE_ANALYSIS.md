@@ -41,9 +41,9 @@
 - [x] **[MED]** Fix Nix flake target inconsistency — use `resolve_nixos_flake_attr()` in `upgrade_nixos` (`src/upgrade.rs`)
 - [x] **[MED]** Fix Flatpak self-update to use a fixed `$XDG_RUNTIME_DIR` temp path instead of predictable `/tmp/up-self-update.flatpak`
 - [x] **[MED]** Add cancellation / disable refresh button while an update is in progress (`src/ui/window.rs`)
-- [ ] **[LOW]** Add `LANG=C` to Zypper `updated_count` parser (counts "done" lines instead of actual packages)
+- [x] **[LOW]** Add `LANG=C` to Zypper `updated_count` parser (counts "done" lines instead of actual packages)
 - [x] **[LOW]** Pipe Fedora `dnf system-upgrade reboot` stdout to `tx` instead of `Stdio::null` (`src/upgrade.rs`)
-- [ ] **[LOW]** Use `flatpak remote-ls --updates` instead of `flatpak update --no-deploy` for list_available (`src/backends/flatpak.rs`) — affects FlatpakBackend (user's system packages)
+- [x] **[LOW]** Use `flatpak remote-ls --updates` instead of `flatpak update --no-deploy` for list_available (`src/backends/flatpak.rs`) — affects FlatpakBackend (user's system packages)
 - [x] **[LOW]** Use `--columns=application` for stable Flatpak column layout (`src/backends/flatpak.rs`)
 
 ### 3. Security
@@ -64,7 +64,7 @@
 - [x] **[MED]** Centralise upgrade-page state recomputation into a single `recompute_state()` closure (`src/ui/upgrade_page.rs`)
 - [x] **[LOW]** Use single source of truth for backend ordering (remove sort in `window.rs`, trust detection order)
 - [x] **[LOW]** Split `src/upgrade.rs` into `upgrade/check.rs`, `upgrade/version.rs`, `upgrade/execute.rs`
-- [ ] **[LOW]** Use `glib::clone!` macro to reduce verbose `Rc::clone()` chains in UI code
+- [x] **[LOW]** Use `glib::clone!` macro to reduce verbose `Rc::clone()` chains in UI code
 
 ### 5. Performance
 - [ ] **[MED]** Create a single shared Tokio runtime in `main` instead of one fresh runtime per background spawn (`src/ui/mod.rs`)

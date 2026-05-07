@@ -277,7 +277,11 @@ impl Backend for ZypperBackend {
             match runner
                 .run(
                     "pkexec",
-                    &["sh", "-c", "zypper refresh && zypper update -y"],
+                    &[
+                        "sh",
+                        "-c",
+                        "LANG=C LC_ALL=C zypper refresh && LANG=C LC_ALL=C zypper update -y",
+                    ],
                 )
                 .await
             {

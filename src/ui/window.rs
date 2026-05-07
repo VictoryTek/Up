@@ -106,9 +106,11 @@ impl UpWindow {
             .tooltip_text("Check for updates")
             .build();
         refresh_button.connect_clicked(glib::clone!(
-            #[strong] run_checks,
-            #[strong] update_in_progress,
-            => move |_| {
+            #[strong]
+            run_checks,
+            #[strong]
+            update_in_progress,
+            move |_| {
                 if update_in_progress.get() {
                     return;
                 }
@@ -137,9 +139,11 @@ impl UpWindow {
         // Register the "about" window action that opens the About dialog.
         let about_action = gio::SimpleAction::new("about", None);
         about_action.connect_activate(glib::clone!(
-            #[weak] window,
-            #[upgrade_or] return,
-            => move |_, _| {
+            #[weak]
+            window,
+            #[upgrade_or]
+            return,
+            move |_, _| {
                 let dialog = adw::AboutDialog::builder()
                     .application_name("Up")
                     .version(env!("CARGO_PKG_VERSION"))
@@ -252,13 +256,19 @@ impl UpWindow {
         let updating: Rc<Cell<bool>> = Rc::new(Cell::new(false));
 
         update_button.connect_clicked(glib::clone!(
-            #[weak]   status_label,
-            #[strong] rows,
-            #[strong] log_panel,
-            #[strong] detected,
-            #[weak]   restart_banner,
-            #[strong] updating,
-            => move |button| {
+            #[weak]
+            status_label,
+            #[strong]
+            rows,
+            #[strong]
+            log_panel,
+            #[strong]
+            detected,
+            #[weak]
+            restart_banner,
+            #[strong]
+            updating,
+            move |button| {
                 button.set_sensitive(false);
                 updating.set(true);
                 log_panel.clear();
@@ -266,13 +276,19 @@ impl UpWindow {
                 let backends = detected.borrow().clone();
 
                 glib::spawn_future_local(glib::clone!(
-                    #[strong] rows,
-                    #[strong] log_panel,
-                    #[weak]   status_label,
-                    #[weak]   button,
-                    #[weak]   restart_banner,
-                    #[strong] updating,
-                    => async move {
+                    #[strong]
+                    rows,
+                    #[strong]
+                    log_panel,
+                    #[weak]
+                    status_label,
+                    #[weak]
+                    button,
+                    #[weak]
+                    restart_banner,
+                    #[strong]
+                    updating,
+                    async move {
                         use crate::orchestrator::{OrchestratorEvent, UpdateOrchestrator};
 
                         let orchestrator = UpdateOrchestrator::new(backends);
@@ -288,7 +304,8 @@ impl UpWindow {
                                 OrchestratorEvent::AuthStarted => {
                                     auth_started = true;
                                     status_label.set_label("Authenticating\u{2026}");
-                                    log_panel.append_line("Requesting administrator privileges\u{2026}");
+                                    log_panel
+                                        .append_line("Requesting administrator privileges\u{2026}");
                                 }
                                 OrchestratorEvent::AuthSucceeded => {
                                     if auth_started {
@@ -407,14 +424,21 @@ impl UpWindow {
                     }
                     let backend_clone = backend.clone();
                     glib::spawn_future_local(glib::clone!(
-                        #[strong] rows,
-                        #[strong] pending_checks,
-                        #[strong] total_available,
-                        #[weak]   update_button_checks,
-                        #[weak]   status_label_checks,
-                        #[strong] check_epoch,
-                        => async move {
-                            type CheckPayload = (Result<usize, String>, Result<Vec<String>, String>);
+                        #[strong]
+                        rows,
+                        #[strong]
+                        pending_checks,
+                        #[strong]
+                        total_available,
+                        #[weak]
+                        update_button_checks,
+                        #[weak]
+                        status_label_checks,
+                        #[strong]
+                        check_epoch,
+                        async move {
+                            type CheckPayload =
+                                (Result<usize, String>, Result<Vec<String>, String>);
                             let (tx, rx) = async_channel::bounded::<CheckPayload>(1);
                             super::spawn_background_async(move || async move {
                                 let count = backend_clone.count_available().await;
@@ -483,11 +507,15 @@ impl UpWindow {
             });
 
             glib::spawn_future_local(glib::clone!(
-                #[strong] detected,
-                #[strong] rows,
-                #[weak]   backends_group,
-                #[strong] run_checks,
-                => async move {
+                #[strong]
+                detected,
+                #[strong]
+                rows,
+                #[weak]
+                backends_group,
+                #[strong]
+                run_checks,
+                async move {
                     if let Ok(new_backends) = detect_rx.recv().await {
                         // Remove placeholder
                         backends_group.remove(&placeholder_row);

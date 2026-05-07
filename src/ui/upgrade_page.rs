@@ -149,21 +149,28 @@ impl UpgradePage {
 
         // Wire the backup checkbox once (unconditional) so it doesn't accumulate signal handlers.
         backup_check.connect_toggled(glib::clone!(
-            #[strong] recompute_state,
-            => move |_| {
+            #[strong]
+            recompute_state,
+            move |_| {
                 (*recompute_state)();
             }
         ));
 
         // Wire up check button
         check_button.connect_clicked(glib::clone!(
-            #[strong] check_rows,
-            #[strong] check_icons,
-            #[strong] log_panel,
-            #[strong] distro_info_state,
-            #[strong] all_checks_passed,
-            #[strong] recompute_state,
-            => move |button| {
+            #[strong]
+            check_rows,
+            #[strong]
+            check_icons,
+            #[strong]
+            log_panel,
+            #[strong]
+            distro_info_state,
+            #[strong]
+            all_checks_passed,
+            #[strong]
+            recompute_state,
+            move |button| {
                 let Some(distro) = distro_info_state.borrow().clone() else {
                     return;
                 };
@@ -171,13 +178,19 @@ impl UpgradePage {
                 log_panel.clear();
 
                 glib::spawn_future_local(glib::clone!(
-                    #[strong] check_rows,
-                    #[strong] check_icons,
-                    #[strong] log_panel,
-                    #[weak]   button,
-                    #[strong] all_checks_passed,
-                    #[strong] recompute_state,
-                    => async move {
+                    #[strong]
+                    check_rows,
+                    #[strong]
+                    check_icons,
+                    #[strong]
+                    log_panel,
+                    #[weak]
+                    button,
+                    #[strong]
+                    all_checks_passed,
+                    #[strong]
+                    recompute_state,
+                    async move {
                         let (check_tx, check_rx) = async_channel::unbounded::<CheckMsg>();
 
                         let check_tx_clone = check_tx.clone();
@@ -214,9 +227,7 @@ impl UpgradePage {
                                             if result.passed {
                                                 icon.set_icon_name(Some("emblem-ok-symbolic"));
                                             } else {
-                                                icon.set_icon_name(Some(
-                                                    "dialog-error-symbolic",
-                                                ));
+                                                icon.set_icon_name(Some("dialog-error-symbolic"));
                                                 all_passed = false;
                                             }
                                         }
@@ -239,7 +250,7 @@ impl UpgradePage {
             #[strong] log_panel,
             #[strong] distro_info_state,
             #[strong] nixos_config_type,
-            => move |button| {
+            move |button| {
                 let Some(distro) = distro_info_state.borrow().clone() else {
                     return;
                 };
@@ -291,7 +302,7 @@ impl UpgradePage {
                 dialog.connect_response(None, glib::clone!(
                     #[strong] log_panel,
                     #[weak]   button,
-                    => move |_dialog, response| {
+                    move |_dialog, response| {
                         if response == "upgrade" {
                             button.set_sensitive(false);
                             log_panel.clear();
@@ -300,7 +311,7 @@ impl UpgradePage {
                             glib::spawn_future_local(glib::clone!(
                                 #[strong] log_panel,
                                 #[weak]   button,
-                                => async move {
+                                async move {
                                     let (tx, rx) = async_channel::unbounded::<String>();
                                     let tx_clone = tx.clone();
                                     let (result_tx, result_rx) =
@@ -364,16 +375,25 @@ impl UpgradePage {
 
         {
             glib::spawn_future_local(glib::clone!(
-                #[strong] nixos_config_type,
-                #[weak]   flake_banner,
-                #[strong] distro_info_state,
-                #[weak]   upgrade_available_row,
-                #[weak]   info_group,
-                #[strong] check_rows,
-                #[strong] upgrade_available,
-                #[weak]   check_button,
-                #[strong] recompute_state,
-                => async move {
+                #[strong]
+                nixos_config_type,
+                #[weak]
+                flake_banner,
+                #[strong]
+                distro_info_state,
+                #[weak]
+                upgrade_available_row,
+                #[weak]
+                info_group,
+                #[strong]
+                check_rows,
+                #[strong]
+                upgrade_available,
+                #[weak]
+                check_button,
+                #[strong]
+                recompute_state,
+                async move {
                     if let Ok(init) = init_rx.recv().await {
                         let info = init.distro;
                         let nixos_extra = init.nixos_extra;
@@ -420,10 +440,13 @@ impl UpgradePage {
                         if info.upgrade_supported {
                             let distro_check = info.clone();
                             glib::spawn_future_local(glib::clone!(
-                                #[weak]   upgrade_available_row,
-                                #[strong] upgrade_available,
-                                #[strong] recompute_state,
-                                => async move {
+                                #[weak]
+                                upgrade_available_row,
+                                #[strong]
+                                upgrade_available,
+                                #[strong]
+                                recompute_state,
+                                async move {
                                     let (tx, rx) = async_channel::unbounded::<String>();
                                     std::thread::spawn(move || {
                                         let result =
