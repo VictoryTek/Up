@@ -4,6 +4,7 @@ mod executor;
 mod orchestrator;
 mod reboot;
 mod runner;
+mod runtime;
 mod ui;
 mod upgrade;
 

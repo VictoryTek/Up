@@ -105,14 +105,16 @@ impl UpWindow {
             .icon_name("view-refresh-symbolic")
             .tooltip_text("Check for updates")
             .build();
-        let run_checks_btn = run_checks.clone();
-        let update_in_progress_ref = update_in_progress.clone();
-        refresh_button.connect_clicked(move |_| {
-            if update_in_progress_ref.get() {
-                return; // silently ignore clicks during active update
+        refresh_button.connect_clicked(glib::clone!(
+            #[strong] run_checks,
+            #[strong] update_in_progress,
+            => move |_| {
+                if update_in_progress.get() {
+                    return;
+                }
+                (*run_checks)()
             }
-            (*run_checks_btn)()
-        });
+        ));
         header.pack_start(&refresh_button);
 
         // Application overflow menu (three-dot button on the end/right slot).
@@ -134,22 +136,22 @@ impl UpWindow {
 
         // Register the "about" window action that opens the About dialog.
         let about_action = gio::SimpleAction::new("about", None);
-        let window_ref = window.downgrade();
-        about_action.connect_activate(move |_, _| {
-            let Some(win) = window_ref.upgrade() else {
-                return;
-            };
-            let dialog = adw::AboutDialog::builder()
-                .application_name("Up")
-                .version(env!("CARGO_PKG_VERSION"))
-                .developer_name("Up Contributors")
-                .comments("A system updater for Linux")
-                .website("https://github.com/VictoryTek/Up")
-                .application_icon("io.github.up")
-                .license_type(gtk::License::Gpl30)
-                .build();
-            dialog.present(Some(&win));
-        });
+        about_action.connect_activate(glib::clone!(
+            #[weak] window,
+            #[upgrade_or] return,
+            => move |_, _| {
+                let dialog = adw::AboutDialog::builder()
+                    .application_name("Up")
+                    .version(env!("CARGO_PKG_VERSION"))
+                    .developer_name("Up Contributors")
+                    .comments("A system updater for Linux")
+                    .website("https://github.com/VictoryTek/Up")
+                    .application_icon("io.github.up")
+                    .license_type(gtk::License::Gpl30)
+                    .build();
+                dialog.present(Some(&window));
+            }
+        ));
         window.add_action(&about_action);
 
         window
@@ -247,109 +249,118 @@ impl UpWindow {
             .sensitive(false)
             .build();
 
-        let status_clone = status_label.clone();
-        let rows_clone = rows.clone();
-        let log_clone = log_panel.clone();
-        let detected_clone = detected.clone();
-        let restart_banner_clone = restart_banner.clone();
-
         let updating: Rc<Cell<bool>> = Rc::new(Cell::new(false));
-        let updating_for_btn = updating.clone();
 
-        update_button.connect_clicked(move |button| {
-            button.set_sensitive(false);
-            updating_for_btn.set(true);
-            log_clone.clear();
+        update_button.connect_clicked(glib::clone!(
+            #[weak]   status_label,
+            #[strong] rows,
+            #[strong] log_panel,
+            #[strong] detected,
+            #[weak]   restart_banner,
+            #[strong] updating,
+            => move |button| {
+                button.set_sensitive(false);
+                updating.set(true);
+                log_panel.clear();
 
-            let rows_ref = rows_clone.clone();
-            let log_ref = log_clone.clone();
-            let status_ref = status_clone.clone();
-            let button_ref = button.clone();
-            let backends = detected_clone.borrow().clone();
-            let banner_ref = restart_banner_clone.clone();
-            let updating_ref = updating_for_btn.clone();
+                let backends = detected.borrow().clone();
 
-            glib::spawn_future_local(async move {
-                use crate::orchestrator::{OrchestratorEvent, UpdateOrchestrator};
+                glib::spawn_future_local(glib::clone!(
+                    #[strong] rows,
+                    #[strong] log_panel,
+                    #[weak]   status_label,
+                    #[weak]   button,
+                    #[weak]   restart_banner,
+                    #[strong] updating,
+                    => async move {
+                        use crate::orchestrator::{OrchestratorEvent, UpdateOrchestrator};
 
-                let orchestrator = UpdateOrchestrator::new(backends);
-                let (event_tx, event_rx) = async_channel::unbounded::<OrchestratorEvent>();
-                orchestrator.run_all(event_tx);
+                        let orchestrator = UpdateOrchestrator::new(backends);
+                        let (event_tx, event_rx) = async_channel::unbounded::<OrchestratorEvent>();
+                        orchestrator.run_all(event_tx);
 
-                let mut auth_started = false;
-                let mut has_error = false;
-                let mut self_updated = false;
+                        let mut auth_started = false;
+                        let mut has_error = false;
+                        let mut self_updated = false;
 
-                while let Ok(event) = event_rx.recv().await {
-                    match event {
-                        OrchestratorEvent::AuthStarted => {
-                            auth_started = true;
-                            status_ref.set_label("Authenticating\u{2026}");
-                            log_ref.append_line("Requesting administrator privileges\u{2026}");
-                        }
-                        OrchestratorEvent::AuthSucceeded => {
-                            if auth_started {
-                                log_ref.append_line("Authentication successful.");
-                            }
-                            status_ref.set_label("Updating\u{2026}");
-                        }
-                        OrchestratorEvent::AuthFailed(e) => {
-                            log_ref.append_line(&format!("Authentication failed: {e}"));
-                            status_ref.set_label("Update cancelled.");
-                            button_ref.set_sensitive(true);
-                            return;
-                        }
-                        OrchestratorEvent::BackendStarted(kind) => {
-                            let rows_borrowed = rows_ref.borrow();
-                            if let Some((_, row)) = rows_borrowed.iter().find(|(k, _)| *k == kind) {
-                                row.set_status_running();
-                            }
-                        }
-                        OrchestratorEvent::BackendLog(kind, line) => {
-                            log_ref.append_line(&format!("[{kind}] {line}"));
-                        }
-                        OrchestratorEvent::BackendFinished(kind, result) => {
-                            let rows_borrowed = rows_ref.borrow();
-                            if let Some((_, row)) = rows_borrowed.iter().find(|(k, _)| *k == kind) {
-                                match &result {
-                                    UpdateResult::Success { updated_count } => {
-                                        row.set_status_success(*updated_count);
+                        while let Ok(event) = event_rx.recv().await {
+                            match event {
+                                OrchestratorEvent::AuthStarted => {
+                                    auth_started = true;
+                                    status_label.set_label("Authenticating\u{2026}");
+                                    log_panel.append_line("Requesting administrator privileges\u{2026}");
+                                }
+                                OrchestratorEvent::AuthSucceeded => {
+                                    if auth_started {
+                                        log_panel.append_line("Authentication successful.");
                                     }
-                                    UpdateResult::SuccessWithSelfUpdate { updated_count } => {
-                                        row.set_status_success(*updated_count);
-                                        self_updated = true;
+                                    status_label.set_label("Updating\u{2026}");
+                                }
+                                OrchestratorEvent::AuthFailed(e) => {
+                                    log_panel.append_line(&format!("Authentication failed: {e}"));
+                                    status_label.set_label("Update cancelled.");
+                                    button.set_sensitive(true);
+                                    return;
+                                }
+                                OrchestratorEvent::BackendStarted(kind) => {
+                                    let rows_borrowed = rows.borrow();
+                                    if let Some((_, row)) =
+                                        rows_borrowed.iter().find(|(k, _)| *k == kind)
+                                    {
+                                        row.set_status_running();
                                     }
-                                    UpdateResult::Error(msg) => {
-                                        row.set_status_error(&msg.to_string());
-                                        has_error = true;
+                                }
+                                OrchestratorEvent::BackendLog(kind, line) => {
+                                    log_panel.append_line(&format!("[{kind}] {line}"));
+                                }
+                                OrchestratorEvent::BackendFinished(kind, result) => {
+                                    let rows_borrowed = rows.borrow();
+                                    if let Some((_, row)) =
+                                        rows_borrowed.iter().find(|(k, _)| *k == kind)
+                                    {
+                                        match &result {
+                                            UpdateResult::Success { updated_count } => {
+                                                row.set_status_success(*updated_count);
+                                            }
+                                            UpdateResult::SuccessWithSelfUpdate {
+                                                updated_count,
+                                            } => {
+                                                row.set_status_success(*updated_count);
+                                                self_updated = true;
+                                            }
+                                            UpdateResult::Error(msg) => {
+                                                row.set_status_error(&msg.to_string());
+                                                has_error = true;
+                                            }
+                                            UpdateResult::Skipped(msg) => {
+                                                row.set_status_skipped(msg);
+                                            }
+                                        }
                                     }
-                                    UpdateResult::Skipped(msg) => {
-                                        row.set_status_skipped(msg);
-                                    }
+                                }
+                                OrchestratorEvent::AllFinished => {
+                                    break;
                                 }
                             }
                         }
-                        OrchestratorEvent::AllFinished => {
-                            break;
+
+                        if self_updated {
+                            restart_banner.set_revealed(true);
+                        }
+                        if has_error {
+                            status_label.set_label("Update completed with errors.");
+                        } else {
+                            status_label.set_label("Update complete.");
+                        }
+                        updating.set(false);
+                        button.set_sensitive(true);
+                        if !has_error {
+                            crate::ui::reboot_dialog::show_reboot_dialog(&button);
                         }
                     }
-                }
-
-                if self_updated {
-                    banner_ref.set_revealed(true);
-                }
-                if has_error {
-                    status_ref.set_label("Update completed with errors.");
-                } else {
-                    status_ref.set_label("Update complete.");
-                }
-                updating_ref.set(false);
-                button_ref.set_sensitive(true);
-                if !has_error {
-                    crate::ui::reboot_dialog::show_reboot_dialog(&button_ref);
-                }
-            });
-        });
+                ));
+            }
+        ));
 
         content_box.append(&update_button);
 
@@ -395,67 +406,69 @@ impl UpWindow {
                         }
                     }
                     let backend_clone = backend.clone();
-                    let rows_ref = rows.clone();
-                    let pending_ref = pending_checks.clone();
-                    let total_ref = total_available.clone();
-                    let btn_ref = update_button_checks.clone();
-                    let status_ref = status_label_checks.clone();
-                    let epoch_ref = check_epoch.clone();
-                    glib::spawn_future_local(async move {
-                        type CheckPayload = (Result<usize, String>, Result<Vec<String>, String>);
-                        let (tx, rx) = async_channel::bounded::<CheckPayload>(1);
-                        super::spawn_background_async(move || async move {
-                            let count = backend_clone.count_available().await;
-                            let list = backend_clone.list_available().await;
-                            let _ = tx.send((count, list)).await;
-                        });
-                        if let Ok((count_result, list_result)) = rx.recv().await {
-                            // Discard results from a superseded check cycle.
-                            if epoch_ref.get() != my_epoch {
-                                return;
-                            }
-                            let row = {
-                                let borrowed = rows_ref.borrow();
-                                borrowed
-                                    .iter()
-                                    .find(|(k, _)| *k == kind)
-                                    .map(|(_, r)| r.clone())
-                            };
-                            let Some(row) = row else {
-                                return;
-                            };
-                            match count_result {
-                                Ok(count) => {
-                                    row.set_status_available(count);
-                                    *total_ref.borrow_mut() += count;
+                    glib::spawn_future_local(glib::clone!(
+                        #[strong] rows,
+                        #[strong] pending_checks,
+                        #[strong] total_available,
+                        #[weak]   update_button_checks,
+                        #[weak]   status_label_checks,
+                        #[strong] check_epoch,
+                        => async move {
+                            type CheckPayload = (Result<usize, String>, Result<Vec<String>, String>);
+                            let (tx, rx) = async_channel::bounded::<CheckPayload>(1);
+                            super::spawn_background_async(move || async move {
+                                let count = backend_clone.count_available().await;
+                                let list = backend_clone.list_available().await;
+                                let _ = tx.send((count, list)).await;
+                            });
+                            if let Ok((count_result, list_result)) = rx.recv().await {
+                                // Discard results from a superseded check cycle.
+                                if check_epoch.get() != my_epoch {
+                                    return;
                                 }
-                                Err(msg) => {
-                                    row.set_status_unknown(&msg);
+                                let row = {
+                                    let borrowed = rows.borrow();
+                                    borrowed
+                                        .iter()
+                                        .find(|(k, _)| *k == kind)
+                                        .map(|(_, r)| r.clone())
+                                };
+                                let Some(row) = row else {
+                                    return;
+                                };
+                                match count_result {
+                                    Ok(count) => {
+                                        row.set_status_available(count);
+                                        *total_available.borrow_mut() += count;
+                                    }
+                                    Err(msg) => {
+                                        row.set_status_unknown(&msg);
+                                    }
                                 }
-                            }
-                            match list_result {
-                                Ok(packages) => row.set_packages(&packages),
-                                Err(_) => row.set_packages(&[]),
-                            }
-                            let remaining = {
-                                let mut p = pending_ref.borrow_mut();
-                                *p -= 1;
-                                *p
-                            };
-                            if remaining == 0 {
-                                let total = *total_ref.borrow();
-                                if total > 0 {
-                                    btn_ref.set_sensitive(true);
-                                    status_ref.set_label(&format!(
-                                        "{total} update{} available",
-                                        if total == 1 { "" } else { "s" }
-                                    ));
-                                } else {
-                                    status_ref.set_label("Everything is up to date.");
+                                match list_result {
+                                    Ok(packages) => row.set_packages(&packages),
+                                    Err(_) => row.set_packages(&[]),
+                                }
+                                let remaining = {
+                                    let mut p = pending_checks.borrow_mut();
+                                    *p -= 1;
+                                    *p
+                                };
+                                if remaining == 0 {
+                                    let total = *total_available.borrow();
+                                    if total > 0 {
+                                        update_button_checks.set_sensitive(true);
+                                        status_label_checks.set_label(&format!(
+                                            "{total} update{} available",
+                                            if total == 1 { "" } else { "s" }
+                                        ));
+                                    } else {
+                                        status_label_checks.set_label("Everything is up to date.");
+                                    }
                                 }
                             }
                         }
-                    });
+                    ));
                 }
             })
         };
@@ -464,38 +477,39 @@ impl UpWindow {
         {
             let (detect_tx, detect_rx) = async_channel::unbounded::<Vec<Arc<dyn Backend>>>();
 
-            let detected_fill = detected.clone();
-            let rows_fill = rows.clone();
-            let group_fill = backends_group.clone();
-            let run_checks_after_detect = run_checks.clone();
-
             super::spawn_background_async(move || async move {
                 let backends = crate::backends::detect_backends();
                 let _ = detect_tx.send(backends).await;
             });
 
-            glib::spawn_future_local(async move {
-                if let Ok(new_backends) = detect_rx.recv().await {
-                    // Remove placeholder
-                    group_fill.remove(&placeholder_row);
-                    // Populate rows
-                    {
-                        let mut rows_mut = rows_fill.borrow_mut();
-                        for backend in &new_backends {
-                            let row = UpdateRow::new(backend.as_ref());
-                            group_fill.add(&row.row);
-                            rows_mut.push((backend.kind(), row));
+            glib::spawn_future_local(glib::clone!(
+                #[strong] detected,
+                #[strong] rows,
+                #[weak]   backends_group,
+                #[strong] run_checks,
+                => async move {
+                    if let Ok(new_backends) = detect_rx.recv().await {
+                        // Remove placeholder
+                        backends_group.remove(&placeholder_row);
+                        // Populate rows
+                        {
+                            let mut rows_mut = rows.borrow_mut();
+                            for backend in &new_backends {
+                                let row = UpdateRow::new(backend.as_ref());
+                                backends_group.add(&row.row);
+                                rows_mut.push((backend.kind(), row));
+                            }
                         }
+                        // Store backends
+                        *detected.borrow_mut() = new_backends;
+                        // Trigger availability check (enables Update All only if updates are found)
+                        (*run_checks)();
+                    } else {
+                        eprintln!("Backend detection failed; no backends detected.");
+                        backends_group.remove(&placeholder_row);
                     }
-                    // Store backends
-                    *detected_fill.borrow_mut() = new_backends;
-                    // Trigger availability check (enables Update All only if updates are found)
-                    (*run_checks_after_detect)();
-                } else {
-                    eprintln!("Backend detection failed; no backends detected.");
-                    group_fill.remove(&placeholder_row);
                 }
-            });
+            ));
         }
 
         (page_box, run_checks, distro_row, version_row, updating)

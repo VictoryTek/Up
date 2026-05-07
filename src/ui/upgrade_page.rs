@@ -148,192 +148,206 @@ impl UpgradePage {
         };
 
         // Wire the backup checkbox once (unconditional) so it doesn't accumulate signal handlers.
-        {
-            let recompute_for_toggle = recompute_state.clone();
-            backup_check.connect_toggled(move |_| {
-                recompute_for_toggle();
-            });
-        }
+        backup_check.connect_toggled(glib::clone!(
+            #[strong] recompute_state,
+            => move |_| {
+                (*recompute_state)();
+            }
+        ));
 
         // Wire up check button
-        let check_rows_clone = check_rows.clone();
-        let check_icons_clone = check_icons.clone();
-        let log_clone = log_panel.clone();
-        let distro_state_for_check = distro_info_state.clone();
-        let all_checks_passed_clone = all_checks_passed.clone();
-        let recompute_state_for_check = recompute_state.clone();
-        check_button.connect_clicked(move |button| {
-            let Some(distro) = distro_state_for_check.borrow().clone() else {
-                return;
-            };
-            button.set_sensitive(false);
-            log_clone.clear();
+        check_button.connect_clicked(glib::clone!(
+            #[strong] check_rows,
+            #[strong] check_icons,
+            #[strong] log_panel,
+            #[strong] distro_info_state,
+            #[strong] all_checks_passed,
+            #[strong] recompute_state,
+            => move |button| {
+                let Some(distro) = distro_info_state.borrow().clone() else {
+                    return;
+                };
+                button.set_sensitive(false);
+                log_panel.clear();
 
-            let check_rows_ref = check_rows_clone.clone();
-            let check_icons_ref = check_icons_clone.clone();
-            let log_ref = log_clone.clone();
-            let button_ref = button.clone();
-            let all_checks_passed_ref = all_checks_passed_clone.clone();
-            let recompute_ref = recompute_state_for_check.clone();
+                glib::spawn_future_local(glib::clone!(
+                    #[strong] check_rows,
+                    #[strong] check_icons,
+                    #[strong] log_panel,
+                    #[weak]   button,
+                    #[strong] all_checks_passed,
+                    #[strong] recompute_state,
+                    => async move {
+                        let (check_tx, check_rx) = async_channel::unbounded::<CheckMsg>();
 
-            glib::spawn_future_local(async move {
-                let (check_tx, check_rx) = async_channel::unbounded::<CheckMsg>();
+                        let check_tx_clone = check_tx.clone();
+                        let distro_thread = distro.clone();
 
-                let check_tx_clone = check_tx.clone();
-                let distro_thread = distro.clone();
+                        std::thread::spawn(move || {
+                            let (bridge_tx, bridge_rx) = async_channel::unbounded::<String>();
+                            let results =
+                                upgrade::run_prerequisite_checks(&distro_thread, &bridge_tx);
+                            drop(bridge_tx);
+                            while let Ok(line) = bridge_rx.recv_blocking() {
+                                let _ = check_tx_clone.send_blocking(CheckMsg::Log(line));
+                            }
+                            let _ = check_tx_clone.send_blocking(CheckMsg::Results(results));
+                            drop(check_tx_clone);
+                        });
 
-                std::thread::spawn(move || {
-                    let (bridge_tx, bridge_rx) = async_channel::unbounded::<String>();
-                    let results = upgrade::run_prerequisite_checks(&distro_thread, &bridge_tx);
-                    drop(bridge_tx);
-                    while let Ok(line) = bridge_rx.recv_blocking() {
-                        let _ = check_tx_clone.send_blocking(CheckMsg::Log(line));
-                    }
-                    let _ = check_tx_clone.send_blocking(CheckMsg::Results(results));
-                    drop(check_tx_clone);
-                });
+                        drop(check_tx);
 
-                drop(check_tx);
-
-                let mut all_passed = true;
-                while let Ok(msg) = check_rx.recv().await {
-                    match msg {
-                        CheckMsg::Log(line) => {
-                            log_ref.append_line(&line);
-                        }
-                        CheckMsg::Results(results) => {
-                            let rows = check_rows_ref.borrow();
-                            let icons = check_icons_ref.borrow();
-                            for (i, result) in results.iter().enumerate() {
-                                if let Some(row) = rows.get(i) {
-                                    row.set_subtitle(&result.message);
+                        let mut all_passed = true;
+                        while let Ok(msg) = check_rx.recv().await {
+                            match msg {
+                                CheckMsg::Log(line) => {
+                                    log_panel.append_line(&line);
                                 }
-                                if let Some(icon) = icons.get(i) {
-                                    if result.passed {
-                                        icon.set_icon_name(Some("emblem-ok-symbolic"));
-                                    } else {
-                                        icon.set_icon_name(Some("dialog-error-symbolic"));
-                                        all_passed = false;
+                                CheckMsg::Results(results) => {
+                                    let rows = check_rows.borrow();
+                                    let icons = check_icons.borrow();
+                                    for (i, result) in results.iter().enumerate() {
+                                        if let Some(row) = rows.get(i) {
+                                            row.set_subtitle(&result.message);
+                                        }
+                                        if let Some(icon) = icons.get(i) {
+                                            if result.passed {
+                                                icon.set_icon_name(Some("emblem-ok-symbolic"));
+                                            } else {
+                                                icon.set_icon_name(Some(
+                                                    "dialog-error-symbolic",
+                                                ));
+                                                all_passed = false;
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
+
+                        *all_checks_passed.borrow_mut() = all_passed;
+                        (*recompute_state)();
+
+                        button.set_sensitive(true);
                     }
-                }
-
-                *all_checks_passed_ref.borrow_mut() = all_passed;
-                recompute_ref();
-
-                button_ref.set_sensitive(true);
-            });
-        });
+                ));
+            }
+        ));
 
         // Wire up upgrade button
-        let log_clone2 = log_panel.clone();
-        let distro_state_for_upgrade = distro_info_state.clone();
-        let nixos_config_type_for_upgrade = nixos_config_type.clone();
+        upgrade_button.connect_clicked(glib::clone!(
+            #[strong] log_panel,
+            #[strong] distro_info_state,
+            #[strong] nixos_config_type,
+            => move |button| {
+                let Some(distro) = distro_info_state.borrow().clone() else {
+                    return;
+                };
 
-        upgrade_button.connect_clicked(move |button| {
-            let Some(distro) = distro_state_for_upgrade.borrow().clone() else {
-                return;
-            };
+                // NixOS Flake: show informational dialog only — do NOT run an upgrade
+                if *nixos_config_type.borrow() == Some(upgrade::NixOsConfigType::Flake) {
+                    let next_ch = upgrade::next_nixos_channel(&distro.version_id)
+                        .unwrap_or_else(|| "the next NixOS release".to_string());
+                    let next_ver = next_ch.trim_start_matches("nixos-").to_string();
+                    let current_ver = distro.version_id.clone();
 
-            // NixOS Flake: show informational dialog only — do NOT run an upgrade
-            if *nixos_config_type_for_upgrade.borrow() == Some(upgrade::NixOsConfigType::Flake) {
-                let next_ch = upgrade::next_nixos_channel(&distro.version_id)
-                    .unwrap_or_else(|| "the next NixOS release".to_string());
-                let next_ver = next_ch.trim_start_matches("nixos-").to_string();
-                let current_ver = distro.version_id.clone();
+                    let dialog = adw::AlertDialog::builder()
+                        .heading("Upgrade via Flake")
+                        .body(format!(
+                            "NixOS {next_ver} may be available, but this system uses Nix Flakes.\n\n\
+                             To upgrade, edit /etc/nixos/flake.nix and update your nixpkgs input \
+                             to point to the new release:\n\n\
+                             \u{2022} Change:  github:NixOS/nixpkgs/nixos-{current_ver}\n\
+                             \u{2022} To:      github:NixOS/nixpkgs/nixos-{next_ver}\n\n\
+                             Then run:\n\
+                             \u{2022} sudo nix flake update /etc/nixos\n\
+                             \u{2022} sudo nixos-rebuild switch --flake /etc/nixos"
+                        ))
+                        .build();
+                    dialog.add_response("close", "Close");
+                    dialog.set_default_response(Some("close"));
+                    dialog.set_close_response("close");
+                    dialog.present(Some(button));
+                    return;
+                }
 
+                // All other distros (including NixOS LegacyChannel): destructive confirm dialog
                 let dialog = adw::AlertDialog::builder()
-                    .heading("Upgrade via Flake")
+                    .heading("Confirm System Upgrade")
                     .body(format!(
-                        "NixOS {next_ver} may be available, but this system uses Nix Flakes.\n\n\
-                         To upgrade, edit /etc/nixos/flake.nix and update your nixpkgs input \
-                         to point to the new release:\n\n\
-                         \u{2022} Change:  github:NixOS/nixpkgs/nixos-{current_ver}\n\
-                         \u{2022} To:      github:NixOS/nixpkgs/nixos-{next_ver}\n\n\
-                         Then run:\n\
-                         \u{2022} sudo nix flake update /etc/nixos\n\
-                         \u{2022} sudo nixos-rebuild switch --flake /etc/nixos"
+                        "This will upgrade {} from version {} to the next major release.\n\n\
+                        This operation may take a long time and require a reboot.\n\n\
+                        Are you sure you want to continue?",
+                        distro.name, distro.version
                     ))
                     .build();
-                dialog.add_response("close", "Close");
-                dialog.set_default_response(Some("close"));
-                dialog.set_close_response("close");
+
+                dialog.add_response("cancel", "Cancel");
+                dialog.add_response("upgrade", "Upgrade");
+                dialog.set_response_appearance("upgrade", adw::ResponseAppearance::Destructive);
+                dialog.set_default_response(Some("cancel"));
+                dialog.set_close_response("cancel");
+
+                dialog.connect_response(None, glib::clone!(
+                    #[strong] log_panel,
+                    #[weak]   button,
+                    => move |_dialog, response| {
+                        if response == "upgrade" {
+                            button.set_sensitive(false);
+                            log_panel.clear();
+
+                            let distro2 = distro.clone();
+                            glib::spawn_future_local(glib::clone!(
+                                #[strong] log_panel,
+                                #[weak]   button,
+                                => async move {
+                                    let (tx, rx) = async_channel::unbounded::<String>();
+                                    let tx_clone = tx.clone();
+                                    let (result_tx, result_rx) =
+                                        async_channel::bounded::<Result<(), String>>(1);
+
+                                    std::thread::spawn(move || {
+                                        let outcome =
+                                            upgrade::execute_upgrade(&distro2, &tx_clone);
+                                        drop(tx_clone);
+                                        let _ = result_tx.send_blocking(outcome);
+                                    });
+
+                                    drop(tx);
+
+                                    while let Ok(line) = rx.recv().await {
+                                        log_panel.append_line(&line);
+                                    }
+
+                                    let outcome =
+                                        result_rx.recv().await.unwrap_or_else(|_| {
+                                            Err("Upgrade result channel closed unexpectedly"
+                                                .to_string())
+                                        });
+                                    button.set_sensitive(true);
+
+                                    match outcome {
+                                        Ok(()) => {
+                                            crate::ui::reboot_dialog::show_reboot_dialog(
+                                                &button,
+                                            );
+                                        }
+                                        Err(e) => {
+                                            log_panel.append_line(&format!(
+                                                "Upgrade failed: {e}"
+                                            ));
+                                        }
+                                    }
+                                }
+                            ));
+                        }
+                    }
+                ));
+
+                // Present dialog requires a parent widget
                 dialog.present(Some(button));
-                return;
             }
-
-            // All other distros (including NixOS LegacyChannel): destructive confirm dialog
-            let dialog = adw::AlertDialog::builder()
-                .heading("Confirm System Upgrade")
-                .body(format!(
-                    "This will upgrade {} from version {} to the next major release.\n\n\
-                    This operation may take a long time and require a reboot.\n\n\
-                    Are you sure you want to continue?",
-                    distro.name, distro.version
-                ))
-                .build();
-
-            dialog.add_response("cancel", "Cancel");
-            dialog.add_response("upgrade", "Upgrade");
-            dialog.set_response_appearance("upgrade", adw::ResponseAppearance::Destructive);
-            dialog.set_default_response(Some("cancel"));
-            dialog.set_close_response("cancel");
-
-            let log_ref = log_clone2.clone();
-            let button_ref = button.clone();
-
-            dialog.connect_response(None, move |_dialog, response| {
-                if response == "upgrade" {
-                    button_ref.set_sensitive(false);
-                    log_ref.clear();
-
-                    let log_ref2 = log_ref.clone();
-                    let distro2 = distro.clone();
-                    let button_ref2 = button_ref.clone();
-                    let button_ref3 = button_ref.clone();
-
-                    glib::spawn_future_local(async move {
-                        let (tx, rx) = async_channel::unbounded::<String>();
-                        let tx_clone = tx.clone();
-                        let (result_tx, result_rx) =
-                            async_channel::bounded::<Result<(), String>>(1);
-
-                        std::thread::spawn(move || {
-                            let outcome = upgrade::execute_upgrade(&distro2, &tx_clone);
-                            drop(tx_clone);
-                            let _ = result_tx.send_blocking(outcome);
-                        });
-
-                        drop(tx);
-
-                        while let Ok(line) = rx.recv().await {
-                            log_ref2.append_line(&line);
-                        }
-
-                        let outcome = result_rx.recv().await.unwrap_or_else(|_| {
-                            Err("Upgrade result channel closed unexpectedly".to_string())
-                        });
-                        button_ref2.set_sensitive(true);
-
-                        match outcome {
-                            Ok(()) => {
-                                crate::ui::reboot_dialog::show_reboot_dialog(&button_ref3);
-                            }
-                            Err(e) => {
-                                log_ref2.append_line(&format!("Upgrade failed: {e}"));
-                            }
-                        }
-                    });
-                }
-            });
-
-            // Present dialog requires a parent widget
-            let widget = button.clone();
-            dialog.present(Some(&widget));
-        });
+        ));
 
         clamp.set_child(Some(&content_box));
         scrolled.set_child(Some(&clamp));
@@ -349,91 +363,96 @@ impl UpgradePage {
         let (init_tx, init_rx) = async_channel::bounded::<upgrade::UpgradePageInit>(1);
 
         {
-            let nixos_config_type_fill = nixos_config_type.clone();
-            let flake_banner_fill = flake_banner.clone();
-            let distro_state_fill = distro_info_state.clone();
-            let upgrade_available_row_fill = upgrade_available_row.clone();
-            let info_group_fill = info_group.clone();
-            let check_rows_fill = check_rows.clone();
-            let upgrade_available_fill = upgrade_available.clone();
-            let check_btn_fill = check_button.clone();
-            let recompute_state_for_init = recompute_state.clone();
+            glib::spawn_future_local(glib::clone!(
+                #[strong] nixos_config_type,
+                #[weak]   flake_banner,
+                #[strong] distro_info_state,
+                #[weak]   upgrade_available_row,
+                #[weak]   info_group,
+                #[strong] check_rows,
+                #[strong] upgrade_available,
+                #[weak]   check_button,
+                #[strong] recompute_state,
+                => async move {
+                    if let Ok(init) = init_rx.recv().await {
+                        let info = init.distro;
+                        let nixos_extra = init.nixos_extra;
 
-            glib::spawn_future_local(async move {
-                if let Ok(init) = init_rx.recv().await {
-                    let info = init.distro;
-                    let nixos_extra = init.nixos_extra;
-
-                    upgrade_available_row_fill.set_subtitle(if info.upgrade_supported {
-                        "Checking\u{2026}"
-                    } else {
-                        "Not supported for this distribution yet"
-                    });
-
-                    // Conditionally add NixOS config row
-                    if let Some((config_type, raw_hostname)) = &nixos_extra {
-                        let safe_hostname = glib::markup_escape_text(raw_hostname);
-                        let config_label = match config_type {
-                            upgrade::NixOsConfigType::Flake => {
-                                format!("Flake-based (/etc/nixos#{})", safe_hostname)
-                            }
-                            upgrade::NixOsConfigType::LegacyChannel => {
-                                "Channel-based (/etc/nixos/configuration.nix)".to_string()
-                            }
-                        };
-                        let config_row = adw::ActionRow::builder()
-                            .title("NixOS Config Type")
-                            .subtitle(&config_label)
-                            .build();
-                        config_row
-                            .add_prefix(&gtk::Image::from_icon_name("emblem-system-symbolic"));
-                        info_group_fill.add(&config_row);
-                        // Store config type and reveal banner for flake systems
-                        *nixos_config_type_fill.borrow_mut() = Some(config_type.clone());
-                        if *config_type == upgrade::NixOsConfigType::Flake {
-                            flake_banner_fill.set_revealed(true);
-                        }
-                        // Update first check row title for NixOS
-                        if let Some(row) = check_rows_fill.borrow().first() {
-                            row.set_title("nixos-rebuild available");
-                        }
-                    }
-
-                    // Store distro info
-                    *distro_state_fill.borrow_mut() = Some(info.clone());
-
-                    // Spawn upgrade availability check if supported
-                    if info.upgrade_supported {
-                        let upgrade_row_clone = upgrade_available_row_fill.clone();
-                        let distro_check = info.clone();
-                        let upgrade_available_clone = upgrade_available_fill.clone();
-                        let recompute_for_avail = recompute_state_for_init.clone();
-                        glib::spawn_future_local(async move {
-                            let (tx, rx) = async_channel::unbounded::<String>();
-                            std::thread::spawn(move || {
-                                let result = upgrade::check_upgrade_available(&distro_check);
-                                let _ = tx.send_blocking(result);
-                                drop(tx);
-                            });
-                            if let Ok(result_msg) = rx.recv().await {
-                                let is_available = result_msg.starts_with("Yes");
-                                *upgrade_available_clone.borrow_mut() = is_available;
-                                upgrade_row_clone.set_subtitle(&result_msg);
-                                recompute_for_avail();
-                            } else {
-                                upgrade_row_clone
-                                    .set_subtitle("Could not determine upgrade availability");
-                            }
+                        upgrade_available_row.set_subtitle(if info.upgrade_supported {
+                            "Checking\u{2026}"
+                        } else {
+                            "Not supported for this distribution yet"
                         });
-                    }
 
-                    // Enable check button and auto-trigger checks if supported
-                    check_btn_fill.set_sensitive(true);
-                    if info.upgrade_supported {
-                        check_btn_fill.emit_clicked();
+                        // Conditionally add NixOS config row
+                        if let Some((config_type, raw_hostname)) = &nixos_extra {
+                            let safe_hostname = glib::markup_escape_text(raw_hostname);
+                            let config_label = match config_type {
+                                upgrade::NixOsConfigType::Flake => {
+                                    format!("Flake-based (/etc/nixos#{})", safe_hostname)
+                                }
+                                upgrade::NixOsConfigType::LegacyChannel => {
+                                    "Channel-based (/etc/nixos/configuration.nix)".to_string()
+                                }
+                            };
+                            let config_row = adw::ActionRow::builder()
+                                .title("NixOS Config Type")
+                                .subtitle(&config_label)
+                                .build();
+                            config_row
+                                .add_prefix(&gtk::Image::from_icon_name("emblem-system-symbolic"));
+                            info_group.add(&config_row);
+                            // Store config type and reveal banner for flake systems
+                            *nixos_config_type.borrow_mut() = Some(config_type.clone());
+                            if *config_type == upgrade::NixOsConfigType::Flake {
+                                flake_banner.set_revealed(true);
+                            }
+                            // Update first check row title for NixOS
+                            if let Some(row) = check_rows.borrow().first() {
+                                row.set_title("nixos-rebuild available");
+                            }
+                        }
+
+                        // Store distro info
+                        *distro_info_state.borrow_mut() = Some(info.clone());
+
+                        // Spawn upgrade availability check if supported
+                        if info.upgrade_supported {
+                            let distro_check = info.clone();
+                            glib::spawn_future_local(glib::clone!(
+                                #[weak]   upgrade_available_row,
+                                #[strong] upgrade_available,
+                                #[strong] recompute_state,
+                                => async move {
+                                    let (tx, rx) = async_channel::unbounded::<String>();
+                                    std::thread::spawn(move || {
+                                        let result =
+                                            upgrade::check_upgrade_available(&distro_check);
+                                        let _ = tx.send_blocking(result);
+                                        drop(tx);
+                                    });
+                                    if let Ok(result_msg) = rx.recv().await {
+                                        let is_available = result_msg.starts_with("Yes");
+                                        *upgrade_available.borrow_mut() = is_available;
+                                        upgrade_available_row.set_subtitle(&result_msg);
+                                        (*recompute_state)();
+                                    } else {
+                                        upgrade_available_row.set_subtitle(
+                                            "Could not determine upgrade availability",
+                                        );
+                                    }
+                                }
+                            ));
+                        }
+
+                        // Enable check button and auto-trigger checks if supported
+                        check_button.set_sensitive(true);
+                        if info.upgrade_supported {
+                            check_button.emit_clicked();
+                        }
                     }
                 }
-            });
+            ));
         }
 
         (page_box, init_tx)

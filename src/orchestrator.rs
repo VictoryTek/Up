@@ -102,15 +102,7 @@ impl UpdateOrchestrator {
 fn spawn_background<F, Fut>(f: F)
 where
     F: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = ()>,
+    Fut: Future<Output = ()> + Send + 'static,
 {
-    std::thread::spawn(move || {
-        match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(rt) => rt.block_on(f()),
-            Err(e) => eprintln!("Failed to build Tokio runtime: {e}"),
-        }
-    });
+    drop(crate::runtime::runtime().spawn(f()));
 }
