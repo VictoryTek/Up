@@ -11,7 +11,7 @@
 - **Persistent privileged `pkexec sh` shell** in `src/runner.rs` uses a stdout sentinel (`___UP_RC_<n>___`) that any spawned subprocess can spoof, causing Up to misreport exit status. No per-command timeout, no cancellation, no SIGINT forwarding.
 - **Significant code duplication**: `validate_hostname` exists in both `upgrade.rs` and `nix.rs`; availability-check and `pkexec` scaffolding are repeated across every backend with subtle parsing differences.
 - **Hidden panics**: `.expect("distro info must be available …")` in `src/ui/upgrade_page.rs` and `rows.borrow()[idx]` in `src/ui/window.rs` can panic the GTK main loop.
-- **Fake progress UI**: `src/ui/update_row.rs` animates a progress bar 0→0.95 on a timer, unrelated to actual progress.
+- **Fake progress UI — FIXED.** `src/ui/update_row.rs` fake `ProgressBar` + 200 ms timer removed; `gtk::Spinner` is now the sole in-progress indicator.
 - **Two parallel command-execution code paths** — `tokio::process::Command` in `runner.rs` vs `std::process::Command` in `upgrade.rs` — no shared abstraction, divergent error reporting.
 - **No timeouts, no cancellation** anywhere. A stuck `apt`/`dnf` waiting on a dpkg lock will hang the UI button forever.
 - **Versioning is hand-synced across three places** (`Cargo.toml`, `meson.build`, `flake.nix`) — guaranteed to drift.
@@ -68,9 +68,9 @@
 
 ### 5. Performance
 - [ ] **[MED]** Create a single shared Tokio runtime in `main` instead of one fresh runtime per background spawn (`src/ui/mod.rs`)
-- [ ] **[MED]** Cap `LogPanel` buffer at ~5000 lines with FIFO eviction (`src/ui/log_panel.rs`)
-- [ ] **[LOW]** Debounce `scroll_mark_onscreen` to ~50–100 ms instead of per-line (`src/ui/log_panel.rs`)
-- [ ] **[LOW]** Drop fake progress bar — use indeterminate spinner only, or parse real percentages from apt/dnf/flatpak (`src/ui/update_row.rs`)
+- [x] **[MED]** Cap `LogPanel` buffer at ~5000 lines with FIFO eviction (`src/ui/log_panel.rs`)
+- [x] **[LOW]** Debounce `scroll_mark_onscreen` to ~50–100 ms instead of per-line (`src/ui/log_panel.rs`)
+- [x] **[LOW]** Drop fake progress bar — replaced with `gtk::Spinner` (`src/ui/update_row.rs`)
 - [ ] **[LOW]** Replace `curl` shell-outs in `upgrade.rs` with `ureq` or `reqwest` (removes runtime dep, gives proper timeouts)
 - [ ] **[LOW]** Use `rt-multi-thread` Tokio feature + a shared runtime instead of per-thread `current_thread` runtimes
 
@@ -221,8 +221,8 @@
 | 7.1 | Project root | ~~Critical~~ N/A | Flatpak distribution retired. `io.github.up.json` will not be created. |
 | 7.2 | `.github/workflows/` | High | No release-tag workflow or artifact upload. Flatpak CI is N/A (distribution retired). |
 | 7.3 | `scripts/` | ~~High~~ N/A | `build-flatpak.sh` and `verify-flatpak.sh` will not be created (Flatpak distribution retired). |
-| 7.4 | `Cargo.toml` | High | `repository = "https://github.com/user/up"` is a placeholder. |
-| 7.5 | `data/io.github.up.metainfo.xml` | High | `<url type="homepage">` and `bugtracker` point to `github.com/user/up`. |
+| 7.4 | `Cargo.toml` | ~~High~~ FIXED | `repository` now correctly points to `https://github.com/VictoryTek/Up`. |
+| 7.5 | `data/io.github.up.metainfo.xml` | ~~High~~ FIXED | `<url type="homepage">` and `bugtracker` now correctly reference `VictoryTek/Up`. |
 | 7.6 | `meson.build` | Medium | `cargo_build` shells out to `cargo` and copies from `target/<profile>` from `srcdir`. Bypasses out-of-tree build hygiene; `build_always_stale: true` defeats incremental builds. |
 | 7.7 | Version sync | Medium | `1.0.3` is hard-coded in `Cargo.toml`, `meson.build`, `flake.nix`. Manual sync at every release. |
 | 7.8 | `scripts/preflight.sh` | Medium | Does not validate `flake.nix` (`nix flake check`), does not run `cargo audit`/`cargo deny`. |
@@ -243,10 +243,10 @@
 4. ~~Ship `io.github.up.policy` with scoped polkit actions~~ ✓
 5. ~~Introduce `CommandExecutor` trait + `MockExecutor` + parser unit tests per backend~~ ✓
 6. ~~Replace `String` errors with `thiserror` enums~~ ✓
-7. **Cap `LogPanel` buffer; debounce auto-scroll; drop fake progress** ← NEXT
+7. ~~Cap `LogPanel` buffer; debounce auto-scroll; drop fake progress~~ ✓
 8. ~~Sandbox-aware NixOS / Determinate detection~~ ✓
 9. ~~Add timeouts + cancellation to all command execution~~ ✓
-10. Replace `curl` shell-outs with `ureq`
+10. **Replace `curl` shell-outs with `ureq`** ← NEXT
 11. Auto-source version in `meson.build` and `flake.nix`
 12. Ship per-backend skip checkboxes + Preview button
 13. Add `cargo audit` / `cargo deny` / `nix flake check` to preflight + CI

@@ -1,5 +1,7 @@
 use super::detect::DistroInfo;
+use std::io::Read;
 use std::process::Command;
+use std::time::Duration;
 
 /// Structured result of an Ubuntu upgrade availability check.
 #[derive(Debug, Clone)]
@@ -53,22 +55,30 @@ fn parse_ubuntu_version(version: &str) -> Option<(u32, u32)> {
     Some((major, minor))
 }
 
+/// Construct a shared HTTP agent with a 10-second global timeout.
+fn http_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(10)))
+        .build()
+        .new_agent()
+}
+
 /// Fetch the Ubuntu meta-release file via curl and return its content.
 fn fetch_ubuntu_meta_release(policy: &str) -> Result<String, String> {
     let url = match policy {
         "normal" => "https://changelogs.ubuntu.com/meta-release",
         _ => "https://changelogs.ubuntu.com/meta-release-lts",
     };
-    let output = Command::new("curl")
-        .args(["-sf", "--max-time", "10", url])
-        .output()
-        .map_err(|e| format!("curl not found: {e}"))?;
-    if !output.status.success() {
-        let code = output.status.code().unwrap_or(-1);
-        return Err(format!("curl exited with code {code}"));
-    }
-    String::from_utf8(output.stdout)
-        .map_err(|e| format!("meta-release response is not valid UTF-8: {e}"))
+    let agent = http_agent();
+    let mut body = String::new();
+    agent
+        .get(url)
+        .call()
+        .map_err(|e| format!("HTTP request failed: {e}"))?
+        .into_body()
+        .read_to_string(&mut body)
+        .map_err(|e| format!("meta-release response is not valid UTF-8: {e}"))?;
+    Ok(body)
 }
 
 /// Parse the Ubuntu meta-release content and find the first release newer than
@@ -186,29 +196,18 @@ fn check_ubuntu_upgrade(version_id: &str) -> String {
 fn check_fedora_upgrade(current_version_id: &str) -> String {
     let current: u32 = current_version_id.parse().unwrap_or(0);
     let next = current + 1;
-    match Command::new("curl")
-        .args([
-            "-s",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            &format!(
-                "https://dl.fedoraproject.org/pub/fedora/linux/releases/{}/Everything/x86_64/os/",
-                next
-            ),
-        ])
-        .output()
-    {
-        Ok(output) => {
-            let code = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if code == "200" || code == "301" || code == "302" {
-                format!("Yes — Fedora {} is available", next)
-            } else {
-                format!("No — Fedora {} not yet released", next)
-            }
+    let url = format!(
+        "https://dl.fedoraproject.org/pub/fedora/linux/releases/{}/Everything/x86_64/os/",
+        next
+    );
+    let agent = http_agent();
+    match agent.get(&url).call() {
+        Ok(_) => format!("Yes — Fedora {} is available", next),
+        Err(ureq::Error::StatusCode(_)) => format!("No — Fedora {} not yet released", next),
+        Err(e) => {
+            log::warn!("Could not check Fedora upgrade availability: {e}");
+            format!("Could not check for Fedora upgrade: {e}")
         }
-        Err(_) => "Could not check (curl not found)".to_string(),
     }
 }
 
@@ -231,32 +230,21 @@ fn check_opensuse_upgrade(version_id: &str) -> String {
     let Some(next_version) = next_opensuse_leap_version(version_id) else {
         return "Could not parse current openSUSE Leap version".to_string();
     };
-    match Command::new("curl")
-        .args([
-            "-s",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            &format!(
-                "https://download.opensuse.org/distribution/leap/{}/repo/oss/",
-                next_version
-            ),
-        ])
-        .output()
-    {
-        Ok(output) => {
-            let code = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if code == "200" || code == "301" || code == "302" {
-                format!("Yes \u{2014} openSUSE Leap {} is available", next_version)
-            } else {
-                format!(
-                    "No \u{2014} openSUSE Leap {} not yet released",
-                    next_version
-                )
-            }
+    let url = format!(
+        "https://download.opensuse.org/distribution/leap/{}/repo/oss/",
+        next_version
+    );
+    let agent = http_agent();
+    match agent.get(&url).call() {
+        Ok(_) => format!("Yes \u{2014} openSUSE Leap {} is available", next_version),
+        Err(ureq::Error::StatusCode(_)) => format!(
+            "No \u{2014} openSUSE Leap {} not yet released",
+            next_version
+        ),
+        Err(e) => {
+            log::warn!("Could not check openSUSE upgrade availability: {e}");
+            format!("Could not check for openSUSE Leap upgrade: {e}")
         }
-        Err(_) => "Could not check (curl not found)".to_string(),
     }
 }
 
@@ -314,26 +302,17 @@ fn check_nixos_upgrade(current_version_id: &str) -> String {
         return "Could not parse current NixOS version".to_string();
     };
     let version_label = next_channel.trim_start_matches("nixos-");
-    match Command::new("curl")
-        .args([
-            "-s",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            &format!("https://channels.nixos.org/{}", next_channel),
-        ])
-        .output()
-    {
-        Ok(output) => {
-            let code = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if code == "200" || code == "301" || code == "302" {
-                format!("Yes — NixOS {} is available", version_label)
-            } else {
-                format!("No — NixOS {} not yet available", version_label)
-            }
+    let url = format!("https://channels.nixos.org/{}", next_channel);
+    let agent = http_agent();
+    match agent.get(&url).call() {
+        Ok(_) => format!("Yes — NixOS {} is available", version_label),
+        Err(ureq::Error::StatusCode(_)) => {
+            format!("No — NixOS {} not yet available", version_label)
         }
-        Err(_) => "Could not check (curl not found)".to_string(),
+        Err(e) => {
+            log::warn!("Could not check NixOS upgrade availability: {e}");
+            format!("Could not check for NixOS upgrade: {e}")
+        }
     }
 }
 

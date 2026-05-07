@@ -20,6 +20,7 @@ log = "0.4"
 env_logger = "0.11"
 which = "7"
 thiserror = "2"
+ureq = "3"
 
 [profile.release]
 opt-level = "s"
