@@ -13,7 +13,6 @@ const EVICT_BATCH: i32 = 100;
 pub struct LogPanel {
     pub expander: gtk::Expander,
     text_view: gtk::TextView,
-    scroll_mark: gtk::TextMark,
     scroll_pending: Rc<Cell<bool>>,
 }
 
@@ -45,12 +44,11 @@ impl LogPanel {
 
         let buffer = text_view.buffer();
         let end_iter = buffer.end_iter();
-        let scroll_mark = buffer.create_mark(Some("scroll-end"), &end_iter, false);
+        buffer.create_mark(Some("scroll-end"), &end_iter, false);
 
         Self {
             expander,
             text_view,
-            scroll_mark,
             scroll_pending: Rc::new(Cell::new(false)),
         }
     }
