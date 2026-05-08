@@ -1,8 +1,9 @@
 use adw::prelude::*;
+use gtk::glib;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use crate::backends::Backend;
+use crate::backends::{Backend, BackendKind};
 
 #[derive(Clone)]
 pub struct UpdateRow {
@@ -17,6 +18,9 @@ pub struct UpdateRow {
     last_available: Rc<Cell<Option<usize>>>,
     skip_checkbox: gtk::CheckButton,
     retry_button: gtk::Button,
+    backend_kind: BackendKind,
+    packages_cache: Rc<RefCell<Vec<String>>>,
+    changelog_row: adw::ActionRow,
 }
 
 impl UpdateRow {
@@ -96,6 +100,93 @@ impl UpdateRow {
             });
         }
 
+        let backend_kind = backend.kind();
+        let packages_cache: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+
+        let changelog_row = adw::ActionRow::builder()
+            .title("View Changelog")
+            .visible(false)
+            .build();
+
+        let changelog_button = gtk::Button::from_icon_name("document-open-symbolic");
+        changelog_button.set_valign(gtk::Align::Center);
+        changelog_button.add_css_class("flat");
+        changelog_button.set_focusable(false);
+        changelog_button.update_property(&[gtk::accessible::Property::Label("View Changelog")]);
+        changelog_row.add_suffix(&changelog_button);
+
+        if backend_kind != BackendKind::Nix {
+            let packages_cache_click = packages_cache.clone();
+            let row_weak = row.downgrade();
+            let btn_weak = changelog_button.downgrade();
+
+            changelog_button.connect_clicked(move |btn| {
+                let pkgs: Vec<String> = packages_cache_click.borrow().clone();
+                let kind = backend_kind;
+
+                btn.set_sensitive(false);
+
+                let (tx, rx) = async_channel::bounded(1);
+                crate::runtime::runtime().spawn(async move {
+                    let result = crate::changelog::fetch_changelog(kind, &pkgs).await;
+                    let _ = tx.send(result).await;
+                });
+
+                let row_ref = row_weak.clone();
+                let btn_ref = btn_weak.clone();
+                glib::spawn_future_local(async move {
+                    if let Ok(result) = rx.recv().await {
+                        if let Some(btn) = btn_ref.upgrade() {
+                            btn.set_sensitive(true);
+                        }
+                        let text = match result {
+                            Ok(t) => t,
+                            Err(crate::changelog::ChangelogError::NotSupported) => return,
+                            Err(e) => format!("Error fetching changelog:\n{e}"),
+                        };
+
+                        let heading = match kind {
+                            BackendKind::Pacman | BackendKind::Zypper => "Package Info",
+                            _ => "Changelog",
+                        };
+
+                        let dialog = adw::AlertDialog::builder()
+                            .heading(heading)
+                            .body("")
+                            .build();
+
+                        let text_view = gtk::TextView::builder()
+                            .editable(false)
+                            .cursor_visible(false)
+                            .wrap_mode(gtk::WrapMode::Word)
+                            .monospace(true)
+                            .margin_top(8)
+                            .margin_bottom(8)
+                            .margin_start(8)
+                            .margin_end(8)
+                            .build();
+                        text_view.buffer().set_text(&text);
+
+                        let scrolled = gtk::ScrolledWindow::builder()
+                            .child(&text_view)
+                            .min_content_height(300)
+                            .max_content_height(500)
+                            .hscrollbar_policy(gtk::PolicyType::Never)
+                            .build();
+                        dialog.set_extra_child(Some(&scrolled));
+                        dialog.add_response("close", "Close");
+                        dialog.set_default_response(Some("close"));
+                        dialog.set_close_response("close");
+
+                        let parent = row_ref.upgrade();
+                        dialog.present(parent.as_ref());
+                    }
+                });
+            });
+        }
+
+        row.add_row(&changelog_row);
+
         Self {
             row,
             status_label,
@@ -105,6 +196,9 @@ impl UpdateRow {
             last_available,
             skip_checkbox,
             retry_button,
+            backend_kind,
+            packages_cache,
+            changelog_row,
         }
     }
 
@@ -123,6 +217,9 @@ impl UpdateRow {
     /// Clears any previously added rows before adding new ones.
     /// Caps display at 50 items with a summary row for the remainder.
     pub fn set_packages(&self, packages: &[String]) {
+        // Update the cache used by the changelog button.
+        *self.packages_cache.borrow_mut() = packages.to_vec();
+
         // Remove previously added package rows to avoid duplicates on re-check.
         {
             let mut tracked = self.pkg_rows.borrow_mut();
@@ -130,10 +227,16 @@ impl UpdateRow {
                 self.row.remove(&pkg_row);
             }
         }
+
+        // Remove the changelog row so it can be re-appended at the bottom.
+        self.row.remove(&self.changelog_row);
+
         // Hide the expand arrow when there is nothing to expand.
         self.row.set_enable_expansion(!packages.is_empty());
         if packages.is_empty() {
             self.row.set_expanded(false);
+            self.changelog_row.set_visible(false);
+            self.row.add_row(&self.changelog_row);
             return;
         }
         const MAX_PACKAGES: usize = 50;
@@ -152,6 +255,11 @@ impl UpdateRow {
             self.row.add_row(&more_row);
             tracked.push(more_row);
         }
+        // Re-append changelog row at the bottom; hidden for Nix (which returns
+        // an empty package list anyway, but guard defensively).
+        self.changelog_row
+            .set_visible(self.backend_kind != BackendKind::Nix);
+        self.row.add_row(&self.changelog_row);
     }
 
     pub fn set_status_checking(&self) {

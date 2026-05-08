@@ -1,6 +1,7 @@
 mod app;
 mod backends;
 mod battery;
+mod changelog;
 mod config;
 mod executor;
 mod history;

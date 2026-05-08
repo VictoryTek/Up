@@ -104,7 +104,7 @@
 - [x] **Cancel running update** — close privileged shell stdin; propagate `Cancelled` to each row
 - [x] **fwupd firmware backend** — `fwupdmgr get-updates` / `fwupdmgr update -y` as a new `Backend` impl
 - [x] **Snapshot integration** — detect Snapper / Timeshift / btrfs root; offer pre-update snapshot
-- [ ] **Update changelog viewer** — `apt changelog`, `dnf updateinfo info`, OSTree commit summaries per row
+- [x] **Update changelog viewer** — `apt changelog`, `dnf updateinfo info`, OSTree commit summaries per row
 - [ ] **Localization** — `gettext-rs` + `po/` directory
 - [ ] **Scheduled background checks** — systemd user timer + `notify-send` (out-of-process; no persistent daemon)
 - [ ] **Disk-space pre-check** — surface transaction size from APT/DNF/Flatpak before applying
