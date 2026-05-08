@@ -97,7 +97,7 @@ impl UpdateRow {
                                     &ngettext(
                                         "1 package available",
                                         "{} packages available",
-                                        count as u64,
+                                        count as u32,
                                     )
                                     .replace("{}", &count.to_string()),
                                 );
@@ -294,7 +294,7 @@ impl UpdateRow {
                     ngettext(
                         "\u{2026} and 1 more",
                         "\u{2026} and {} more",
-                        remaining as u64,
+                        remaining as u32,
                     )
                     .replace("{}", &remaining.to_string())
                     .as_str(),

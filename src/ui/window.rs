@@ -281,10 +281,10 @@ impl UpWindow {
                                     status_label.set_label(&gettext("Running maintenance\u{2026}"));
                                 }
                                 OrchestratorEvent::AuthFailed(e) => {
-                                    log_panel.append_line(&format!(
-                                        gettext("Authentication failed: {}"),
-                                        e
-                                    ));
+                                    log_panel.append_line(
+                                        &gettext("Authentication failed: {}")
+                                            .replace("{}", &e.to_string()),
+                                    );
                                     status_label.set_label(&gettext("Maintenance cancelled."));
                                     update_in_progress.set(false);
                                     return;
@@ -522,10 +522,8 @@ impl UpWindow {
                 if !bypass_battery.get() {
                     if let Some(bat) = crate::battery::read_battery() {
                         if bat.discharging && bat.capacity < 40 {
-                            let msg = format!(
-                                gettext("Battery is at {}% and discharging. Updates may be interrupted if the device shuts down. Continue anyway?"),
-                                bat.capacity
-                            );
+                            let msg = gettext("Battery is at {}% and discharging. Updates may be interrupted if the device shuts down. Continue anyway?")
+                                .replace("{}", &bat.capacity.to_string());
                             let dialog = adw::AlertDialog::new(Some(&gettext("Low Battery")), Some(&msg));
                             dialog.add_response("cancel", &gettext("Cancel"));
                             dialog.add_response("update", &gettext("Update Anyway"));
@@ -808,7 +806,10 @@ impl UpWindow {
                                     status_label.set_label(&gettext("Updating\u{2026}"));
                                 }
                                 OrchestratorEvent::AuthFailed(e) => {
-                                    log_panel.append_line(&format!(gettext("Authentication failed: {}"), e));
+                                    log_panel.append_line(
+                                        &gettext("Authentication failed: {}")
+                                            .replace("{}", &e.to_string()),
+                                    );
                                     status_label.set_label(&gettext("Update cancelled."));
                                     cancel_button.set_visible(false);
                                     cancel_handle.borrow_mut().take();

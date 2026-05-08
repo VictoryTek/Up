@@ -300,14 +300,15 @@ impl UpgradePage {
                 // All other distros (including NixOS LegacyChannel): destructive confirm dialog
                 let dialog = adw::AlertDialog::builder()
                     .heading(gettext("Confirm System Upgrade"))
-                    .body(format!(
+                    .body(
                         gettext(
                             "This will upgrade {} from version {} to the next major release.\n\n\
                         This operation may take a long time and require a reboot.\n\n\
-                        Are you sure you want to continue?"
-                        ),
-                        distro.name, distro.version
-                    ))
+                        Are you sure you want to continue?",
+                        )
+                        .replace("{}", &distro.name)
+                        .replacen("{}", &distro.version, 1),
+                    )
                     .build();
 
                 dialog.add_response("cancel", &gettext("Cancel"));
