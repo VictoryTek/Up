@@ -5,6 +5,7 @@ use crate::ui::update_row::UpdateRow;
 use crate::ui::upgrade_page::UpgradePage;
 use crate::upgrade;
 use adw::prelude::*;
+use gettextrs::{gettext, ngettext};
 use gtk::gio;
 use gtk::glib;
 use std::cell::{Cell, RefCell};
@@ -54,7 +55,7 @@ impl UpWindow {
         view_stack.add_titled_with_icon(
             &update_page,
             Some("update"),
-            "Update",
+            &gettext("Update"),
             "software-update-available-symbolic",
         );
 
@@ -63,7 +64,7 @@ impl UpWindow {
         let upgrade_stack_page = view_stack.add_titled_with_icon(
             &upgrade_widget,
             Some("upgrade"),
-            "Upgrade",
+            &gettext("Upgrade"),
             "software-update-urgent-symbolic",
         );
 
@@ -72,7 +73,7 @@ impl UpWindow {
         view_stack.add_titled_with_icon(
             &history_widget,
             Some("history"),
-            "History",
+            &gettext("History"),
             "document-open-recent-symbolic",
         );
 
@@ -129,9 +130,11 @@ impl UpWindow {
 
         let refresh_button = gtk::Button::builder()
             .icon_name("view-refresh-symbolic")
-            .tooltip_text("Check for updates")
+            .tooltip_text(gettext("Check for updates"))
             .build();
-        refresh_button.update_property(&[gtk::accessible::Property::Label("Refresh update list")]);
+        refresh_button.update_property(&[gtk::accessible::Property::Label(&gettext(
+            "Refresh update list",
+        ))]);
         refresh_button.connect_clicked(glib::clone!(
             #[strong]
             run_checks,
@@ -148,14 +151,16 @@ impl UpWindow {
 
         // Application overflow menu (three-dot button on the end/right slot).
         let app_menu = gio::Menu::new();
-        app_menu.append(Some("Run Maintenance"), Some("win.maintenance"));
-        app_menu.append(Some("About Up"), Some("win.about"));
+        app_menu.append(Some(&gettext("Run Maintenance")), Some("win.maintenance"));
+        app_menu.append(Some(&gettext("About Up")), Some("win.about"));
         let menu_button = gtk::MenuButton::builder()
             .icon_name("open-menu-symbolic")
             .menu_model(&app_menu)
-            .tooltip_text("Main menu")
+            .tooltip_text(gettext("Main menu"))
             .build();
-        menu_button.update_property(&[gtk::accessible::Property::Label("Application menu")]);
+        menu_button.update_property(&[gtk::accessible::Property::Label(&gettext(
+            "Application menu",
+        ))]);
         header.pack_end(&menu_button);
 
         let main_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -177,7 +182,7 @@ impl UpWindow {
                     .application_name("Up")
                     .version(env!("CARGO_PKG_VERSION"))
                     .developer_name("Up Contributors")
-                    .comments("A system updater for Linux")
+                    .comments(&gettext("A system updater for Linux"))
                     .website("https://github.com/VictoryTek/Up")
                     .application_icon("io.github.up")
                     .license_type(gtk::License::Gpl30)
@@ -214,7 +219,7 @@ impl UpWindow {
                 log_panel.append_line(
                     "\u{2500}\u{2500}\u{2500} Maintenance started \u{2500}\u{2500}\u{2500}",
                 );
-                status_label.set_label("Running maintenance\u{2026}");
+                status_label.set_label(&gettext("Running maintenance\u{2026}"));
 
                 // Collect non-skipped backends that support cleanup.
                 let backends: Vec<Arc<dyn Backend>> = {
@@ -235,7 +240,7 @@ impl UpWindow {
                 };
 
                 if backends.is_empty() {
-                    status_label.set_label("No maintenance actions available.");
+                    status_label.set_label(&gettext("No maintenance actions available."));
                     update_in_progress.set(false);
                     return;
                 }
@@ -263,19 +268,24 @@ impl UpWindow {
                             match event {
                                 OrchestratorEvent::AuthStarted => {
                                     auth_started = true;
-                                    status_label.set_label("Authenticating\u{2026}");
-                                    log_panel
-                                        .append_line("Requesting administrator privileges\u{2026}");
+                                    status_label.set_label(&gettext("Authenticating\u{2026}"));
+                                    log_panel.append_line(&gettext(
+                                        "Requesting administrator privileges\u{2026}",
+                                    ));
                                 }
                                 OrchestratorEvent::AuthSucceeded => {
                                     if auth_started {
-                                        log_panel.append_line("Authentication successful.");
+                                        log_panel
+                                            .append_line(&gettext("Authentication successful."));
                                     }
-                                    status_label.set_label("Running maintenance\u{2026}");
+                                    status_label.set_label(&gettext("Running maintenance\u{2026}"));
                                 }
                                 OrchestratorEvent::AuthFailed(e) => {
-                                    log_panel.append_line(&format!("Authentication failed: {e}"));
-                                    status_label.set_label("Maintenance cancelled.");
+                                    log_panel.append_line(&format!(
+                                        gettext("Authentication failed: {}"),
+                                        e
+                                    ));
+                                    status_label.set_label(&gettext("Maintenance cancelled."));
                                     update_in_progress.set(false);
                                     return;
                                 }
@@ -320,9 +330,9 @@ impl UpWindow {
                         }
 
                         if has_error {
-                            status_label.set_label("Maintenance completed with errors.");
+                            status_label.set_label(&gettext("Maintenance completed with errors."));
                         } else {
-                            status_label.set_label("Maintenance complete.");
+                            status_label.set_label(&gettext("Maintenance complete."));
                         }
                         update_in_progress.set(false);
                     }
@@ -354,25 +364,25 @@ impl UpWindow {
 
         // Status label
         let status_label = gtk::Label::builder()
-            .label("Detect available updates across your system.")
+            .label(gettext("Detect available updates across your system."))
             .css_classes(vec!["dim-label"])
             .build();
         content_box.append(&status_label);
 
         // System Information group (populated after background distro detection)
         let sys_info_group = adw::PreferencesGroup::builder()
-            .title("System Information")
+            .title(gettext("System Information"))
             .build();
 
         let distro_row = adw::ActionRow::builder()
-            .title("Distribution")
+            .title(gettext("Distribution"))
             .subtitle("Loading\u{2026}")
             .build();
         distro_row.add_prefix(&gtk::Image::from_icon_name("computer-symbolic"));
         sys_info_group.add(&distro_row);
 
         let version_row = adw::ActionRow::builder()
-            .title("Current Version")
+            .title(gettext("Current Version"))
             .subtitle("Loading\u{2026}")
             .build();
         sys_info_group.add(&version_row);
@@ -381,8 +391,8 @@ impl UpWindow {
 
         // Backend rows group
         let backends_group = adw::PreferencesGroup::builder()
-            .title("Sources")
-            .description("Package managers detected on this system")
+            .title(gettext("Sources"))
+            .description(gettext("Package managers detected on this system"))
             .build();
 
         let detected: Rc<RefCell<Vec<Arc<dyn Backend>>>> = Rc::new(RefCell::new(Vec::new()));
@@ -391,7 +401,7 @@ impl UpWindow {
 
         // Placeholder row shown while background detection runs
         let placeholder_row = adw::ActionRow::builder()
-            .title("Detecting package managers\u{2026}")
+            .title(gettext("Detecting package managers\u{2026}"))
             .build();
         let placeholder_spinner = gtk::Spinner::new();
         placeholder_spinner.start();
@@ -407,8 +417,8 @@ impl UpWindow {
         // Restart notification banner, revealed only when Up itself is updated
         // inside the Flatpak sandbox (new deployment is available on next launch).
         let restart_banner = adw::Banner::builder()
-            .title("Up was updated \u{2014} restart to apply changes")
-            .button_label("Close Up")
+            .title(gettext("Up was updated \u{2014} restart to apply changes"))
+            .button_label(gettext("Close Up"))
             .revealed(false)
             .build();
         restart_banner.connect_button_clicked(|banner| {
@@ -419,7 +429,7 @@ impl UpWindow {
 
         // Update All button
         let update_button = gtk::Button::builder()
-            .label("Update All")
+            .label(gettext("Update All"))
             .css_classes(vec!["suggested-action", "pill"])
             .halign(gtk::Align::Center)
             .margin_top(12)
@@ -435,13 +445,14 @@ impl UpWindow {
             Rc::new(RefCell::new(None));
 
         let cancel_button = gtk::Button::builder()
-            .label("Cancel")
+            .label(gettext("Cancel"))
             .css_classes(vec!["destructive-action", "pill"])
             .halign(gtk::Align::Center)
             .margin_top(12)
             .visible(false)
             .build();
-        cancel_button.update_property(&[gtk::accessible::Property::Label("Cancel update")]);
+        cancel_button
+            .update_property(&[gtk::accessible::Property::Label(&gettext("Cancel update"))]);
 
         cancel_button.connect_clicked(glib::clone!(
             #[strong]
@@ -481,11 +492,11 @@ impl UpWindow {
                 let monitor = gio::NetworkMonitor::default();
                 if monitor.is_network_metered() && !bypass_metered.get() {
                     let dialog = adw::AlertDialog::new(
-                        Some("Metered Connection"),
-                        Some("You are on a metered connection. Downloading updates may use significant data.\n\nContinue anyway?"),
+                        Some(&gettext("Metered Connection")),
+                        Some(&gettext("You are on a metered connection. Downloading updates may use significant data.\n\nContinue anyway?")),
                     );
-                    dialog.add_response("cancel", "Cancel");
-                    dialog.add_response("update", "Update Anyway");
+                    dialog.add_response("cancel", &gettext("Cancel"));
+                    dialog.add_response("update", &gettext("Update Anyway"));
                     dialog.set_default_response(Some("cancel"));
                     dialog.set_close_response("cancel");
                     dialog.connect_response(None, glib::clone!(
@@ -509,12 +520,12 @@ impl UpWindow {
                     if let Some(bat) = crate::battery::read_battery() {
                         if bat.discharging && bat.capacity < 40 {
                             let msg = format!(
-                                "Battery is at {}% and discharging. Updates may be interrupted if the device shuts down. Continue anyway?",
+                                gettext("Battery is at {}% and discharging. Updates may be interrupted if the device shuts down. Continue anyway?"),
                                 bat.capacity
                             );
-                            let dialog = adw::AlertDialog::new(Some("Low Battery"), Some(&msg));
-                            dialog.add_response("cancel", "Cancel");
-                            dialog.add_response("update", "Update Anyway");
+                            let dialog = adw::AlertDialog::new(Some(&gettext("Low Battery")), Some(&msg));
+                            dialog.add_response("cancel", &gettext("Cancel"));
+                            dialog.add_response("update", &gettext("Update Anyway"));
                             dialog.set_default_response(Some("cancel"));
                             dialog.set_close_response("cancel");
                             dialog.connect_response(
@@ -550,7 +561,7 @@ impl UpWindow {
                                 let button = button.clone();
                                 glib::spawn_future_local(async move {
                                     log_panel
-                                        .append_line("Creating pre-update snapshot\u{2026}");
+                                        .append_line(&gettext("Creating pre-update snapshot\u{2026}"));
                                     let (snap_tx, snap_rx) =
                                         async_channel::bounded::<Result<String, String>>(1);
                                     super::spawn_background_async(move || async move {
@@ -579,14 +590,14 @@ impl UpWindow {
                             } else {
                                 // SnapshotPreference::Ask
                                 let dialog = adw::AlertDialog::new(
-                                    Some("Create Snapshot?"),
-                                    Some(
+                                    Some(&gettext("Create Snapshot?")),
+                                    Some(&gettext(
                                         "Create a system snapshot before updating. \
                                          This allows you to roll back if something goes wrong.",
-                                    ),
+                                    )),
                                 );
-                                dialog.add_response("skip", "Skip");
-                                dialog.add_response("snapshot", "Create Snapshot");
+                                dialog.add_response("skip", &gettext("Skip"));
+                                dialog.add_response("snapshot", &gettext("Create Snapshot"));
                                 dialog.set_response_appearance(
                                     "snapshot",
                                     adw::ResponseAppearance::Suggested,
@@ -609,7 +620,7 @@ impl UpWindow {
                                                 let button = button.clone();
                                                 glib::spawn_future_local(async move {
                                                     log_panel.append_line(
-                                                        "Creating pre-update snapshot\u{2026}",
+                                                        &gettext("Creating pre-update snapshot\u{2026}"),
                                                     );
                                                     let (snap_tx, snap_rx) =
                                                         async_channel::bounded::<
@@ -668,7 +679,7 @@ impl UpWindow {
                     let borrowed = rows.borrow();
                     for (_, row) in borrowed.iter() {
                         if row.is_skipped() {
-                            row.set_status_skipped("Skipped by user");
+                            row.set_status_skipped(&gettext("Skipped by user"));
                         }
                     }
                 }
@@ -724,19 +735,19 @@ impl UpWindow {
                             match event {
                                 OrchestratorEvent::AuthStarted => {
                                     auth_started = true;
-                                    status_label.set_label("Authenticating\u{2026}");
+                                    status_label.set_label(&gettext("Authenticating\u{2026}"));
                                     log_panel
-                                        .append_line("Requesting administrator privileges\u{2026}");
+                                        .append_line(&gettext("Requesting administrator privileges\u{2026}"));
                                 }
                                 OrchestratorEvent::AuthSucceeded => {
                                     if auth_started {
-                                        log_panel.append_line("Authentication successful.");
+                                        log_panel.append_line(&gettext("Authentication successful."));
                                     }
-                                    status_label.set_label("Updating\u{2026}");
+                                    status_label.set_label(&gettext("Updating\u{2026}"));
                                 }
                                 OrchestratorEvent::AuthFailed(e) => {
-                                    log_panel.append_line(&format!("Authentication failed: {e}"));
-                                    status_label.set_label("Update cancelled.");
+                                    log_panel.append_line(&format!(gettext("Authentication failed: {}"), e));
+                                    status_label.set_label(&gettext("Update cancelled."));
                                     cancel_button.set_visible(false);
                                     cancel_handle.borrow_mut().take();
                                     button.set_sensitive(true);
@@ -849,11 +860,11 @@ impl UpWindow {
                             restart_banner.set_revealed(true);
                         }
                         if was_cancelled {
-                            status_label.set_label("Update cancelled.");
+                            status_label.set_label(&gettext("Update cancelled."));
                         } else if has_error {
-                            status_label.set_label("Update completed with errors.");
+                            status_label.set_label(&gettext("Update completed with errors."));
                         } else {
-                            status_label.set_label("Update complete.");
+                            status_label.set_label(&gettext("Update complete."));
                         }
                         updating.set(false);
                         button.set_sensitive(true);
@@ -877,7 +888,9 @@ impl UpWindow {
         clamp.set_child(Some(&content_box));
         scrolled.set_child(Some(&clamp));
 
-        let metered_banner = adw::Banner::new("On a metered connection. Consider updating later.");
+        let metered_banner = adw::Banner::new(&gettext(
+            "On a metered connection. Consider updating later.",
+        ));
         metered_banner.set_use_markup(false);
         let monitor = gio::NetworkMonitor::default();
         metered_banner.set_revealed(monitor.is_network_metered());
@@ -919,7 +932,7 @@ impl UpWindow {
                 // Increment epoch to invalidate in-flight futures from the previous check.
                 check_epoch.set(check_epoch.get() + 1);
                 let my_epoch = check_epoch.get();
-                status_label_checks.set_label("Checking for updates...");
+                status_label_checks.set_label(&gettext("Checking for updates..."));
 
                 for backend in detected.borrow().iter() {
                     let kind = backend.kind();
@@ -996,12 +1009,17 @@ impl UpWindow {
                                     };
                                     if non_skipped_total > 0 {
                                         update_button_checks.set_sensitive(true);
-                                        status_label_checks.set_label(&format!(
-                                            "{non_skipped_total} update{} available",
-                                            if non_skipped_total == 1 { "" } else { "s" }
-                                        ));
+                                        status_label_checks.set_label(
+                                            &ngettext(
+                                                "{} update available",
+                                                "{} updates available",
+                                                non_skipped_total as u64,
+                                            )
+                                            .replace("{}", &non_skipped_total.to_string()),
+                                        );
                                     } else {
-                                        status_label_checks.set_label("Everything is up to date.");
+                                        status_label_checks
+                                            .set_label(&gettext("Everything is up to date."));
                                     }
                                 }
                             }

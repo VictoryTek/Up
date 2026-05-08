@@ -1,4 +1,5 @@
 use adw::prelude::*;
+use gettextrs::{gettext, ngettext};
 use gtk::glib;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -30,7 +31,7 @@ impl UpdateRow {
         on_retry: impl Fn() + 'static,
     ) -> Self {
         let status_label = gtk::Label::builder()
-            .label("Ready")
+            .label(gettext("Ready"))
             .css_classes(vec!["dim-label"])
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .max_width_chars(30)
@@ -46,7 +47,7 @@ impl UpdateRow {
         let skip_flag = Rc::new(Cell::new(false));
         let last_available: Rc<Cell<Option<usize>>> = Rc::new(Cell::new(None));
 
-        let kind_label = format!("Skip {} during Update All", backend.display_name());
+        let kind_label = format!(gettext("Skip {} during Update All"), backend.display_name());
         let skip_checkbox = gtk::CheckButton::builder()
             .tooltip_text(&kind_label)
             .valign(gtk::Align::Center)
@@ -59,7 +60,7 @@ impl UpdateRow {
             .build();
 
         let retry_button = gtk::Button::from_icon_name("view-refresh-symbolic");
-        retry_button.set_tooltip_text(Some("Retry"));
+        retry_button.set_tooltip_text(Some(&gettext("Retry")));
         retry_button.set_visible(false);
         retry_button.connect_clicked(move |_| on_retry());
 
@@ -77,21 +78,28 @@ impl UpdateRow {
                 let skipped = cb.is_active();
                 skip_flag.set(skipped);
                 if skipped {
-                    status_label.set_label("Skipped");
+                    status_label.set_label(&gettext("Skipped"));
                     status_label.set_css_classes(&["dim-label"]);
                 } else {
                     match last_available.get() {
                         Some(count) => {
                             if count == 0 {
-                                status_label.set_label("Up to date");
+                                status_label.set_label(&gettext("Up to date"));
                                 status_label.set_css_classes(&["success"]);
                             } else {
-                                status_label.set_label(&format!("{count} available"));
+                                status_label.set_label(
+                                    &ngettext(
+                                        "1 package available",
+                                        "{} packages available",
+                                        count as u64,
+                                    )
+                                    .replace("{}", &count.to_string()),
+                                );
                                 status_label.set_css_classes(&["accent"]);
                             }
                         }
                         None => {
-                            status_label.set_label("Ready");
+                            status_label.set_label(&gettext("Ready"));
                             status_label.set_css_classes(&["dim-label"]);
                         }
                     }
@@ -104,7 +112,7 @@ impl UpdateRow {
         let packages_cache: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
 
         let changelog_row = adw::ActionRow::builder()
-            .title("View Changelog")
+            .title(gettext("View Changelog"))
             .visible(false)
             .build();
 
@@ -112,7 +120,8 @@ impl UpdateRow {
         changelog_button.set_valign(gtk::Align::Center);
         changelog_button.add_css_class("flat");
         changelog_button.set_focusable(false);
-        changelog_button.update_property(&[gtk::accessible::Property::Label("View Changelog")]);
+        changelog_button
+            .update_property(&[gtk::accessible::Property::Label(&gettext("View Changelog"))]);
         changelog_row.add_suffix(&changelog_button);
 
         if backend_kind != BackendKind::Nix {
@@ -146,12 +155,12 @@ impl UpdateRow {
                         };
 
                         let heading = match kind {
-                            BackendKind::Pacman | BackendKind::Zypper => "Package Info",
-                            _ => "Changelog",
+                            BackendKind::Pacman | BackendKind::Zypper => gettext("Package Info"),
+                            _ => gettext("Changelog"),
                         };
 
                         let dialog = adw::AlertDialog::builder()
-                            .heading(heading)
+                            .heading(&heading)
                             .body("")
                             .build();
 
@@ -174,7 +183,7 @@ impl UpdateRow {
                             .hscrollbar_policy(gtk::PolicyType::Never)
                             .build();
                         dialog.set_extra_child(Some(&scrolled));
-                        dialog.add_response("close", "Close");
+                        dialog.add_response("close", &gettext("Close"));
                         dialog.set_default_response(Some("close"));
                         dialog.set_close_response("close");
 
@@ -250,7 +259,15 @@ impl UpdateRow {
         if packages.len() > MAX_PACKAGES {
             let remaining = packages.len() - MAX_PACKAGES;
             let more_row = adw::ActionRow::builder()
-                .title(format!("\u{2026} and {remaining} more").as_str())
+                .title(
+                    ngettext(
+                        "\u{2026} and 1 more",
+                        "\u{2026} and {} more",
+                        remaining as u64,
+                    )
+                    .replace("{}", &remaining.to_string())
+                    .as_str(),
+                )
                 .build();
             self.row.add_row(&more_row);
             tracked.push(more_row);
@@ -267,7 +284,7 @@ impl UpdateRow {
         self.last_available.set(None);
         self.spinner.set_visible(true);
         self.spinner.set_spinning(true);
-        self.status_label.set_label("Checking...");
+        self.status_label.set_label(&gettext("Checking..."));
         self.status_label.set_css_classes(&["dim-label"]);
     }
 
@@ -278,10 +295,13 @@ impl UpdateRow {
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
         if count == 0 {
-            self.status_label.set_label("Up to date");
+            self.status_label.set_label(&gettext("Up to date"));
             self.status_label.set_css_classes(&["success"]);
         } else {
-            self.status_label.set_label(&format!("{count} available"));
+            self.status_label.set_label(
+                &ngettext("1 package available", "{} packages available", count as u64)
+                    .replace("{}", &count.to_string()),
+            );
             self.status_label.set_css_classes(&["accent"]);
         }
     }
@@ -291,7 +311,7 @@ impl UpdateRow {
         self.skip_checkbox.set_sensitive(false);
         self.spinner.set_visible(true);
         self.spinner.set_spinning(true);
-        self.status_label.set_label("Updating...");
+        self.status_label.set_label(&gettext("Updating..."));
         self.status_label.set_css_classes(&["accent"]);
     }
 
@@ -301,9 +321,10 @@ impl UpdateRow {
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
         let msg = if count == 0 {
-            "Up to date".to_string()
+            gettext("Up to date")
         } else {
-            format!("{count} updated")
+            ngettext("1 package updated", "{} packages updated", count as u64)
+                .replace("{}", &count.to_string())
         };
         self.status_label.set_label(&msg);
         self.status_label.set_css_classes(&["success"]);
@@ -314,7 +335,8 @@ impl UpdateRow {
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
-        self.status_label.set_label(&format!("Error: {}", msg));
+        self.status_label
+            .set_label(&format!("{} {}", gettext("Error:"), msg));
         self.status_label.set_css_classes(&["error"]);
     }
 
@@ -332,7 +354,7 @@ impl UpdateRow {
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
-        self.status_label.set_label("Cancelled");
+        self.status_label.set_label(&gettext("Cancelled"));
         self.status_label.set_css_classes(&["dim-label"]);
     }
 
@@ -351,7 +373,7 @@ impl UpdateRow {
         self.skip_checkbox.set_sensitive(false);
         self.spinner.set_visible(true);
         self.spinner.set_spinning(true);
-        self.status_label.set_label("Cleaning\u{2026}");
+        self.status_label.set_label(&gettext("Cleaning\u{2026}"));
         self.status_label.set_css_classes(&["accent"]);
     }
 
@@ -361,9 +383,10 @@ impl UpdateRow {
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
         let msg = if removed == 0 {
-            "Already clean".to_string()
+            gettext("Already clean")
         } else {
-            format!("{removed} removed")
+            ngettext("1 package removed", "{} packages removed", removed as u64)
+                .replace("{}", &removed.to_string())
         };
         self.status_label.set_label(&msg);
         self.status_label.set_css_classes(&["success"]);

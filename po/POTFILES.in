@@ -1,0 +1,9 @@
+data/io.github.up.desktop.in
+src/main.rs
+src/app.rs
+src/ui/window.rs
+src/ui/update_row.rs
+src/ui/upgrade_page.rs
+src/ui/log_panel.rs
+src/ui/history_page.rs
+src/ui/reboot_dialog.rs

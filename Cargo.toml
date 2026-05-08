@@ -8,6 +8,7 @@ authors = ["Up Contributors"]
 repository = "https://github.com/VictoryTek/Up"
 
 [dependencies]
+gettext-rs = { version = "0.7", features = ["gettext-system"] }
 gtk = { version = "0.9", package = "gtk4", features = ["v4_12"] }
 adw = { version = "0.7", package = "libadwaita", features = ["v1_5"] }
 glib = "0.20"

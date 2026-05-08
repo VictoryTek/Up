@@ -1,4 +1,5 @@
 use adw::prelude::*;
+use gettextrs::gettext;
 use gtk::glib;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -36,7 +37,9 @@ impl UpgradePage {
 
         // Header
         let header_label = gtk::Label::builder()
-            .label("Upgrade your distribution to the next major version.")
+            .label(gettext(
+                "Upgrade your distribution to the next major version.",
+            ))
             .css_classes(vec!["dim-label"])
             .wrap(true)
             .build();
@@ -44,7 +47,7 @@ impl UpgradePage {
 
         // Distro info group
         let info_group = adw::PreferencesGroup::builder()
-            .title("Upgrade Status")
+            .title(gettext("Upgrade Status"))
             .build();
 
         let distro_info_state: Rc<RefCell<Option<upgrade::DistroInfo>>> =
@@ -54,7 +57,7 @@ impl UpgradePage {
             Rc::new(RefCell::new(None));
 
         let upgrade_available_row = adw::ActionRow::builder()
-            .title("Upgrade Available")
+            .title(gettext("Upgrade Available"))
             .subtitle("Loading\u{2026}")
             .build();
         info_group.add(&upgrade_available_row);
@@ -63,22 +66,28 @@ impl UpgradePage {
 
         // Prerequisites checklist group
         let prereq_group = adw::PreferencesGroup::builder()
-            .title("Prerequisites")
-            .description("These checks must pass before upgrading")
+            .title(gettext("Prerequisites"))
+            .description(gettext("These checks must pass before upgrading"))
             .build();
 
-        let checks: Vec<(&str, &str)> = vec![
-            ("All packages up to date", "system-software-update-symbolic"),
-            ("Sufficient disk space (10 GB+)", "drive-harddisk-symbolic"),
-            ("Backup recommended", "document-save-symbolic"),
+        let checks: Vec<(String, &str)> = vec![
+            (
+                gettext("All packages up to date"),
+                "system-software-update-symbolic",
+            ),
+            (
+                gettext("Sufficient disk space (10 GB+)"),
+                "drive-harddisk-symbolic",
+            ),
+            (gettext("Backup recommended"), "document-save-symbolic"),
         ];
 
         let check_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
         let check_icons: Rc<RefCell<Vec<gtk::Image>>> = Rc::new(RefCell::new(Vec::new()));
         for (label, icon) in &checks {
             let row = adw::ActionRow::builder()
-                .title(*label)
-                .subtitle("Checking...")
+                .title(label.as_str())
+                .subtitle(gettext("Checking..."))
                 .build();
             row.add_prefix(&gtk::Image::from_icon_name(icon));
 
@@ -105,13 +114,13 @@ impl UpgradePage {
             .build();
 
         let check_button = gtk::Button::builder()
-            .label("Run Checks")
+            .label(gettext("Run Checks"))
             .css_classes(vec!["pill"])
             .sensitive(false)
             .build();
 
         let upgrade_button = gtk::Button::builder()
-            .label("Start Upgrade")
+            .label(gettext("Start Upgrade"))
             .css_classes(vec!["destructive-action", "pill"])
             .sensitive(false)
             .build();
@@ -128,7 +137,7 @@ impl UpgradePage {
 
         // Backup confirmation
         let backup_check = gtk::CheckButton::builder()
-            .label("I have backed up my important data")
+            .label(gettext("I have backed up my important data"))
             .halign(gtk::Align::Center)
             .build();
         content_box.append(&backup_check);
@@ -247,9 +256,12 @@ impl UpgradePage {
 
         // Wire up upgrade button
         upgrade_button.connect_clicked(glib::clone!(
-            #[strong] log_panel,
-            #[strong] distro_info_state,
-            #[strong] nixos_config_type,
+            #[strong]
+            log_panel,
+            #[strong]
+            distro_info_state,
+            #[strong]
+            nixos_config_type,
             move |button| {
                 let Some(distro) = distro_info_state.borrow().clone() else {
                     return;
@@ -262,20 +274,23 @@ impl UpgradePage {
                     let next_ver = next_ch.trim_start_matches("nixos-").to_string();
                     let current_ver = distro.version_id.clone();
 
-                    let dialog = adw::AlertDialog::builder()
-                        .heading("Upgrade via Flake")
-                        .body(format!(
-                            "NixOS {next_ver} may be available, but this system uses Nix Flakes.\n\n\
+                    let flake_body = gettext(
+                        "NixOS {next_ver} may be available, but this system uses Nix Flakes.\n\n\
                              To upgrade, edit /etc/nixos/flake.nix and update your nixpkgs input \
                              to point to the new release:\n\n\
                              \u{2022} Change:  github:NixOS/nixpkgs/nixos-{current_ver}\n\
                              \u{2022} To:      github:NixOS/nixpkgs/nixos-{next_ver}\n\n\
                              Then run:\n\
                              \u{2022} sudo nix flake update /etc/nixos\n\
-                             \u{2022} sudo nixos-rebuild switch --flake /etc/nixos"
-                        ))
+                             \u{2022} sudo nixos-rebuild switch --flake /etc/nixos",
+                    )
+                    .replace("{next_ver}", &next_ver)
+                    .replace("{current_ver}", &current_ver);
+                    let dialog = adw::AlertDialog::builder()
+                        .heading(gettext("Upgrade via Flake"))
+                        .body(flake_body)
                         .build();
-                    dialog.add_response("close", "Close");
+                    dialog.add_response("close", &gettext("Close"));
                     dialog.set_default_response(Some("close"));
                     dialog.set_close_response("close");
                     dialog.present(Some(button));
@@ -284,76 +299,83 @@ impl UpgradePage {
 
                 // All other distros (including NixOS LegacyChannel): destructive confirm dialog
                 let dialog = adw::AlertDialog::builder()
-                    .heading("Confirm System Upgrade")
+                    .heading(gettext("Confirm System Upgrade"))
                     .body(format!(
-                        "This will upgrade {} from version {} to the next major release.\n\n\
+                        gettext(
+                            "This will upgrade {} from version {} to the next major release.\n\n\
                         This operation may take a long time and require a reboot.\n\n\
-                        Are you sure you want to continue?",
+                        Are you sure you want to continue?"
+                        ),
                         distro.name, distro.version
                     ))
                     .build();
 
-                dialog.add_response("cancel", "Cancel");
-                dialog.add_response("upgrade", "Upgrade");
+                dialog.add_response("cancel", &gettext("Cancel"));
+                dialog.add_response("upgrade", &gettext("Upgrade"));
                 dialog.set_response_appearance("upgrade", adw::ResponseAppearance::Destructive);
                 dialog.set_default_response(Some("cancel"));
                 dialog.set_close_response("cancel");
 
-                dialog.connect_response(None, glib::clone!(
-                    #[strong] log_panel,
-                    #[weak]   button,
-                    move |_dialog, response| {
-                        if response == "upgrade" {
-                            button.set_sensitive(false);
-                            log_panel.clear();
+                dialog.connect_response(
+                    None,
+                    glib::clone!(
+                        #[strong]
+                        log_panel,
+                        #[weak]
+                        button,
+                        move |_dialog, response| {
+                            if response == "upgrade" {
+                                button.set_sensitive(false);
+                                log_panel.clear();
 
-                            let distro2 = distro.clone();
-                            glib::spawn_future_local(glib::clone!(
-                                #[strong] log_panel,
-                                #[weak]   button,
-                                async move {
-                                    let (tx, rx) = async_channel::unbounded::<String>();
-                                    let tx_clone = tx.clone();
-                                    let (result_tx, result_rx) =
-                                        async_channel::bounded::<Result<(), String>>(1);
+                                let distro2 = distro.clone();
+                                glib::spawn_future_local(glib::clone!(
+                                    #[strong]
+                                    log_panel,
+                                    #[weak]
+                                    button,
+                                    async move {
+                                        let (tx, rx) = async_channel::unbounded::<String>();
+                                        let tx_clone = tx.clone();
+                                        let (result_tx, result_rx) =
+                                            async_channel::bounded::<Result<(), String>>(1);
 
-                                    std::thread::spawn(move || {
-                                        let outcome =
-                                            upgrade::execute_upgrade(&distro2, &tx_clone);
-                                        drop(tx_clone);
-                                        let _ = result_tx.send_blocking(outcome);
-                                    });
+                                        std::thread::spawn(move || {
+                                            let outcome =
+                                                upgrade::execute_upgrade(&distro2, &tx_clone);
+                                            drop(tx_clone);
+                                            let _ = result_tx.send_blocking(outcome);
+                                        });
 
-                                    drop(tx);
+                                        drop(tx);
 
-                                    while let Ok(line) = rx.recv().await {
-                                        log_panel.append_line(&line);
-                                    }
+                                        while let Ok(line) = rx.recv().await {
+                                            log_panel.append_line(&line);
+                                        }
 
-                                    let outcome =
-                                        result_rx.recv().await.unwrap_or_else(|_| {
+                                        let outcome = result_rx.recv().await.unwrap_or_else(|_| {
                                             Err("Upgrade result channel closed unexpectedly"
                                                 .to_string())
                                         });
-                                    button.set_sensitive(true);
+                                        button.set_sensitive(true);
 
-                                    match outcome {
-                                        Ok(()) => {
-                                            crate::ui::reboot_dialog::show_reboot_dialog(
-                                                &button,
-                                            );
-                                        }
-                                        Err(e) => {
-                                            log_panel.append_line(&format!(
-                                                "Upgrade failed: {e}"
-                                            ));
+                                        match outcome {
+                                            Ok(()) => {
+                                                crate::ui::reboot_dialog::show_reboot_dialog(
+                                                    &button,
+                                                );
+                                            }
+                                            Err(e) => {
+                                                log_panel
+                                                    .append_line(&format!("Upgrade failed: {e}"));
+                                            }
                                         }
                                     }
-                                }
-                            ));
+                                ));
+                            }
                         }
-                    }
-                ));
+                    ),
+                );
 
                 // Present dialog requires a parent widget
                 dialog.present(Some(button));
@@ -365,7 +387,7 @@ impl UpgradePage {
 
         // Flake advisory banner — revealed only when NixOS+Flake is detected.
         let flake_banner = adw::Banner::builder()
-            .title("Flake-managed system: upgrade via your flake.nix")
+            .title(gettext("Flake-managed system: upgrade via your flake.nix"))
             .revealed(false)
             .build();
         page_box.append(&flake_banner);
@@ -398,11 +420,12 @@ impl UpgradePage {
                         let info = init.distro;
                         let nixos_extra = init.nixos_extra;
 
-                        upgrade_available_row.set_subtitle(if info.upgrade_supported {
-                            "Checking\u{2026}"
+                        let available_subtitle = if info.upgrade_supported {
+                            "Checking\u{2026}".to_string()
                         } else {
-                            "Not supported for this distribution yet"
-                        });
+                            gettext("Not supported for this distribution yet")
+                        };
+                        upgrade_available_row.set_subtitle(&available_subtitle);
 
                         // Conditionally add NixOS config row
                         if let Some((config_type, raw_hostname)) = &nixos_extra {
@@ -416,7 +439,7 @@ impl UpgradePage {
                                 }
                             };
                             let config_row = adw::ActionRow::builder()
-                                .title("NixOS Config Type")
+                                .title(gettext("NixOS Config Type"))
                                 .subtitle(&config_label)
                                 .build();
                             config_row
@@ -429,7 +452,7 @@ impl UpgradePage {
                             }
                             // Update first check row title for NixOS
                             if let Some(row) = check_rows.borrow().first() {
-                                row.set_title("nixos-rebuild available");
+                                row.set_title(&gettext("nixos-rebuild available"));
                             }
                         }
 
@@ -460,9 +483,9 @@ impl UpgradePage {
                                         upgrade_available_row.set_subtitle(&result_msg);
                                         (*recompute_state)();
                                     } else {
-                                        upgrade_available_row.set_subtitle(
+                                        upgrade_available_row.set_subtitle(&gettext(
                                             "Could not determine upgrade availability",
-                                        );
+                                        ));
                                     }
                                 }
                             ));

@@ -9,6 +9,7 @@ project('up',
 cargo = find_program('cargo')
 fs = import('fs')
 gnome = import('gnome')
+i18n = import('i18n')
 
 builddir = meson.current_build_dir()
 srcdir = meson.current_source_dir()
@@ -16,6 +17,7 @@ srcdir = meson.current_source_dir()
 prefix = get_option('prefix')
 bindir = join_paths(prefix, get_option('bindir'))
 datadir = join_paths(prefix, get_option('datadir'))
+localedir = join_paths(prefix, get_option('localedir'))
 
 if get_option('buildtype') == 'release'
   rust_target = 'release'
@@ -27,6 +29,7 @@ cargo_build = custom_target('cargo-build',
   output: 'up',
   command: [
     'sh', '-c',
+    'LOCALEDIR=' + localedir + ' ' +
     cargo.full_path() + ' build ' +
     (rust_target == 'release' ? '--release ' : '') +
     '--manifest-path ' + srcdir / 'Cargo.toml' +
@@ -39,7 +42,12 @@ cargo_build = custom_target('cargo-build',
   install_dir: bindir,
 )
 
-install_data('data/io.github.up.desktop',
+desktop_file = i18n.merge_file(
+  input: 'data/io.github.up.desktop.in',
+  output: 'io.github.up.desktop',
+  type: 'desktop',
+  po_dir: 'po',
+  install: true,
   install_dir: join_paths(datadir, 'applications'),
 )
 
@@ -59,6 +67,8 @@ foreach size : ['256x256', '128x128', '48x48']
     )
   endif
 endforeach
+
+subdir('po')
 
 gnome.post_install(
   gtk_update_icon_cache: true,

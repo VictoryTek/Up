@@ -1,4 +1,5 @@
 use adw::prelude::*;
+use gettextrs::gettext;
 use gtk::glib;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -29,23 +30,25 @@ impl HistoryPage {
 
         // Header description
         let header_label = gtk::Label::builder()
-            .label("A record of past update sessions.")
+            .label(gettext("A record of past update sessions."))
             .css_classes(vec!["dim-label"])
             .build();
         content_box.append(&header_label);
 
         // History group
         let history_group = adw::PreferencesGroup::builder()
-            .title("Update History")
+            .title(gettext("Update History"))
             .build();
 
         // Clear button in PreferencesGroup header
         let clear_button = gtk::Button::builder()
-            .label("Clear")
+            .label(gettext("Clear"))
             .css_classes(vec!["destructive-action"])
             .valign(gtk::Align::Center)
             .build();
-        clear_button.update_property(&[gtk::accessible::Property::Label("Clear update history")]);
+        clear_button.update_property(&[gtk::accessible::Property::Label(&gettext(
+            "Clear update history",
+        ))]);
         history_group.set_header_suffix(Some(&clear_button));
 
         // Track rows for clearing
@@ -85,8 +88,10 @@ impl HistoryPage {
 
         if entries.is_empty() {
             let empty_row = adw::ActionRow::builder()
-                .title("No history yet")
-                .subtitle("Update sessions will appear here after you run an update.")
+                .title(gettext("No history yet"))
+                .subtitle(gettext(
+                    "Update sessions will appear here after you run an update.",
+                ))
                 .build();
             group.add(&empty_row);
             tracked_rows.borrow_mut().push(empty_row);

@@ -1,4 +1,5 @@
 use adw::prelude::*;
+use gettextrs::gettext;
 use gtk::glib;
 
 /// Present a "Reboot Now / Later" dialog attached to `parent`.
@@ -6,15 +7,15 @@ use gtk::glib;
 /// Follows the same `adw::AlertDialog` pattern used in `upgrade_page.rs`.
 pub fn show_reboot_dialog(parent: &impl gtk::prelude::IsA<gtk::Widget>) {
     let dialog = adw::AlertDialog::builder()
-        .heading("Reboot Required")
-        .body(
+        .heading(gettext("Reboot Required"))
+        .body(gettext(
             "A reboot is recommended to complete the update. \
              Would you like to reboot now?",
-        )
+        ))
         .build();
 
-    dialog.add_response("later", "Later");
-    dialog.add_response("reboot", "Reboot Now");
+    dialog.add_response("later", &gettext("Later"));
+    dialog.add_response("reboot", &gettext("Reboot Now"));
     dialog.set_response_appearance("reboot", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("later"));
     dialog.set_close_response("later");
@@ -35,13 +36,16 @@ pub fn show_reboot_dialog(parent: &impl gtk::prelude::IsA<gtk::Widget>) {
             glib::spawn_future_local(async move {
                 if let Ok(err_msg) = err_rx.recv().await {
                     let error_dialog = adw::AlertDialog::builder()
-                        .heading("Reboot Failed")
+                        .heading(gettext("Reboot Failed"))
                         .body(format!(
-                            "The system could not be rebooted.\n\n{err_msg}\n\n\
+                            gettext(
+                                "The system could not be rebooted.\n\n{}\n\n\
                              Please reboot manually using your system settings or terminal."
+                            ),
+                            err_msg
                         ))
                         .build();
-                    error_dialog.add_response("close", "Close");
+                    error_dialog.add_response("close", &gettext("Close"));
                     error_dialog.set_default_response(Some("close"));
                     error_dialog.set_close_response("close");
                     error_dialog.present(None::<&gtk::Widget>);
