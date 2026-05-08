@@ -40,9 +40,9 @@ pub fn show_reboot_dialog(parent: &impl gtk::prelude::IsA<gtk::Widget>) {
                         .body(
                             gettext(
                                 "The system could not be rebooted.\n\n{}\n\n\
-                             Please reboot manually using your system settings or terminal."
+                             Please reboot manually using your system settings or terminal.",
                             )
-                            .replace("{}", &err_msg)
+                            .replace("{}", &err_msg),
                         )
                         .build();
                     error_dialog.add_response("close", &gettext("Close"));
