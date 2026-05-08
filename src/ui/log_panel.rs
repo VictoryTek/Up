@@ -94,7 +94,7 @@ impl LogPanel {
                 let path = format!("{home}/{filename}");
 
                 let toast_msg = match std::fs::write(&path, text.as_str()) {
-                    Ok(_) => gettext("Log saved to ~/{}"​).replace("{}", &filename),
+                    Ok(_) => gettext("Log saved to ~/{}").replace("{}", &filename),
                     Err(e) => gettext("Failed to save log: {}").replace("{}", &e.to_string()),
                 };
 
