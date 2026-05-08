@@ -17,6 +17,10 @@ type UpdatePageResult = (
     adw::ActionRow,
     adw::ActionRow,
     Rc<Cell<bool>>,
+    Rc<RefCell<Vec<Arc<dyn Backend>>>>,
+    Rc<RefCell<Vec<(BackendKind, UpdateRow)>>>,
+    LogPanel,
+    gtk::Label,
 );
 
 pub struct UpWindow;
@@ -33,8 +37,17 @@ impl UpWindow {
         let view_stack = adw::ViewStack::new();
 
         // --- Update Page ---
-        let (update_page, run_checks, sysinfo_distro_row, sysinfo_version_row, update_in_progress) =
-            Self::build_update_page();
+        let (
+            update_page,
+            run_checks,
+            sysinfo_distro_row,
+            sysinfo_version_row,
+            update_in_progress,
+            detected,
+            rows,
+            log_panel,
+            status_label,
+        ) = Self::build_update_page();
         view_stack.add_titled_with_icon(
             &update_page,
             Some("update"),
@@ -132,6 +145,7 @@ impl UpWindow {
 
         // Application overflow menu (three-dot button on the end/right slot).
         let app_menu = gio::Menu::new();
+        app_menu.append(Some("Run Maintenance"), Some("win.maintenance"));
         app_menu.append(Some("About Up"), Some("win.about"));
         let menu_button = gtk::MenuButton::builder()
             .icon_name("open-menu-symbolic")
@@ -169,6 +183,149 @@ impl UpWindow {
             }
         ));
         window.add_action(&about_action);
+
+        // Register the "maintenance" action that runs cleanup on all detected backends.
+        let maintenance_action = gio::SimpleAction::new("maintenance", None);
+        maintenance_action.connect_activate(glib::clone!(
+            #[weak]
+            window,
+            #[strong]
+            rows,
+            #[strong]
+            detected,
+            #[strong]
+            log_panel,
+            #[strong]
+            update_in_progress,
+            #[strong]
+            status_label,
+            #[upgrade_or]
+            return,
+            move |_, _| {
+                let _ = &window; // keep window alive for the duration of the closure
+                if update_in_progress.get() {
+                    return;
+                }
+                update_in_progress.set(true);
+                log_panel.clear();
+                log_panel.append_line(
+                    "\u{2500}\u{2500}\u{2500} Maintenance started \u{2500}\u{2500}\u{2500}",
+                );
+                status_label.set_label("Running maintenance\u{2026}");
+
+                // Collect non-skipped backends that support cleanup.
+                let backends: Vec<Arc<dyn Backend>> = {
+                    let detected_borrow = detected.borrow();
+                    let rows_borrow = rows.borrow();
+                    detected_borrow
+                        .iter()
+                        .filter(|b| b.supports_cleanup())
+                        .filter(|b| {
+                            rows_borrow
+                                .iter()
+                                .find(|(k, _)| *k == b.kind())
+                                .map(|(_, r)| !r.is_skipped())
+                                .unwrap_or(true)
+                        })
+                        .cloned()
+                        .collect()
+                };
+
+                if backends.is_empty() {
+                    status_label.set_label("No maintenance actions available.");
+                    update_in_progress.set(false);
+                    return;
+                }
+
+                glib::spawn_future_local(glib::clone!(
+                    #[strong]
+                    rows,
+                    #[strong]
+                    log_panel,
+                    #[strong]
+                    update_in_progress,
+                    #[strong]
+                    status_label,
+                    async move {
+                        use crate::orchestrator::{CleanupOrchestrator, OrchestratorEvent};
+
+                        let orchestrator = CleanupOrchestrator::new(backends);
+                        let (event_tx, event_rx) = async_channel::unbounded::<OrchestratorEvent>();
+                        orchestrator.run_all(event_tx);
+
+                        let mut auth_started = false;
+                        let mut has_error = false;
+
+                        while let Ok(event) = event_rx.recv().await {
+                            match event {
+                                OrchestratorEvent::AuthStarted => {
+                                    auth_started = true;
+                                    status_label.set_label("Authenticating\u{2026}");
+                                    log_panel
+                                        .append_line("Requesting administrator privileges\u{2026}");
+                                }
+                                OrchestratorEvent::AuthSucceeded => {
+                                    if auth_started {
+                                        log_panel.append_line("Authentication successful.");
+                                    }
+                                    status_label.set_label("Running maintenance\u{2026}");
+                                }
+                                OrchestratorEvent::AuthFailed(e) => {
+                                    log_panel.append_line(&format!("Authentication failed: {e}"));
+                                    status_label.set_label("Maintenance cancelled.");
+                                    update_in_progress.set(false);
+                                    return;
+                                }
+                                OrchestratorEvent::BackendStarted(kind) => {
+                                    let rows_borrowed = rows.borrow();
+                                    if let Some((_, row)) =
+                                        rows_borrowed.iter().find(|(k, _)| *k == kind)
+                                    {
+                                        row.set_status_cleaning();
+                                    }
+                                }
+                                OrchestratorEvent::BackendLog(kind, line) => {
+                                    log_panel.append_line(&format!("[{kind}] {line}"));
+                                }
+                                OrchestratorEvent::BackendFinished(kind, result) => {
+                                    let rows_borrowed = rows.borrow();
+                                    if let Some((_, row)) =
+                                        rows_borrowed.iter().find(|(k, _)| *k == kind)
+                                    {
+                                        match &result {
+                                            UpdateResult::Success { updated_count } => {
+                                                row.set_status_cleaned(*updated_count);
+                                            }
+                                            UpdateResult::Error(e) => {
+                                                row.set_status_error(&e.to_string());
+                                                has_error = true;
+                                            }
+                                            UpdateResult::Skipped(msg) => {
+                                                row.set_status_skipped(msg);
+                                            }
+                                            UpdateResult::SuccessWithSelfUpdate {
+                                                updated_count,
+                                            } => {
+                                                row.set_status_cleaned(*updated_count);
+                                            }
+                                        }
+                                    }
+                                }
+                                OrchestratorEvent::AllFinished => break,
+                            }
+                        }
+
+                        if has_error {
+                            status_label.set_label("Maintenance completed with errors.");
+                        } else {
+                            status_label.set_label("Maintenance complete.");
+                        }
+                        update_in_progress.set(false);
+                    }
+                ));
+            }
+        ));
+        window.add_action(&maintenance_action);
 
         window
     }
@@ -855,6 +1012,16 @@ impl UpWindow {
             ));
         }
 
-        (page_box, run_checks, distro_row, version_row, updating)
+        (
+            page_box,
+            run_checks,
+            distro_row,
+            version_row,
+            updating,
+            detected,
+            rows,
+            log_panel,
+            status_label,
+        )
     }
 }

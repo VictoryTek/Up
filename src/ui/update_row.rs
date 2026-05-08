@@ -228,4 +228,27 @@ impl UpdateRow {
         self.status_label.set_label(msg);
         self.status_label.set_css_classes(&["dim-label"]);
     }
+
+    pub fn set_status_cleaning(&self) {
+        self.retry_button.set_visible(false);
+        self.skip_checkbox.set_sensitive(false);
+        self.spinner.set_visible(true);
+        self.spinner.set_spinning(true);
+        self.status_label.set_label("Cleaning\u{2026}");
+        self.status_label.set_css_classes(&["accent"]);
+    }
+
+    pub fn set_status_cleaned(&self, removed: usize) {
+        self.retry_button.set_visible(false);
+        self.skip_checkbox.set_sensitive(true);
+        self.spinner.set_visible(false);
+        self.spinner.set_spinning(false);
+        let msg = if removed == 0 {
+            "Already clean".to_string()
+        } else {
+            format!("{removed} removed")
+        };
+        self.status_label.set_label(&msg);
+        self.status_label.set_css_classes(&["success"]);
+    }
 }

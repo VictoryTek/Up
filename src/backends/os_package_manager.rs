@@ -1,4 +1,4 @@
-use crate::backends::{Backend, BackendKind, UpdateResult};
+use crate::backends::{Backend, BackendError, BackendKind, UpdateResult};
 use crate::executor::CommandExecutor;
 use std::future::Future;
 use std::pin::Pin;
@@ -81,6 +81,37 @@ impl Backend for AptBackend {
             Ok(parse_apt_list_upgradable(&text))
         })
     }
+
+    fn supports_cleanup(&self) -> bool {
+        true
+    }
+
+    fn run_cleanup<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            match runner
+                .run(
+                    "pkexec",
+                    &[
+                        "sh",
+                        "-c",
+                        "DEBIAN_FRONTEND=noninteractive apt autoremove -y",
+                    ],
+                )
+                .await
+            {
+                Ok(output) => {
+                    let removed = count_apt_autoremovals(&output);
+                    UpdateResult::Success {
+                        updated_count: removed,
+                    }
+                }
+                Err(e) => UpdateResult::Error(e),
+            }
+        })
+    }
 }
 
 pub(crate) fn parse_apt_list_upgradable(output: &str) -> Vec<String> {
@@ -159,6 +190,27 @@ impl Backend for DnfBackend {
             }
             let text = String::from_utf8_lossy(&out.stdout);
             Ok(parse_dnf_list_upgrades(&text))
+        })
+    }
+
+    fn supports_cleanup(&self) -> bool {
+        true
+    }
+
+    fn run_cleanup<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            match runner.run("pkexec", &["dnf", "autoremove", "-y"]).await {
+                Ok(output) => {
+                    let removed = count_dnf_autoremovals(&output);
+                    UpdateResult::Success {
+                        updated_count: removed,
+                    }
+                }
+                Err(e) => UpdateResult::Error(e),
+            }
         })
     }
 }
@@ -246,6 +298,53 @@ impl Backend for PacmanBackend {
             Ok(parse_checkupdates(&text))
         })
     }
+
+    fn supports_cleanup(&self) -> bool {
+        true
+    }
+
+    fn run_cleanup<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            // Step 1: List orphans unprivileged.
+            let qtdq_out = match tokio::process::Command::new("pacman")
+                .args(["-Qtdq"])
+                .output()
+                .await
+            {
+                Ok(o) => o,
+                Err(e) => {
+                    return UpdateResult::Error(BackendError::Spawn(e.to_string()));
+                }
+            };
+
+            // pacman -Qtdq exits non-zero on some versions when there are no orphans;
+            // treat any exit as "no orphans" when stdout is empty.
+            let stdout = String::from_utf8_lossy(&qtdq_out.stdout);
+            let orphans: Vec<String> = stdout
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect();
+
+            if orphans.is_empty() {
+                return UpdateResult::Success { updated_count: 0 };
+            }
+
+            // Step 2: Remove orphans with privilege.
+            let mut args: Vec<&str> = vec!["pacman", "-Rns", "--noconfirm"];
+            args.extend(orphans.iter().map(|s| s.as_str()));
+
+            match runner.run("pkexec", &args).await {
+                Ok(_) => UpdateResult::Success {
+                    updated_count: orphans.len(),
+                },
+                Err(e) => UpdateResult::Error(e),
+            }
+        })
+    }
 }
 
 // --- Zypper ---
@@ -309,6 +408,60 @@ impl Backend for ZypperBackend {
             Ok(parse_zypper_list_updates(&text))
         })
     }
+
+    fn supports_cleanup(&self) -> bool {
+        true
+    }
+
+    fn run_cleanup<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            // Step 1: List orphaned packages (unprivileged).
+            let list_out = match tokio::process::Command::new("zypper")
+                .args(["--no-color", "packages", "--orphaned"])
+                .env("LANG", "C")
+                .env("LC_ALL", "C")
+                .output()
+                .await
+            {
+                Ok(o) => o,
+                Err(e) => {
+                    return UpdateResult::Error(BackendError::Spawn(e.to_string()));
+                }
+            };
+
+            if !list_out.status.success() {
+                return UpdateResult::Error(BackendError::Exit {
+                    code: list_out.status.code().unwrap_or(-1),
+                    message: String::from_utf8_lossy(&list_out.stderr).to_string(),
+                });
+            }
+
+            let stdout = String::from_utf8_lossy(&list_out.stdout);
+            let orphans: Vec<String> = parse_zypper_orphaned(&stdout)
+                .into_iter()
+                .filter(|n| is_safe_pkg_name(n))
+                .collect();
+
+            if orphans.is_empty() {
+                return UpdateResult::Success { updated_count: 0 };
+            }
+
+            // Step 2: Remove orphans with privilege via a shell string.
+            let pkg_list = orphans.join(" ");
+            let cmd = format!("LANG=C LC_ALL=C zypper remove -y {}", pkg_list);
+            let zypper_args = vec!["sh", "-c", cmd.as_str()];
+
+            match runner.run("pkexec", &zypper_args).await {
+                Ok(_) => UpdateResult::Success {
+                    updated_count: orphans.len(),
+                },
+                Err(e) => UpdateResult::Error(e),
+            }
+        })
+    }
 }
 
 pub(crate) fn parse_checkupdates(output: &str) -> Vec<String> {
@@ -340,6 +493,54 @@ pub(crate) fn parse_zypper_list_updates(output: &str) -> Vec<String> {
 
 pub(crate) fn count_zypper_upgraded(output: &str) -> usize {
     output.lines().filter(|l| l.contains("done")).count()
+}
+
+pub(crate) fn count_apt_autoremovals(output: &str) -> usize {
+    // apt autoremove output: "N to remove" or "0 upgraded, 0 newly installed, N to remove"
+    for line in output.lines() {
+        if line.contains("to remove") {
+            for word in line.split_whitespace() {
+                if let Ok(n) = word.parse::<usize>() {
+                    return n;
+                }
+            }
+        }
+    }
+    0
+}
+
+pub(crate) fn count_dnf_autoremovals(output: &str) -> usize {
+    // DNF4: "  Remove  N Packages"
+    // DNF5: "  Removing: N packages"
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("Remove ") || trimmed.starts_with("Removing:") {
+            for word in trimmed.split_whitespace() {
+                if let Ok(n) = word.parse::<usize>() {
+                    return n;
+                }
+            }
+        }
+    }
+    0
+}
+
+pub(crate) fn parse_zypper_orphaned(output: &str) -> Vec<String> {
+    // `zypper packages --orphaned` uses the same pipe-delimited table format.
+    // Lines starting with "i" or "i " (after trim) mark installed packages.
+    output
+        .lines()
+        .filter(|l| l.trim_start().starts_with("i ") || l.trim_start().starts_with("i|"))
+        .filter_map(|l| l.split('|').nth(2).map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+pub(crate) fn is_safe_pkg_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
 }
 
 #[cfg(test)]

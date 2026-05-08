@@ -140,6 +140,24 @@ pub trait Backend: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
         Box::pin(async { Ok(Vec::new()) })
     }
+
+    /// Whether this backend supports a cleanup / maintenance operation.
+    /// Default: false. Override to true in backends that implement run_cleanup.
+    fn supports_cleanup(&self) -> bool {
+        false
+    }
+
+    /// Run the cleanup/maintenance operation for this backend, streaming output
+    /// through `runner`. Returns UpdateResult where `updated_count` is the number
+    /// of packages removed (0 = already clean).
+    /// Default: no-op, returns Success { updated_count: 0 }.
+    fn run_cleanup<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        let _ = runner;
+        Box::pin(async { UpdateResult::Success { updated_count: 0 } })
+    }
 }
 
 /// Detect all available backends on the current system.

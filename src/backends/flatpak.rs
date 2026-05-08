@@ -141,6 +141,33 @@ impl Backend for FlatpakBackend {
             Ok(parse_flatpak_updates(&text))
         })
     }
+
+    fn supports_cleanup(&self) -> bool {
+        true
+    }
+
+    fn run_cleanup<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            let (cmd, args) = build_flatpak_cmd(&["uninstall", "--unused", "-y"]);
+            let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+
+            match runner.run(&cmd, &args_refs).await {
+                Ok(output) => {
+                    let removed = output
+                        .lines()
+                        .filter(|l| l.trim().starts_with("Uninstalling:"))
+                        .count();
+                    UpdateResult::Success {
+                        updated_count: removed,
+                    }
+                }
+                Err(e) => UpdateResult::Error(e),
+            }
+        })
+    }
 }
 
 /// Parse full output from `flatpak remote-ls --updates --columns=application`,

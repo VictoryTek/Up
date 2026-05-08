@@ -56,6 +56,32 @@ impl Backend for HomebrewBackend {
             Ok(parse_brew_outdated(&text))
         })
     }
+
+    fn supports_cleanup(&self) -> bool {
+        true
+    }
+
+    fn run_cleanup<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            // Step 1: Remove unused formulae (dependencies no longer required).
+            if let Err(e) = runner.run("brew", &["autoremove"]).await {
+                return UpdateResult::Error(e);
+            }
+            // Step 2: Remove old versions, stale downloads, broken symlinks.
+            match runner.run("brew", &["cleanup"]).await {
+                Ok(output) => {
+                    let removed = count_brew_cleaned(&output);
+                    UpdateResult::Success {
+                        updated_count: removed,
+                    }
+                }
+                Err(e) => UpdateResult::Error(e),
+            }
+        })
+    }
 }
 
 pub(crate) fn parse_brew_outdated(output: &str) -> Vec<String> {
@@ -74,6 +100,14 @@ pub(crate) fn count_homebrew_upgraded(output: &str) -> usize {
         .filter(|l| {
             (l.contains("Upgrading") || l.contains("Pouring")) && !l.contains("outdated packages")
         })
+        .count()
+}
+
+pub(crate) fn count_brew_cleaned(output: &str) -> usize {
+    // brew cleanup prints "Removing <formula>: ..." for each item cleaned.
+    output
+        .lines()
+        .filter(|l| l.trim().starts_with("Removing "))
         .count()
 }
 

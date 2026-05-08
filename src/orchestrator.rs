@@ -106,3 +106,68 @@ where
 {
     drop(crate::runtime::runtime().spawn(f()));
 }
+
+/// Drives the cleanup/maintenance sequence for a set of backends, sending
+/// progress events to the UI via an [`async_channel`].  Reuses [`OrchestratorEvent`].
+pub struct CleanupOrchestrator {
+    backends: Vec<Arc<dyn Backend>>,
+}
+
+impl CleanupOrchestrator {
+    pub fn new(backends: Vec<Arc<dyn Backend>>) -> Self {
+        Self { backends }
+    }
+
+    /// Spawn the cleanup work on a background OS thread and stream
+    /// [`OrchestratorEvent`] messages to `tx` in arrival order.
+    pub fn run_all(&self, tx: async_channel::Sender<OrchestratorEvent>) {
+        let backends = self.backends.clone();
+        spawn_background(move || async move {
+            let any_needs_root = backends.iter().any(|b| b.needs_root());
+
+            let shell: Option<Arc<tokio::sync::Mutex<PrivilegedShell>>> = if any_needs_root {
+                let _ = tx.send(OrchestratorEvent::AuthStarted).await;
+                match PrivilegedShell::new().await {
+                    Ok(s) => Some(Arc::new(tokio::sync::Mutex::new(s))),
+                    Err(e) => {
+                        let _ = tx.send(OrchestratorEvent::AuthFailed(e)).await;
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
+
+            let _ = tx.send(OrchestratorEvent::AuthSucceeded).await;
+
+            let (be_tx, be_rx) = async_channel::unbounded::<BackendEvent>();
+
+            let tx_fwd = tx.clone();
+            let fwd_handle = tokio::spawn(async move {
+                while let Ok(event) = be_rx.recv().await {
+                    let BackendEvent::LogLine(k, line) = event;
+                    let _ = tx_fwd.send(OrchestratorEvent::BackendLog(k, line)).await;
+                }
+            });
+
+            for backend in &backends {
+                let kind = backend.kind();
+                let _ = tx.send(OrchestratorEvent::BackendStarted(kind)).await;
+                let runner = CommandRunner::new(be_tx.clone(), kind, shell.clone());
+                let result = backend.run_cleanup(&runner).await;
+                let _ = tx
+                    .send(OrchestratorEvent::BackendFinished(kind, result))
+                    .await;
+            }
+
+            drop(be_tx);
+            let _ = fwd_handle.await;
+
+            if let Some(s) = shell {
+                s.lock().await.close().await;
+            }
+
+            let _ = tx.send(OrchestratorEvent::AllFinished).await;
+        });
+    }
+}

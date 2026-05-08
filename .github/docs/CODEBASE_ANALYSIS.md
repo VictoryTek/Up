@@ -90,14 +90,14 @@
 
 #### Quick Wins (Small Effort)
 - [x] **Per-backend "skip" checkboxes** — `Skipped` variant already exists; high user value
-- [ ] **Cleanup / Maintenance actions** — `apt autoremove`, `dnf autoremove`, `nix-collect-garbage`, `flatpak uninstall --unused`
+- [x] **Cleanup / Maintenance actions** — `apt autoremove`, `dnf autoremove`, `nix-collect-garbage`, `flatpak uninstall --unused`
 - [x] **Update history log** — JSONL in `XDG_DATA_HOME/up/history.jsonl` + History tab
-- [ ] **Metered-connection warning** — via `gio::NetworkMonitor::is_network_metered()`
+- [x] **Metered-connection warning** — via `gio::NetworkMonitor::is_network_metered()`
 - [x] **Reboot-required detection** — read `/var/run/reboot-required`, `dnf needs-restarting -r`, `needrestart`; show banner only when actually required
-- [ ] **Battery-aware prompt** — warn before long upgrades when battery < 40%
+- [x] **Battery-aware prompt** — warn before long upgrades when battery < 40%
 - [x] **Log export / Copy button** — save log buffer to `~/up-update-<timestamp>.log`
-- [ ] **A11y audit** — `set_accessible_label` on icon-only buttons; verify contrast in dark style
-- [ ] **Per-backend retry button** — trivial once typed errors exist
+- [x] **A11y audit** — `set_accessible_label` on icon-only buttons; verify contrast in dark style
+- [x] **Per-backend retry button** — trivial once typed errors exist
 
 #### Medium Effort
 - [ ] **Dry-run / Preview mode** — `list_available` infra already in place; one "Preview" button to expand rows without running privileged steps

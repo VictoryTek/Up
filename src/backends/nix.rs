@@ -612,6 +612,42 @@ impl Backend for NixBackend {
             }
         })
     }
+
+    fn supports_cleanup(&self) -> bool {
+        true
+    }
+
+    fn run_cleanup<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            // nix-collect-garbage -d deletes old profile generations and
+            // collects unreachable store paths. Runs unprivileged on user profiles.
+            match runner.run("nix-collect-garbage", &["-d"]).await {
+                Ok(output) => {
+                    let freed = count_nix_freed_paths(&output);
+                    UpdateResult::Success {
+                        updated_count: freed,
+                    }
+                }
+                Err(e) => UpdateResult::Error(e),
+            }
+        })
+    }
+}
+
+/// Count store paths freed by `nix-collect-garbage -d`.
+/// Output contains lines like: "1234 store paths deleted, 567.89 MiB freed"
+pub(crate) fn count_nix_freed_paths(output: &str) -> usize {
+    for line in output.lines() {
+        if line.contains("store paths deleted") {
+            if let Some(n_str) = line.split_whitespace().next() {
+                return n_str.parse::<usize>().unwrap_or(0);
+            }
+        }
+    }
+    0
 }
 
 #[cfg(test)]
