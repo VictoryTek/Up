@@ -1,5 +1,5 @@
+use adw::prelude::*;
 use gtk::glib;
-use gtk::prelude::*;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -14,6 +14,7 @@ pub struct LogPanel {
     pub expander: gtk::Expander,
     text_view: gtk::TextView,
     scroll_pending: Rc<Cell<bool>>,
+    save_button: gtk::Button,
 }
 
 impl LogPanel {
@@ -36,20 +37,73 @@ impl LogPanel {
             .child(&text_view)
             .build();
 
+        // ToastOverlay wraps the scrolled window so toasts appear over the log text.
+        let toast_overlay = adw::ToastOverlay::new();
+        toast_overlay.set_child(Some(&scrolled));
+
+        // Save button placed in the expander header.
+        let save_button = gtk::Button::builder()
+            .icon_name("document-save-symbolic")
+            .tooltip_text("Save log to file")
+            .css_classes(vec!["flat", "circular"])
+            .sensitive(false)
+            .valign(gtk::Align::Center)
+            .build();
+
+        // Custom label widget: label text + save button in a horizontal box.
+        let header_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let header_label = gtk::Label::new(Some("Terminal Output"));
+        header_box.append(&header_label);
+        header_box.append(&save_button);
+
         let expander = gtk::Expander::builder()
-            .label("Terminal Output")
+            .label_widget(&header_box)
             .margin_top(12)
-            .child(&scrolled)
+            .child(&toast_overlay)
             .build();
 
         let buffer = text_view.buffer();
         let end_iter = buffer.end_iter();
         buffer.create_mark(Some("scroll-end"), &end_iter, false);
 
+        // Wire up the save button.
+        {
+            let text_view_weak = text_view.downgrade();
+            let toast_overlay_clone = toast_overlay.clone();
+            save_button.connect_clicked(move |_| {
+                let Some(view) = text_view_weak.upgrade() else {
+                    return;
+                };
+                let buffer = view.buffer();
+                let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+
+                if text.trim().is_empty() {
+                    return;
+                }
+
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let filename = format!("up-update-{secs}.log");
+                let path = format!("{home}/{filename}");
+
+                let toast_msg = match std::fs::write(&path, text.as_str()) {
+                    Ok(_) => format!("Log saved to ~/{filename}"),
+                    Err(e) => format!("Failed to save log: {e}"),
+                };
+
+                toast_overlay_clone
+                    .add_toast(adw::Toast::builder().title(&toast_msg).timeout(5).build());
+            });
+        }
+
         Self {
             expander,
             text_view,
             scroll_pending: Rc::new(Cell::new(false)),
+            save_button,
         }
     }
 
@@ -59,6 +113,11 @@ impl LogPanel {
         let mut end = buffer.end_iter();
         buffer.insert(&mut end, &clean);
         buffer.insert(&mut end, "\n");
+
+        // Enable the save button now that the log has content.
+        if !self.save_button.is_sensitive() {
+            self.save_button.set_sensitive(true);
+        }
 
         // FIFO eviction: keep buffer at most LINE_CAP lines.
         if buffer.line_count() > LINE_CAP {
@@ -75,6 +134,7 @@ impl LogPanel {
     pub fn clear(&self) {
         let buffer = self.text_view.buffer();
         buffer.set_text("");
+        self.save_button.set_sensitive(false);
     }
 
     /// Schedules a single scroll-to-bottom, coalescing rapid calls into one.

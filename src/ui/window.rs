@@ -273,7 +273,30 @@ impl UpWindow {
                 updating.set(true);
                 log_panel.clear();
 
-                let backends = detected.borrow().clone();
+                // Visually mark skipped rows before starting; collect only active backends.
+                {
+                    let borrowed = rows.borrow();
+                    for (_, row) in borrowed.iter() {
+                        if row.is_skipped() {
+                            row.set_status_skipped("Skipped by user");
+                        }
+                    }
+                }
+                let backends: Vec<Arc<dyn Backend>> = {
+                    let detected_borrow = detected.borrow();
+                    let rows_borrow = rows.borrow();
+                    detected_borrow
+                        .iter()
+                        .filter(|b| {
+                            rows_borrow
+                                .iter()
+                                .find(|(k, _)| *k == b.kind())
+                                .map(|(_, r)| !r.is_skipped())
+                                .unwrap_or(true)
+                        })
+                        .cloned()
+                        .collect()
+                };
 
                 glib::spawn_future_local(glib::clone!(
                     #[strong]
@@ -372,7 +395,13 @@ impl UpWindow {
                         updating.set(false);
                         button.set_sensitive(true);
                         if !has_error {
-                            crate::ui::reboot_dialog::show_reboot_dialog(&button);
+                            // Check if reboot is actually required before prompting.
+                            // reboot_required() performs fast filesystem/process checks
+                            // and is safe to call on the GTK main thread.
+                            let reboot_needed = crate::reboot::reboot_required();
+                            if reboot_needed {
+                                crate::ui::reboot_dialog::show_reboot_dialog(&button);
+                            }
                         }
                     }
                 ));
@@ -479,12 +508,19 @@ impl UpWindow {
                                     *p
                                 };
                                 if remaining == 0 {
-                                    let total = *total_available.borrow();
-                                    if total > 0 {
+                                    let non_skipped_total: usize = {
+                                        let borrowed = rows.borrow();
+                                        borrowed
+                                            .iter()
+                                            .filter(|(_, r)| !r.is_skipped())
+                                            .filter_map(|(_, r)| r.last_available_count())
+                                            .sum()
+                                    };
+                                    if non_skipped_total > 0 {
                                         update_button_checks.set_sensitive(true);
                                         status_label_checks.set_label(&format!(
-                                            "{total} update{} available",
-                                            if total == 1 { "" } else { "s" }
+                                            "{non_skipped_total} update{} available",
+                                            if non_skipped_total == 1 { "" } else { "s" }
                                         ));
                                     } else {
                                         status_label_checks.set_label("Everything is up to date.");
@@ -515,6 +551,10 @@ impl UpWindow {
                 backends_group,
                 #[strong]
                 run_checks,
+                #[weak]
+                update_button,
+                #[strong]
+                updating,
                 async move {
                     if let Ok(new_backends) = detect_rx.recv().await {
                         // Remove placeholder
@@ -523,7 +563,21 @@ impl UpWindow {
                         {
                             let mut rows_mut = rows.borrow_mut();
                             for backend in &new_backends {
-                                let row = UpdateRow::new(backend.as_ref());
+                                let rows_cb = rows.clone();
+                                let button_cb = update_button.clone();
+                                let updating_cb = updating.clone();
+                                let row = UpdateRow::new(backend.as_ref(), move || {
+                                    if updating_cb.get() {
+                                        return;
+                                    }
+                                    let borrowed = rows_cb.borrow();
+                                    let non_skipped_available: usize = borrowed
+                                        .iter()
+                                        .filter(|(_, r)| !r.is_skipped())
+                                        .filter_map(|(_, r)| r.last_available_count())
+                                        .sum();
+                                    button_cb.set_sensitive(non_skipped_available > 0);
+                                });
                                 backends_group.add(&row.row);
                                 rows_mut.push((backend.kind(), row));
                             }

@@ -89,13 +89,13 @@
 ### 7. New Features (by priority)
 
 #### Quick Wins (Small Effort)
-- [ ] **Per-backend "skip" checkboxes** — `Skipped` variant already exists; high user value
+- [x] **Per-backend "skip" checkboxes** — `Skipped` variant already exists; high user value
 - [ ] **Cleanup / Maintenance actions** — `apt autoremove`, `dnf autoremove`, `nix-collect-garbage`, `flatpak uninstall --unused`
 - [ ] **Update history log** — JSONL in `XDG_DATA_HOME/up/history.jsonl` + History tab
 - [ ] **Metered-connection warning** — via `gio::NetworkMonitor::is_network_metered()`
-- [ ] **Reboot-required detection** — read `/var/run/reboot-required`, `dnf needs-restarting -r`, `needrestart`; show banner only when actually required
+- [x] **Reboot-required detection** — read `/var/run/reboot-required`, `dnf needs-restarting -r`, `needrestart`; show banner only when actually required
 - [ ] **Battery-aware prompt** — warn before long upgrades when battery < 40%
-- [ ] **Log export / Copy button** — save log buffer to `~/up-update-<timestamp>.log`
+- [x] **Log export / Copy button** — save log buffer to `~/up-update-<timestamp>.log`
 - [ ] **A11y audit** — `set_accessible_label` on icon-only buttons; verify contrast in dark style
 - [ ] **Per-backend retry button** — trivial once typed errors exist
 
