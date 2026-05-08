@@ -251,4 +251,10 @@ impl UpdateRow {
         self.status_label.set_label(&msg);
         self.status_label.set_css_classes(&["success"]);
     }
+
+    /// Restore persisted skip state on startup.
+    /// Triggers the same visual update and on_skip_changed callback as a user click.
+    pub fn set_skipped(&self, skipped: bool) {
+        self.skip_checkbox.set_active(skipped);
+    }
 }

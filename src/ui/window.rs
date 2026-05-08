@@ -26,7 +26,10 @@ type UpdatePageResult = (
 pub struct UpWindow;
 
 impl UpWindow {
-    pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
+    pub fn build(
+        app: &adw::Application,
+        initial_skipped: Vec<BackendKind>,
+    ) -> adw::ApplicationWindow {
         let window = adw::ApplicationWindow::builder()
             .application(app)
             .title("Up")
@@ -47,7 +50,7 @@ impl UpWindow {
             rows,
             log_panel,
             status_label,
-        ) = Self::build_update_page();
+        ) = Self::build_update_page(initial_skipped);
         view_stack.add_titled_with_icon(
             &update_page,
             Some("update"),
@@ -330,7 +333,7 @@ impl UpWindow {
         window
     }
 
-    fn build_update_page() -> UpdatePageResult {
+    fn build_update_page(initial_skipped: Vec<BackendKind>) -> UpdatePageResult {
         let page_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
         let scrolled = gtk::ScrolledWindow::builder()
@@ -884,6 +887,18 @@ impl UpWindow {
                                             .filter_map(|(_, r)| r.last_available_count())
                                             .sum();
                                         button_cb.set_sensitive(non_skipped_available > 0);
+                                        let skipped: Vec<BackendKind> = borrowed
+                                            .iter()
+                                            .filter(|(_, r)| r.is_skipped())
+                                            .map(|(k, _)| *k)
+                                            .collect();
+                                        drop(borrowed);
+                                        let config = crate::config::AppConfig {
+                                            skipped_backends: skipped,
+                                        };
+                                        if let Err(e) = crate::config::save_config(&config) {
+                                            log::warn!("Failed to save skip config: {e}");
+                                        }
                                     },
                                     move || {
                                         use crate::orchestrator::{
@@ -998,6 +1013,12 @@ impl UpWindow {
                                 );
                                 backends_group.add(&row.row);
                                 rows_mut.push((backend.kind(), row));
+                            }
+                        }
+                        // Apply persisted skip state now that borrow_mut is released.
+                        for (kind, row) in rows.borrow().iter() {
+                            if initial_skipped.contains(kind) {
+                                row.set_skipped(true);
                             }
                         }
                         // Store backends

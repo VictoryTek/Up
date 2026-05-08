@@ -248,7 +248,7 @@
 9. ~~Add timeouts + cancellation to all command execution~~ ✓
 10. ~~Replace `curl` shell-outs with `ureq`~~ ✓
 11. ~~Auto-source version in `meson.build` and `flake.nix`~~ ✓
-12. **Ship per-backend skip checkboxes + Preview button** ← NEXT
+12. ~~Ship per-backend skip checkboxes + Preview button~~ ✓
 13. Add `cargo audit` / `cargo deny` / `nix flake check` to preflight + CI
 14. Add fwupd backend and reboot-required detection
 15. Plan v2.0 D-Bus + polkit-action refactor

@@ -31,7 +31,8 @@ impl UpApplication {
 
         gtk::Window::set_default_icon_name("io.github.up");
 
-        let window = UpWindow::build(app);
+        let config = crate::config::load_config();
+        let window = UpWindow::build(app, config.skipped_backends);
         window.present();
     }
 }
