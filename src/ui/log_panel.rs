@@ -49,6 +49,7 @@ impl LogPanel {
             .sensitive(false)
             .valign(gtk::Align::Center)
             .build();
+        save_button.update_property(&[gtk::accessible::Property::Label("Save log to file")]);
 
         // Custom label widget: label text + save button in a horizontal box.
         let header_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);

@@ -91,7 +91,7 @@
 #### Quick Wins (Small Effort)
 - [x] **Per-backend "skip" checkboxes** — `Skipped` variant already exists; high user value
 - [ ] **Cleanup / Maintenance actions** — `apt autoremove`, `dnf autoremove`, `nix-collect-garbage`, `flatpak uninstall --unused`
-- [ ] **Update history log** — JSONL in `XDG_DATA_HOME/up/history.jsonl` + History tab
+- [x] **Update history log** — JSONL in `XDG_DATA_HOME/up/history.jsonl` + History tab
 - [ ] **Metered-connection warning** — via `gio::NetworkMonitor::is_network_metered()`
 - [x] **Reboot-required detection** — read `/var/run/reboot-required`, `dnf needs-restarting -r`, `needrestart`; show banner only when actually required
 - [ ] **Battery-aware prompt** — warn before long upgrades when battery < 40%

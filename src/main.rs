@@ -1,6 +1,8 @@
 mod app;
 mod backends;
+mod battery;
 mod executor;
+mod history;
 mod orchestrator;
 mod reboot;
 mod runner;

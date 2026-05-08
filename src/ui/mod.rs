@@ -1,3 +1,4 @@
+pub mod history_page;
 pub mod log_panel;
 pub mod reboot_dialog;
 pub mod update_row;

@@ -16,10 +16,15 @@ pub struct UpdateRow {
     /// Last resolved available-update count; used to restore status on un-skip.
     last_available: Rc<Cell<Option<usize>>>,
     skip_checkbox: gtk::CheckButton,
+    retry_button: gtk::Button,
 }
 
 impl UpdateRow {
-    pub fn new(backend: &dyn Backend, on_skip_changed: impl Fn() + 'static) -> Self {
+    pub fn new(
+        backend: &dyn Backend,
+        on_skip_changed: impl Fn() + 'static,
+        on_retry: impl Fn() + 'static,
+    ) -> Self {
         let status_label = gtk::Label::builder()
             .label("Ready")
             .css_classes(vec!["dim-label"])
@@ -29,23 +34,34 @@ impl UpdateRow {
 
         let spinner = gtk::Spinner::builder().visible(false).build();
 
-        let icon = gtk::Image::from_icon_name(backend.icon_name());
+        let icon = gtk::Image::builder()
+            .icon_name(backend.icon_name())
+            .accessible_role(gtk::AccessibleRole::Presentation)
+            .build();
 
         let skip_flag = Rc::new(Cell::new(false));
         let last_available: Rc<Cell<Option<usize>>> = Rc::new(Cell::new(None));
 
+        let kind_label = format!("Skip {} during Update All", backend.display_name());
         let skip_checkbox = gtk::CheckButton::builder()
-            .tooltip_text("Skip this source during Update All")
+            .tooltip_text(&kind_label)
             .valign(gtk::Align::Center)
             .build();
+        skip_checkbox.update_property(&[gtk::accessible::Property::Label(kind_label.as_str())]);
 
         let row = adw::ExpanderRow::builder()
             .title(backend.display_name())
             .subtitle(backend.description())
             .build();
 
+        let retry_button = gtk::Button::from_icon_name("view-refresh-symbolic");
+        retry_button.set_tooltip_text(Some("Retry"));
+        retry_button.set_visible(false);
+        retry_button.connect_clicked(move |_| on_retry());
+
         row.add_prefix(&icon);
         row.add_suffix(&skip_checkbox);
+        row.add_suffix(&retry_button);
         row.add_suffix(&spinner);
         row.add_suffix(&status_label);
 
@@ -88,6 +104,7 @@ impl UpdateRow {
             skip_flag,
             last_available,
             skip_checkbox,
+            retry_button,
         }
     }
 
@@ -138,6 +155,7 @@ impl UpdateRow {
     }
 
     pub fn set_status_checking(&self) {
+        self.retry_button.set_visible(false);
         self.last_available.set(None);
         self.spinner.set_visible(true);
         self.spinner.set_spinning(true);
@@ -146,6 +164,7 @@ impl UpdateRow {
     }
 
     pub fn set_status_available(&self, count: usize) {
+        self.retry_button.set_visible(false);
         self.last_available.set(Some(count));
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
@@ -160,6 +179,7 @@ impl UpdateRow {
     }
 
     pub fn set_status_running(&self) {
+        self.retry_button.set_visible(false);
         self.skip_checkbox.set_sensitive(false);
         self.spinner.set_visible(true);
         self.spinner.set_spinning(true);
@@ -168,6 +188,7 @@ impl UpdateRow {
     }
 
     pub fn set_status_success(&self, count: usize) {
+        self.retry_button.set_visible(false);
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
@@ -181,6 +202,7 @@ impl UpdateRow {
     }
 
     pub fn set_status_error(&self, msg: &str) {
+        self.retry_button.set_visible(true);
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
@@ -189,6 +211,7 @@ impl UpdateRow {
     }
 
     pub fn set_status_skipped(&self, msg: &str) {
+        self.retry_button.set_visible(false);
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
@@ -198,6 +221,7 @@ impl UpdateRow {
 
     /// Used when the count cannot be determined without running the update (e.g. NixOS).
     pub fn set_status_unknown(&self, msg: &str) {
+        self.retry_button.set_visible(false);
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
