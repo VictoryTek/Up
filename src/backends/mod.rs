@@ -1,4 +1,5 @@
 pub mod flatpak;
+pub mod fwupd;
 pub mod homebrew;
 pub mod nix;
 pub mod os_package_manager;
@@ -77,6 +78,7 @@ pub enum BackendKind {
     Flatpak,
     Homebrew,
     Nix,
+    Fwupd,
 }
 
 impl fmt::Display for BackendKind {
@@ -89,6 +91,7 @@ impl fmt::Display for BackendKind {
             Self::Flatpak => write!(f, "Flatpak"),
             Self::Homebrew => write!(f, "Homebrew"),
             Self::Nix => write!(f, "Nix"),
+            Self::Fwupd => write!(f, "Fwupd"),
         }
     }
 }
@@ -191,6 +194,11 @@ pub fn detect_backends() -> Vec<Arc<dyn Backend>> {
     // Homebrew
     if homebrew::is_available() {
         backends.push(Arc::new(homebrew::HomebrewBackend));
+    }
+
+    // fwupd — firmware updates via LVFS; unprivileged (polkit handled by daemon)
+    if fwupd::is_available() {
+        backends.push(Arc::new(fwupd::FwupdBackend));
     }
 
     for b in &backends {
