@@ -219,6 +219,15 @@ impl UpdateRow {
         self.status_label.set_css_classes(&["dim-label"]);
     }
 
+    pub fn set_status_cancelled(&self) {
+        self.retry_button.set_visible(false);
+        self.skip_checkbox.set_sensitive(true);
+        self.spinner.set_visible(false);
+        self.spinner.set_spinning(false);
+        self.status_label.set_label("Cancelled");
+        self.status_label.set_css_classes(&["dim-label"]);
+    }
+
     /// Used when the count cannot be determined without running the update (e.g. NixOS).
     pub fn set_status_unknown(&self, msg: &str) {
         self.retry_button.set_visible(false);

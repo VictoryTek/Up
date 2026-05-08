@@ -1,7 +1,45 @@
 use crate::backends::{Backend, BackendKind, UpdateResult};
 use crate::runner::{BackendEvent, CommandRunner, PrivilegedShell};
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+/// A cancel handle returned by [`UpdateOrchestrator::run_all`].
+///
+/// Clone freely; [`cancel`][CancelHandle::cancel] is safe to call from any
+/// thread including the GTK main thread.
+#[derive(Clone)]
+pub struct CancelHandle {
+    cancelled: Arc<AtomicBool>,
+    shell_slot: Arc<Mutex<Option<Arc<tokio::sync::Mutex<PrivilegedShell>>>>>,
+}
+
+impl CancelHandle {
+    /// Signal the orchestrator to stop after the current backend finishes.
+    ///
+    /// If a privileged shell is active its stdin is closed, causing it to exit
+    /// after the current command completes.  Safe to call multiple times.
+    pub fn cancel(&self) {
+        if self.cancelled.swap(true, Ordering::SeqCst) {
+            return; // already cancelled
+        }
+        let slot = self.shell_slot.clone();
+        drop(crate::runtime::runtime().spawn(async move {
+            let maybe_shell = {
+                let mut guard = slot.lock().expect("shell_slot mutex poisoned");
+                guard.take()
+            };
+            if let Some(shell_arc) = maybe_shell {
+                shell_arc.lock().await.close().await;
+            }
+        }));
+    }
+
+    /// Returns `true` if [`cancel`][CancelHandle::cancel] has been called.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+}
 
 /// Events emitted by the orchestrator to the UI layer during an update run.
 pub enum OrchestratorEvent {
@@ -37,8 +75,17 @@ impl UpdateOrchestrator {
     ///
     /// The caller (GTK main thread) should receive from the matching receiver
     /// and update the UI based on the events.
-    pub fn run_all(&self, tx: async_channel::Sender<OrchestratorEvent>) {
+    pub fn run_all(&self, tx: async_channel::Sender<OrchestratorEvent>) -> CancelHandle {
         let backends = self.backends.clone();
+
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let shell_slot: Arc<Mutex<Option<Arc<tokio::sync::Mutex<PrivilegedShell>>>>> =
+            Arc::new(Mutex::new(None));
+        let handle = CancelHandle {
+            cancelled: cancelled.clone(),
+            shell_slot: shell_slot.clone(),
+        };
+
         spawn_background(move || async move {
             let any_needs_root = backends.iter().any(|b| b.needs_root());
 
@@ -46,7 +93,14 @@ impl UpdateOrchestrator {
             let shell: Option<Arc<tokio::sync::Mutex<PrivilegedShell>>> = if any_needs_root {
                 let _ = tx.send(OrchestratorEvent::AuthStarted).await;
                 match PrivilegedShell::new().await {
-                    Ok(s) => Some(Arc::new(tokio::sync::Mutex::new(s))),
+                    Ok(s) => {
+                        let arc = Arc::new(tokio::sync::Mutex::new(s));
+                        // Populate shell_slot so CancelHandle::cancel() can close it.
+                        if let Ok(mut guard) = shell_slot.lock() {
+                            *guard = Some(arc.clone());
+                        }
+                        Some(arc)
+                    }
                     Err(e) => {
                         let _ = tx.send(OrchestratorEvent::AuthFailed(e)).await;
                         return;
@@ -75,9 +129,29 @@ impl UpdateOrchestrator {
             // --- Backend iteration ---
             for backend in &backends {
                 let kind = backend.kind();
+
+                // Check for cancellation before starting each backend.
+                if cancelled.load(Ordering::SeqCst) {
+                    let _ = tx
+                        .send(OrchestratorEvent::BackendFinished(
+                            kind,
+                            UpdateResult::Cancelled,
+                        ))
+                        .await;
+                    continue;
+                }
+
                 let _ = tx.send(OrchestratorEvent::BackendStarted(kind)).await;
                 let runner = CommandRunner::new(be_tx.clone(), kind, shell.clone());
                 let result = backend.run_update(&runner).await;
+
+                // If the user cancelled while this backend was running, override the result.
+                let result = if cancelled.load(Ordering::SeqCst) {
+                    UpdateResult::Cancelled
+                } else {
+                    result
+                };
+
                 let _ = tx
                     .send(OrchestratorEvent::BackendFinished(kind, result))
                     .await;
@@ -87,6 +161,11 @@ impl UpdateOrchestrator {
             drop(be_tx);
             let _ = fwd_handle.await;
 
+            // Clear the shell slot so CancelHandle::cancel() cannot double-close.
+            if let Ok(mut guard) = shell_slot.lock() {
+                guard.take();
+            }
+
             // Shut down the privileged shell now that all backends are done.
             if let Some(s) = shell {
                 s.lock().await.close().await;
@@ -94,6 +173,8 @@ impl UpdateOrchestrator {
 
             let _ = tx.send(OrchestratorEvent::AllFinished).await;
         });
+
+        handle
     }
 }
 

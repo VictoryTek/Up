@@ -311,6 +311,7 @@ impl UpWindow {
                                             } => {
                                                 row.set_status_cleaned(*updated_count);
                                             }
+                                            UpdateResult::Cancelled => {}
                                         }
                                     }
                                 }
@@ -429,6 +430,29 @@ impl UpWindow {
         let bypass_metered: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let bypass_battery: Rc<Cell<bool>> = Rc::new(Cell::new(false));
 
+        let cancel_handle: Rc<RefCell<Option<crate::orchestrator::CancelHandle>>> =
+            Rc::new(RefCell::new(None));
+
+        let cancel_button = gtk::Button::builder()
+            .label("Cancel")
+            .css_classes(vec!["destructive-action", "pill"])
+            .halign(gtk::Align::Center)
+            .margin_top(12)
+            .visible(false)
+            .build();
+        cancel_button.update_property(&[gtk::accessible::Property::Label("Cancel update")]);
+
+        cancel_button.connect_clicked(glib::clone!(
+            #[strong]
+            cancel_handle,
+            move |btn| {
+                btn.set_sensitive(false);
+                if let Some(handle) = cancel_handle.borrow().as_ref() {
+                    handle.cancel();
+                }
+            }
+        ));
+
         update_button.connect_clicked(glib::clone!(
             #[weak]
             status_label,
@@ -446,6 +470,10 @@ impl UpWindow {
             bypass_metered,
             #[strong]
             bypass_battery,
+            #[strong]
+            cancel_handle,
+            #[weak]
+            cancel_button,
             move |button| {
                 let monitor = gio::NetworkMonitor::default();
                 if monitor.is_network_metered() && !bypass_metered.get() {
@@ -508,6 +536,8 @@ impl UpWindow {
                     }
                 }
                 button.set_sensitive(false);
+                cancel_button.set_visible(true);
+                cancel_button.set_sensitive(true);
                 updating.set(true);
                 log_panel.clear();
 
@@ -549,15 +579,21 @@ impl UpWindow {
                     restart_banner,
                     #[strong]
                     updating,
+                    #[strong]
+                    cancel_handle,
+                    #[weak]
+                    cancel_button,
                     async move {
                         use crate::orchestrator::{OrchestratorEvent, UpdateOrchestrator};
 
                         let orchestrator = UpdateOrchestrator::new(backends);
                         let (event_tx, event_rx) = async_channel::unbounded::<OrchestratorEvent>();
-                        orchestrator.run_all(event_tx);
+                        let handle = orchestrator.run_all(event_tx);
+                        *cancel_handle.borrow_mut() = Some(handle);
 
                         let mut auth_started = false;
                         let mut has_error = false;
+                        let mut was_cancelled = false;
                         let mut self_updated = false;
                         let mut history_entries: Vec<crate::history::HistoryEntry> =
                             Vec::new();
@@ -579,6 +615,8 @@ impl UpWindow {
                                 OrchestratorEvent::AuthFailed(e) => {
                                     log_panel.append_line(&format!("Authentication failed: {e}"));
                                     status_label.set_label("Update cancelled.");
+                                    cancel_button.set_visible(false);
+                                    cancel_handle.borrow_mut().take();
                                     button.set_sensitive(true);
                                     return;
                                 }
@@ -615,49 +653,65 @@ impl UpWindow {
                                             UpdateResult::Skipped(msg) => {
                                                 row.set_status_skipped(msg);
                                             }
-                                        }
-                                    }
-                                    // Record in history buffer
-                                    let ts = crate::history::now_secs();
-                                    let entry = match &result {
-                                        UpdateResult::Success { updated_count } => {
-                                            crate::history::HistoryEntry {
-                                                timestamp: ts,
-                                                backend: kind.to_string(),
-                                                result: "success".to_string(),
-                                                updated_count: Some(*updated_count),
-                                                error: None,
+                                            UpdateResult::Cancelled => {
+                                                row.set_status_cancelled();
                                             }
                                         }
-                                        UpdateResult::SuccessWithSelfUpdate { updated_count } => {
-                                            crate::history::HistoryEntry {
+                                    }
+                                    // Record in history buffer (skip cancelled backends)
+                                    if !matches!(result, UpdateResult::Cancelled) {
+                                        let ts = crate::history::now_secs();
+                                        let entry = match &result {
+                                            UpdateResult::Success { updated_count } => {
+                                                crate::history::HistoryEntry {
+                                                    timestamp: ts,
+                                                    backend: kind.to_string(),
+                                                    result: "success".to_string(),
+                                                    updated_count: Some(*updated_count),
+                                                    error: None,
+                                                }
+                                            }
+                                            UpdateResult::SuccessWithSelfUpdate {
+                                                updated_count,
+                                            } => crate::history::HistoryEntry {
                                                 timestamp: ts,
                                                 backend: kind.to_string(),
                                                 result: "success_self_update".to_string(),
                                                 updated_count: Some(*updated_count),
                                                 error: None,
+                                            },
+                                            UpdateResult::Error(e) => {
+                                                crate::history::HistoryEntry {
+                                                    timestamp: ts,
+                                                    backend: kind.to_string(),
+                                                    result: "error".to_string(),
+                                                    updated_count: None,
+                                                    error: Some(e.to_string()),
+                                                }
                                             }
-                                        }
-                                        UpdateResult::Error(e) => crate::history::HistoryEntry {
-                                            timestamp: ts,
-                                            backend: kind.to_string(),
-                                            result: "error".to_string(),
-                                            updated_count: None,
-                                            error: Some(e.to_string()),
-                                        },
-                                        UpdateResult::Skipped(msg) => {
-                                            crate::history::HistoryEntry {
-                                                timestamp: ts,
-                                                backend: kind.to_string(),
-                                                result: "skipped".to_string(),
-                                                updated_count: None,
-                                                error: Some(msg.clone()),
+                                            UpdateResult::Skipped(msg) => {
+                                                crate::history::HistoryEntry {
+                                                    timestamp: ts,
+                                                    backend: kind.to_string(),
+                                                    result: "skipped".to_string(),
+                                                    updated_count: None,
+                                                    error: Some(msg.clone()),
+                                                }
                                             }
-                                        }
-                                    };
-                                    history_entries.push(entry);
+                                            // Safety: guarded by the `if !matches!` above.
+                                            UpdateResult::Cancelled => unreachable!(),
+                                        };
+                                        history_entries.push(entry);
+                                    }
                                 }
                                 OrchestratorEvent::AllFinished => {
+                                    was_cancelled = cancel_handle
+                                        .borrow()
+                                        .as_ref()
+                                        .map(|h| h.is_cancelled())
+                                        .unwrap_or(false);
+                                    cancel_button.set_visible(false);
+                                    cancel_handle.borrow_mut().take();
                                     // Flush history entries to disk
                                     for entry in &history_entries {
                                         if let Err(e) = crate::history::append_entry(entry) {
@@ -672,14 +726,16 @@ impl UpWindow {
                         if self_updated {
                             restart_banner.set_revealed(true);
                         }
-                        if has_error {
+                        if was_cancelled {
+                            status_label.set_label("Update cancelled.");
+                        } else if has_error {
                             status_label.set_label("Update completed with errors.");
                         } else {
                             status_label.set_label("Update complete.");
                         }
                         updating.set(false);
                         button.set_sensitive(true);
-                        if !has_error {
+                        if !has_error && !was_cancelled {
                             // Check if reboot is actually required before prompting.
                             // reboot_required() performs fast filesystem/process checks
                             // and is safe to call on the GTK main thread.
@@ -694,6 +750,7 @@ impl UpWindow {
         ));
 
         content_box.append(&update_button);
+        content_box.append(&cancel_button);
 
         clamp.set_child(Some(&content_box));
         scrolled.set_child(Some(&clamp));
@@ -980,6 +1037,9 @@ impl UpWindow {
                                                                 }
                                                                 UpdateResult::Skipped(msg) => {
                                                                     row.set_status_skipped(msg);
+                                                                }
+                                                                UpdateResult::Cancelled => {
+                                                                    row.set_status_cancelled();
                                                                 }
                                                             }
                                                         }

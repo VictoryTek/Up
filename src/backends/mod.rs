@@ -31,6 +31,10 @@ pub enum BackendError {
     #[error("Network error: {0}")]
     #[allow(dead_code)]
     Network(String),
+    /// The update was cancelled by the user.
+    #[error("Update cancelled by user")]
+    #[allow(dead_code)]
+    Cancelled,
 }
 
 impl BackendError {
@@ -103,6 +107,8 @@ pub enum UpdateResult {
     Error(BackendError),
     #[allow(dead_code)]
     Skipped(String),
+    /// The update was cancelled by the user before or during execution.
+    Cancelled,
 }
 
 pub trait Backend: Send + Sync {
