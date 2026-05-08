@@ -82,6 +82,24 @@ impl Backend for AptBackend {
         })
     }
 
+    fn estimate_size(&self) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+        Box::pin(async move {
+            let out = tokio::process::Command::new("apt-get")
+                .args(["-s", "upgrade"])
+                .env("LANG", "C")
+                .env("LC_ALL", "C")
+                .env("DEBIAN_FRONTEND", "noninteractive")
+                .output()
+                .await
+                .ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            let text = String::from_utf8_lossy(&out.stdout);
+            crate::disk::parse_apt_size(&text)
+        })
+    }
+
     fn supports_cleanup(&self) -> bool {
         true
     }
@@ -190,6 +208,23 @@ impl Backend for DnfBackend {
             }
             let text = String::from_utf8_lossy(&out.stdout);
             Ok(parse_dnf_list_upgrades(&text))
+        })
+    }
+
+    fn estimate_size(&self) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+        Box::pin(async move {
+            let out = tokio::process::Command::new("dnf")
+                .args(["upgrade", "--assumeno"])
+                .env("LANG", "C")
+                .env("LC_ALL", "C")
+                .output()
+                .await
+                .ok()?;
+            // DNF exits non-zero when packages are available; stdout still has the summary.
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let combined = format!("{stdout}\n{stderr}");
+            crate::disk::parse_dnf_size(&combined)
         })
     }
 
@@ -406,6 +441,20 @@ impl Backend for ZypperBackend {
                 .map_err(|e| e.to_string())?;
             let text = String::from_utf8_lossy(&out.stdout);
             Ok(parse_zypper_list_updates(&text))
+        })
+    }
+
+    fn estimate_size(&self) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+        Box::pin(async move {
+            let out = tokio::process::Command::new("zypper")
+                .args(["--non-interactive", "--no-color", "update", "--dry-run"])
+                .env("LANG", "C")
+                .env("LC_ALL", "C")
+                .output()
+                .await
+                .ok()?;
+            let text = String::from_utf8_lossy(&out.stdout);
+            crate::disk::parse_zypper_size(&text)
         })
     }
 

@@ -439,6 +439,7 @@ impl UpWindow {
         let updating: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let bypass_metered: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let bypass_battery: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let bypass_disk: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let bypass_snapshot: Rc<Cell<bool>> = Rc::new(Cell::new(false));
 
         let cancel_handle: Rc<RefCell<Option<crate::orchestrator::CancelHandle>>> =
@@ -482,6 +483,8 @@ impl UpWindow {
             bypass_metered,
             #[strong]
             bypass_battery,
+            #[strong]
+            bypass_disk,
             #[strong]
             bypass_snapshot,
             #[strong]
@@ -540,6 +543,65 @@ impl UpWindow {
                                             bypass_battery.set(true);
                                             button.emit_clicked();
                                             bypass_battery.set(false);
+                                        }
+                                    }
+                                ),
+                            );
+                            dialog.present(Some(button));
+                            return;
+                        }
+                    }
+                }
+                // Disk space check
+                if !bypass_disk.get() {
+                    let required_bytes: u64 = {
+                        let borrowed = rows.borrow();
+                        borrowed
+                            .iter()
+                            .filter(|(_, r)| !r.is_skipped())
+                            .filter_map(|(_, r)| r.estimated_bytes())
+                            .sum()
+                    };
+                    if required_bytes > 0 {
+                        let available = crate::disk::detect_available_space();
+                        // Warn when available space < required * 1.1  (10% headroom).
+                        // Integer form: required * 11 > available * 10
+                        if available > 0
+                            && required_bytes.saturating_mul(11) > available.saturating_mul(10)
+                        {
+                            let msg = format!(
+                                "{} {} {}, {} {} {}",
+                                gettext("This update requires"),
+                                crate::disk::format_bytes(required_bytes),
+                                gettext("of disk space but only"),
+                                crate::disk::format_bytes(available),
+                                gettext("is available."),
+                                gettext("The update may fail or leave packages in a broken state.")
+                            );
+                            let dialog = adw::AlertDialog::new(
+                                Some(&gettext("Low Disk Space")),
+                                Some(&msg),
+                            );
+                            dialog.add_response("cancel", &gettext("Cancel"));
+                            dialog.add_response("proceed", &gettext("Proceed Anyway"));
+                            dialog.set_response_appearance(
+                                "proceed",
+                                adw::ResponseAppearance::Destructive,
+                            );
+                            dialog.set_default_response(Some("cancel"));
+                            dialog.set_close_response("cancel");
+                            dialog.connect_response(
+                                None,
+                                glib::clone!(
+                                    #[weak]
+                                    button,
+                                    #[strong]
+                                    bypass_disk,
+                                    move |_, response| {
+                                        if response == "proceed" {
+                                            bypass_disk.set(true);
+                                            button.emit_clicked();
+                                            bypass_disk.set(false);
                                         }
                                     }
                                 ),
@@ -957,15 +1019,19 @@ impl UpWindow {
                         #[strong]
                         check_epoch,
                         async move {
-                            type CheckPayload =
-                                (Result<usize, String>, Result<Vec<String>, String>);
+                            type CheckPayload = (
+                                Result<usize, String>,
+                                Result<Vec<String>, String>,
+                                Option<u64>,
+                            );
                             let (tx, rx) = async_channel::bounded::<CheckPayload>(1);
                             super::spawn_background_async(move || async move {
                                 let count = backend_clone.count_available().await;
                                 let list = backend_clone.list_available().await;
-                                let _ = tx.send((count, list)).await;
+                                let size = backend_clone.estimate_size().await;
+                                let _ = tx.send((count, list, size)).await;
                             });
-                            if let Ok((count_result, list_result)) = rx.recv().await {
+                            if let Ok((count_result, list_result, size_result)) = rx.recv().await {
                                 // Discard results from a superseded check cycle.
                                 if check_epoch.get() != my_epoch {
                                     return;
@@ -993,6 +1059,7 @@ impl UpWindow {
                                     Ok(packages) => row.set_packages(&packages),
                                     Err(_) => row.set_packages(&[]),
                                 }
+                                row.set_download_size(size_result);
                                 let remaining = {
                                     let mut p = pending_checks.borrow_mut();
                                     *p -= 1;

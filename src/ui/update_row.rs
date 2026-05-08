@@ -22,6 +22,12 @@ pub struct UpdateRow {
     backend_kind: BackendKind,
     packages_cache: Rc<RefCell<Vec<String>>>,
     changelog_row: adw::ActionRow,
+    /// Base subtitle text (backend.description()); preserved so that size
+    /// information can be appended and later removed on re-check.
+    base_description: String,
+    /// Last estimated required disk space returned by `estimate_size()`.
+    /// `None` means the backend does not support estimation or has not yet run.
+    estimated_bytes: Rc<Cell<Option<u64>>>,
 }
 
 impl UpdateRow {
@@ -208,6 +214,8 @@ impl UpdateRow {
             backend_kind,
             packages_cache,
             changelog_row,
+            base_description: backend.description().to_string(),
+            estimated_bytes: Rc::new(Cell::new(None)),
         }
     }
 
@@ -220,6 +228,29 @@ impl UpdateRow {
     /// `None` if no successful check has completed yet.
     pub fn last_available_count(&self) -> Option<usize> {
         self.last_available.get()
+    }
+
+    /// Returns the last estimated required disk bytes from `estimate_size()`.
+    /// `None` means the backend does not support estimation or has not yet run.
+    pub fn estimated_bytes(&self) -> Option<u64> {
+        self.estimated_bytes.get()
+    }
+
+    /// Update the row subtitle to include the estimated required disk space.
+    ///
+    /// If `size_bytes` is `None` or 0, the subtitle reverts to the base description.
+    /// Must be called on the GTK main thread.
+    pub fn set_download_size(&self, size_bytes: Option<u64>) {
+        self.estimated_bytes.set(size_bytes);
+        let subtitle = match size_bytes {
+            Some(bytes) if bytes > 0 => format!(
+                "{} \u{2014} {} needed",
+                self.base_description,
+                crate::disk::format_bytes(bytes)
+            ),
+            _ => self.base_description.clone(),
+        };
+        self.row.set_subtitle(&subtitle);
     }
 
     /// Populate the expander with a list of pending package names.
@@ -282,6 +313,8 @@ impl UpdateRow {
     pub fn set_status_checking(&self) {
         self.retry_button.set_visible(false);
         self.last_available.set(None);
+        self.estimated_bytes.set(None);
+        self.row.set_subtitle(&self.base_description);
         self.spinner.set_visible(true);
         self.spinner.set_spinning(true);
         self.status_label.set_label(&gettext("Checking..."));

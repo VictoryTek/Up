@@ -142,6 +142,34 @@ impl Backend for FlatpakBackend {
         })
     }
 
+    fn estimate_size(&self) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+        Box::pin(async move {
+            let (cmd, args) = build_flatpak_cmd(&[
+                "remote-ls",
+                "--updates",
+                "--user",
+                "--columns=download-size",
+            ]);
+            let out = tokio::process::Command::new(&cmd)
+                .args(&args)
+                .env("LANG", "C")
+                .env("LC_ALL", "C")
+                .output()
+                .await
+                .ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            let text = String::from_utf8_lossy(&out.stdout);
+            let total = crate::disk::parse_flatpak_sizes(&text);
+            if total == 0 {
+                None
+            } else {
+                Some(total)
+            }
+        })
+    }
+
     fn supports_cleanup(&self) -> bool {
         true
     }

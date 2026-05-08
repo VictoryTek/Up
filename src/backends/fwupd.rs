@@ -94,6 +94,31 @@ impl Backend for FwupdBackend {
             }
         })
     }
+
+    fn estimate_size(&self) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+        Box::pin(async move {
+            let out = tokio::process::Command::new("fwupdmgr")
+                .args(["get-updates", "--json"])
+                .output()
+                .await
+                .ok()?;
+            let code = out.status.code().unwrap_or(-1);
+            // Exit code 2 = no firmware updates available.
+            if code == 2 {
+                return Some(0);
+            }
+            if !out.status.success() {
+                return None;
+            }
+            let text = String::from_utf8_lossy(&out.stdout);
+            let total = crate::disk::parse_fwupd_size(&text);
+            if total == 0 {
+                None
+            } else {
+                Some(total)
+            }
+        })
+    }
 }
 
 /// Parse JSON output of `fwupdmgr get-updates --json`.

@@ -107,7 +107,7 @@
 - [x] **Update changelog viewer** — `apt changelog`, `dnf updateinfo info`, OSTree commit summaries per row
 - [x] **Localization** — `gettext-rs` + `po/` directory
 - [x] **Scheduled background checks** — systemd user timer + `notify-send` (out-of-process; no persistent daemon)
-- [ ] **Disk-space pre-check** — surface transaction size from APT/DNF/Flatpak before applying
+- [x] **Disk-space pre-check** — surface transaction size from APT/DNF/Flatpak before applying
 
 #### Large / v2.0
 - [ ] **D-Bus backend service** — small privileged daemon with scoped polkit actions; eliminates `pkexec sh`, enables proper cancellation and audit logging

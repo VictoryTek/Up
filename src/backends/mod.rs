@@ -150,6 +150,19 @@ pub trait Backend: Send + Sync {
         Box::pin(async { Ok(Vec::new()) })
     }
 
+    /// Estimate the total additional disk space (in bytes) this backend's pending
+    /// updates will require after installation.  Returns `None` when estimation is
+    /// not supported or the command fails.
+    ///
+    /// The default implementation returns `None`.  Backends that can produce a
+    /// reliable estimate (APT, DNF, Zypper, Flatpak, fwupd) override this method.
+    ///
+    /// This is called alongside `list_available()` on the background thread;
+    /// failures are silent (treated as `None`).
+    fn estimate_size(&self) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+        Box::pin(async { None })
+    }
+
     /// Whether this backend supports a cleanup / maintenance operation.
     /// Default: false. Override to true in backends that implement run_cleanup.
     fn supports_cleanup(&self) -> bool {
