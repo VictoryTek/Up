@@ -623,6 +623,11 @@ mod tests {
     use crate::backends::{Backend, UpdateResult};
     use crate::executor::test_utils::MockExecutor;
 
+    /// Serialises all tests that mutate the HOME environment variable to prevent
+    /// a race condition where parallel threads read the wrong HOME value.
+    static HOME_ENV_LOCK: std::sync::LazyLock<std::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
+
     #[test]
     fn upgrade_available_in_output_detects_upgrade() {
         assert!(upgrade_available_in_output(
@@ -753,12 +758,14 @@ mod tests {
         .unwrap();
 
         let prev_home = std::env::var("HOME").unwrap_or_default();
+        let _home_guard = HOME_ENV_LOCK.lock().unwrap();
         std::env::set_var("HOME", &tmp_home);
 
         let executor = MockExecutor::with_output("upgrading 'hello-2.10' to 'hello-2.12'\n");
         let result = NixBackend.run_update(&executor).await;
 
         std::env::set_var("HOME", prev_home);
+        drop(_home_guard);
         let _ = std::fs::remove_dir_all(&tmp_home);
 
         match result {
@@ -783,12 +790,14 @@ mod tests {
         .unwrap();
 
         let prev_home = std::env::var("HOME").unwrap_or_default();
+        let _home_guard = HOME_ENV_LOCK.lock().unwrap();
         std::env::set_var("HOME", &tmp_home);
 
         let executor = MockExecutor::with_error(1, "nix-env: error upgrading packages");
         let result = NixBackend.run_update(&executor).await;
 
         std::env::set_var("HOME", prev_home);
+        drop(_home_guard);
         let _ = std::fs::remove_dir_all(&tmp_home);
 
         assert!(
