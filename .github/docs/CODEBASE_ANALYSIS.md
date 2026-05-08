@@ -103,7 +103,7 @@
 - [x] **Dry-run / Preview mode** — `list_available` infra already in place; one "Preview" button to expand rows without running privileged steps
 - [x] **Cancel running update** — close privileged shell stdin; propagate `Cancelled` to each row
 - [x] **fwupd firmware backend** — `fwupdmgr get-updates` / `fwupdmgr update -y` as a new `Backend` impl
-- [ ] **Snapshot integration** — detect Snapper / Timeshift / btrfs root; offer pre-update snapshot
+- [x] **Snapshot integration** — detect Snapper / Timeshift / btrfs root; offer pre-update snapshot
 - [ ] **Update changelog viewer** — `apt changelog`, `dnf updateinfo info`, OSTree commit summaries per row
 - [ ] **Localization** — `gettext-rs` + `po/` directory
 - [ ] **Scheduled background checks** — systemd user timer + `notify-send` (out-of-process; no persistent daemon)

@@ -429,6 +429,7 @@ impl UpWindow {
         let updating: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let bypass_metered: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let bypass_battery: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let bypass_snapshot: Rc<Cell<bool>> = Rc::new(Cell::new(false));
 
         let cancel_handle: Rc<RefCell<Option<crate::orchestrator::CancelHandle>>> =
             Rc::new(RefCell::new(None));
@@ -470,6 +471,8 @@ impl UpWindow {
             bypass_metered,
             #[strong]
             bypass_battery,
+            #[strong]
+            bypass_snapshot,
             #[strong]
             cancel_handle,
             #[weak]
@@ -532,6 +535,125 @@ impl UpWindow {
                             );
                             dialog.present(Some(button));
                             return;
+                        }
+                    }
+                }
+                // Snapshot check
+                if !bypass_snapshot.get() {
+                    use crate::config::SnapshotPreference;
+                    let config = crate::config::load_config();
+                    if config.snapshot_preference != SnapshotPreference::Never {
+                        if let Some(tool) = crate::snapshot::detect_snapshot_tool() {
+                            if config.snapshot_preference == SnapshotPreference::Always {
+                                let log_panel = log_panel.clone();
+                                let bypass_snapshot = bypass_snapshot.clone();
+                                let button = button.clone();
+                                glib::spawn_future_local(async move {
+                                    log_panel
+                                        .append_line("Creating pre-update snapshot\u{2026}");
+                                    let (snap_tx, snap_rx) =
+                                        async_channel::bounded::<Result<String, String>>(1);
+                                    super::spawn_background_async(move || async move {
+                                        let result = crate::snapshot::create_snapshot(tool)
+                                            .await
+                                            .map_err(|e| e.to_string());
+                                        let _ = snap_tx.send(result).await;
+                                    });
+                                    match snap_rx.recv().await {
+                                        Ok(Ok(desc)) => {
+                                            log_panel
+                                                .append_line(&format!("\u{2713} {desc}"));
+                                        }
+                                        Ok(Err(e)) => {
+                                            log_panel.append_line(&format!(
+                                                "\u{26a0} Snapshot failed: {e}. Continuing\u{2026}"
+                                            ));
+                                        }
+                                        Err(_) => {}
+                                    }
+                                    bypass_snapshot.set(true);
+                                    button.emit_clicked();
+                                    bypass_snapshot.set(false);
+                                });
+                                return;
+                            } else {
+                                // SnapshotPreference::Ask
+                                let dialog = adw::AlertDialog::new(
+                                    Some("Create Snapshot?"),
+                                    Some(
+                                        "Create a system snapshot before updating. \
+                                         This allows you to roll back if something goes wrong.",
+                                    ),
+                                );
+                                dialog.add_response("skip", "Skip");
+                                dialog.add_response("snapshot", "Create Snapshot");
+                                dialog.set_response_appearance(
+                                    "snapshot",
+                                    adw::ResponseAppearance::Suggested,
+                                );
+                                dialog.set_default_response(Some("snapshot"));
+                                dialog.set_close_response("skip");
+                                dialog.connect_response(
+                                    None,
+                                    glib::clone!(
+                                        #[weak]
+                                        button,
+                                        #[strong]
+                                        bypass_snapshot,
+                                        #[strong]
+                                        log_panel,
+                                        move |_, response| {
+                                            if response == "snapshot" {
+                                                let log_panel = log_panel.clone();
+                                                let bypass_snapshot = bypass_snapshot.clone();
+                                                let button = button.clone();
+                                                glib::spawn_future_local(async move {
+                                                    log_panel.append_line(
+                                                        "Creating pre-update snapshot\u{2026}",
+                                                    );
+                                                    let (snap_tx, snap_rx) =
+                                                        async_channel::bounded::<
+                                                            Result<String, String>,
+                                                        >(1);
+                                                    super::spawn_background_async(
+                                                        move || async move {
+                                                            let result =
+                                                                crate::snapshot::create_snapshot(
+                                                                    tool,
+                                                                )
+                                                                .await
+                                                                .map_err(|e| e.to_string());
+                                                            let _ = snap_tx.send(result).await;
+                                                        },
+                                                    );
+                                                    match snap_rx.recv().await {
+                                                        Ok(Ok(desc)) => {
+                                                            log_panel.append_line(&format!(
+                                                                "\u{2713} {desc}"
+                                                            ));
+                                                        }
+                                                        Ok(Err(e)) => {
+                                                            log_panel.append_line(&format!(
+                                                                "\u{26a0} Snapshot failed: {e}. Continuing\u{2026}"
+                                                            ));
+                                                        }
+                                                        Err(_) => {}
+                                                    }
+                                                    bypass_snapshot.set(true);
+                                                    button.emit_clicked();
+                                                    bypass_snapshot.set(false);
+                                                });
+                                            } else {
+                                                bypass_snapshot.set(true);
+                                                button.emit_clicked();
+                                                bypass_snapshot.set(false);
+                                            }
+                                        }
+                                    ),
+                                );
+                                dialog.present(Some(button));
+                                return;
+                            }
                         }
                     }
                 }
@@ -950,9 +1072,8 @@ impl UpWindow {
                                             .map(|(k, _)| *k)
                                             .collect();
                                         drop(borrowed);
-                                        let config = crate::config::AppConfig {
-                                            skipped_backends: skipped,
-                                        };
+                                        let mut config = crate::config::load_config();
+                                        config.skipped_backends = skipped;
                                         if let Err(e) = crate::config::save_config(&config) {
                                             log::warn!("Failed to save skip config: {e}");
                                         }

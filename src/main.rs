@@ -8,6 +8,7 @@ mod orchestrator;
 mod reboot;
 mod runner;
 mod runtime;
+mod snapshot;
 mod ui;
 mod upgrade;
 

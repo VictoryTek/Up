@@ -3,10 +3,24 @@ use serde::{Deserialize, Serialize};
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 
+/// User preference for snapshot creation behavior before updates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SnapshotPreference {
+    /// Prompt the user each time a snapshot tool is detected.
+    #[default]
+    Ask,
+    /// Always create a snapshot without prompting.
+    Always,
+    /// Never create a snapshot; skip the prompt entirely.
+    Never,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub skipped_backends: Vec<BackendKind>,
+    #[serde(default)]
+    pub snapshot_preference: SnapshotPreference,
 }
 
 /// Returns the path to the config JSON file, honoring XDG_CONFIG_HOME.
