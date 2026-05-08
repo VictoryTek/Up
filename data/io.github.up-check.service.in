@@ -1,0 +1,7 @@
+[Unit]
+Description=Up — background update check
+Documentation=https://github.com/VictoryTek/Up
+
+[Service]
+Type=oneshot
+ExecStart=@BINDIR@/up --check

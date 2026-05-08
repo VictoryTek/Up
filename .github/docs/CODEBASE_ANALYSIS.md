@@ -105,8 +105,8 @@
 - [x] **fwupd firmware backend** — `fwupdmgr get-updates` / `fwupdmgr update -y` as a new `Backend` impl
 - [x] **Snapshot integration** — detect Snapper / Timeshift / btrfs root; offer pre-update snapshot
 - [x] **Update changelog viewer** — `apt changelog`, `dnf updateinfo info`, OSTree commit summaries per row
-- [ ] **Localization** — `gettext-rs` + `po/` directory
-- [ ] **Scheduled background checks** — systemd user timer + `notify-send` (out-of-process; no persistent daemon)
+- [x] **Localization** — `gettext-rs` + `po/` directory
+- [x] **Scheduled background checks** — systemd user timer + `notify-send` (out-of-process; no persistent daemon)
 - [ ] **Disk-space pre-check** — surface transaction size from APT/DNF/Flatpak before applying
 
 #### Large / v2.0

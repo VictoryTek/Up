@@ -1,0 +1,11 @@
+[Unit]
+Description=Up — daily update check timer
+Documentation=https://github.com/VictoryTek/Up
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

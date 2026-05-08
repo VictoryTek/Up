@@ -2,6 +2,7 @@ mod app;
 mod backends;
 mod battery;
 mod changelog;
+mod check;
 mod config;
 mod executor;
 mod history;
@@ -19,6 +20,13 @@ use gettextrs::{bindtextdomain, setlocale, textdomain, LocaleCategory};
 const APP_ID: &str = "io.github.up";
 
 fn main() -> gtk::glib::ExitCode {
+    // Background check mode — must execute before GTK/GIO initialisation.
+    // The systemd service unit invokes: up --check
+    if std::env::args().any(|a| a == "--check") {
+        check::run_check();
+        return gtk::glib::ExitCode::SUCCESS;
+    }
+
     // i18n — must be before GTK/adw initialization
     setlocale(LocaleCategory::LcAll, "");
     let localedir = option_env!("LOCALEDIR").unwrap_or("/usr/share/locale");

@@ -59,6 +59,28 @@ install_data('data/io.github.up.policy',
   install_dir: join_paths(datadir, 'polkit-1', 'actions'),
 )
 
+# ── Systemd user units ────────────────────────────────────────────────────────
+# Prefer the pkgconfig variable from the systemd dependency (accurate for
+# split-usr systems); fall back to the FHS default.
+systemd_dep = dependency('systemd', required: false)
+if systemd_dep.found()
+  systemd_user_unit_dir = systemd_dep.get_variable(pkgconfig: 'systemduserunitdir')
+else
+  systemd_user_unit_dir = join_paths(prefix, 'lib', 'systemd', 'user')
+endif
+
+configure_file(
+  input: 'data/io.github.up-check.service.in',
+  output: 'io.github.up-check.service',
+  configuration: {'BINDIR': bindir},
+  install: true,
+  install_dir: systemd_user_unit_dir,
+)
+
+install_data('data/io.github.up-check.timer',
+  install_dir: systemd_user_unit_dir,
+)
+
 foreach size : ['256x256', '128x128', '48x48']
   png = 'data/icons/hicolor' / size / 'apps/io.github.up.png'
   if fs.exists(png)
