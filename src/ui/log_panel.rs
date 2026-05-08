@@ -94,8 +94,8 @@ impl LogPanel {
                 let path = format!("{home}/{filename}");
 
                 let toast_msg = match std::fs::write(&path, text.as_str()) {
-                    Ok(_) => format!(gettext("Log saved to ~/{}"), filename),
-                    Err(e) => format!(gettext("Failed to save log: {}"), e),
+                    Ok(_) => gettext("Log saved to ~/{}"​).replace("{}", &filename),
+                    Err(e) => gettext("Failed to save log: {}").replace("{}", &e.to_string()),
                 };
 
                 toast_overlay_clone

@@ -1080,7 +1080,7 @@ impl UpWindow {
                                             &ngettext(
                                                 "{} update available",
                                                 "{} updates available",
-                                                non_skipped_total as u64,
+                                                non_skipped_total as u32,
                                             )
                                             .replace("{}", &non_skipped_total.to_string()),
                                         );

@@ -53,7 +53,7 @@ impl UpdateRow {
         let skip_flag = Rc::new(Cell::new(false));
         let last_available: Rc<Cell<Option<usize>>> = Rc::new(Cell::new(None));
 
-        let kind_label = format!(gettext("Skip {} during Update All"), backend.display_name());
+        let kind_label = gettext("Skip {} during Update All").replace("{}", backend.display_name());
         let skip_checkbox = gtk::CheckButton::builder()
             .tooltip_text(&kind_label)
             .valign(gtk::Align::Center)
@@ -332,7 +332,7 @@ impl UpdateRow {
             self.status_label.set_css_classes(&["success"]);
         } else {
             self.status_label.set_label(
-                &ngettext("1 package available", "{} packages available", count as u64)
+                &ngettext("1 package available", "{} packages available", count as u32)
                     .replace("{}", &count.to_string()),
             );
             self.status_label.set_css_classes(&["accent"]);
@@ -356,7 +356,7 @@ impl UpdateRow {
         let msg = if count == 0 {
             gettext("Up to date")
         } else {
-            ngettext("1 package updated", "{} packages updated", count as u64)
+            ngettext("1 package updated", "{} packages updated", count as u32)
                 .replace("{}", &count.to_string())
         };
         self.status_label.set_label(&msg);
@@ -418,7 +418,7 @@ impl UpdateRow {
         let msg = if removed == 0 {
             gettext("Already clean")
         } else {
-            ngettext("1 package removed", "{} packages removed", removed as u64)
+            ngettext("1 package removed", "{} packages removed", removed as u32)
                 .replace("{}", &removed.to_string())
         };
         self.status_label.set_label(&msg);

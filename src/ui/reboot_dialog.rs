@@ -37,13 +37,13 @@ pub fn show_reboot_dialog(parent: &impl gtk::prelude::IsA<gtk::Widget>) {
                 if let Ok(err_msg) = err_rx.recv().await {
                     let error_dialog = adw::AlertDialog::builder()
                         .heading(gettext("Reboot Failed"))
-                        .body(format!(
+                        .body(
                             gettext(
                                 "The system could not be rebooted.\n\n{}\n\n\
                              Please reboot manually using your system settings or terminal."
-                            ),
-                            err_msg
-                        ))
+                            )
+                            .replace("{}", &err_msg)
+                        )
                         .build();
                     error_dialog.add_response("close", &gettext("Close"));
                     error_dialog.set_default_response(Some("close"));
