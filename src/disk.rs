@@ -131,7 +131,7 @@ pub fn parse_dnf_size(output: &str) -> Option<u64> {
 fn parse_dnf_size_line(line: &str) -> Option<u64> {
     // "Total download size: 52 M"          → after colon: "52 M"
     // "Disk usage after transaction: +141 M" → after colon: "+141 M"
-    let after_colon = line.splitn(2, ':').nth(1)?.trim();
+    let after_colon = line.split_once(':')?.1.trim();
     let tokens: Vec<&str> = after_colon.split_whitespace().collect();
     if tokens.len() >= 2 {
         let num_str = tokens[0].trim_start_matches('+').trim_start_matches('-');
@@ -182,7 +182,7 @@ pub fn parse_flatpak_sizes(output: &str) -> u64 {
     output
         .lines()
         .filter_map(|line| {
-            let parts: Vec<&str> = line.trim().split_whitespace().collect();
+            let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 2 {
                 if let Ok(n) = parts[0].parse::<f64>() {
                     return Some(parse_size_value(n, parts[1]));
