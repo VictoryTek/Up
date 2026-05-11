@@ -261,7 +261,10 @@ impl CommandRunner {
         if program == "pkexec" {
             if let Some(shell) = &self.shell {
                 let mut guard = shell.lock().await;
-                return guard.run_command(args, &self.tx, self.kind.clone()).await;
+                return guard
+                    .run_command(args, &self.tx, self.kind.clone())
+                    .await
+                    .map_err(BackendError::from_string);
             }
         }
 

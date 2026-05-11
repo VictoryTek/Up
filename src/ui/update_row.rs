@@ -139,6 +139,7 @@ impl UpdateRow {
             changelog_button.connect_clicked(move |btn| {
                 let pkgs: Vec<String> = packages_cache_click.borrow().clone();
                 let kind = backend_kind_closure.clone();
+                let kind2 = kind.clone();
 
                 btn.set_sensitive(false);
 
@@ -161,7 +162,7 @@ impl UpdateRow {
                             Err(e) => format!("Error fetching changelog:\n{e}"),
                         };
 
-                        let heading = match kind {
+                        let heading = match kind2 {
                             BackendKind::Pacman | BackendKind::Zypper => gettext("Package Info"),
                             _ => gettext("Changelog"),
                         };
