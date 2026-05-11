@@ -42,6 +42,24 @@ cargo_build = custom_target('cargo-build',
   install_dir: bindir,
 )
 
+# Build the privileged daemon binary
+libexecdir = join_paths(prefix, get_option('libexecdir'))
+cargo_build_daemon = custom_target('cargo-build-daemon',
+  output: 'up-daemon',
+  command: [
+    'sh', '-c',
+    cargo.full_path() + ' build ' +
+    (rust_target == 'release' ? '--release ' : '') +
+    '--manifest-path ' + srcdir / 'daemon' / 'Cargo.toml' +
+    ' --target-dir ' + meson.build_root() / 'cargo-target' +
+    ' && cp ' + meson.build_root() / 'cargo-target' / rust_target / 'up-daemon' + ' @OUTPUT@'
+  ],
+  depend_files: files('daemon/Cargo.toml'),
+  console: true,
+  install: true,
+  install_dir: libexecdir,
+)
+
 desktop_file = i18n.merge_file(
   input: 'data/io.github.up.desktop.in',
   output: 'io.github.up.desktop',
@@ -57,6 +75,18 @@ install_data('data/io.github.up.metainfo.xml',
 
 install_data('data/io.github.up.policy',
   install_dir: join_paths(datadir, 'polkit-1', 'actions'),
+)
+
+# ── D-Bus daemon configuration ───────────────────────────────────────────────
+install_data('data/io.github.up.Daemon.conf',
+  install_dir: join_paths(datadir, 'dbus-1', 'system.d'),
+)
+
+# ── Plugin backend descriptors ────────────────────────────────────────────────
+install_data(
+  'data/backends.d/apk.yaml',
+  'data/backends.d/xbps.yaml',
+  install_dir: join_paths(datadir, 'up', 'backends.d'),
 )
 
 # ── Systemd user units ────────────────────────────────────────────────────────
@@ -79,6 +109,17 @@ configure_file(
 
 install_data('data/io.github.up-check.timer',
   install_dir: systemd_user_unit_dir,
+)
+
+# ── Systemd system units (daemon) ────────────────────────────────────────────
+if systemd_dep.found()
+  systemd_system_unit_dir = systemd_dep.get_variable(pkgconfig: 'systemdsystemunitdir')
+else
+  systemd_system_unit_dir = join_paths(prefix, 'lib', 'systemd', 'system')
+endif
+
+install_data('data/io.github.up.Daemon.service',
+  install_dir: systemd_system_unit_dir,
 )
 
 foreach size : ['256x256', '128x128', '48x48']

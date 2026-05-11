@@ -8,24 +8,80 @@
   <vendor_url>https://github.com/VictoryTek/Up</vendor_url>
   <icon_name>io.github.up</icon_name>
 
+  <!-- Update system packages (APT, DNF, Pacman, Zypper, Nix) -->
+  <action id="io.github.up.update.system">
+    <description>Update system packages</description>
+    <message>Up needs administrator privileges to update system packages.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <!-- Update plugin-managed backends -->
+  <action id="io.github.up.update.plugin">
+    <description>Update packages via plugin backend</description>
+    <message>Up needs administrator privileges to update packages via a plugin backend.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <!-- Cleanup / maintenance operations -->
+  <action id="io.github.up.cleanup.system">
+    <description>Run system cleanup and maintenance</description>
+    <message>Up needs administrator privileges to remove unused packages.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <!-- Distribution upgrade -->
+  <action id="io.github.up.upgrade.system">
+    <description>Upgrade the system to a new release</description>
+    <message>Up needs administrator privileges to perform a system upgrade.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+  </action>
+
+  <!-- Snapshot creation -->
+  <action id="io.github.up.snapshot.create">
+    <description>Create a system snapshot</description>
+    <message>Up needs administrator privileges to create a system snapshot.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <!-- Cancel an in-progress operation -->
+  <action id="io.github.up.cancel.operation">
+    <description>Cancel a running update operation</description>
+    <message>Up needs privileges to cancel an in-progress system operation.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+
   <!--
-    Action used when Up runs system package-manager updates through its
-    persistent pkexec shell session (pkexec /bin/sh).
-
-    Authentication is required once per desktop session (auth_admin_keep).
-    The credential is cached by polkit for the duration of the session so
-    that updating multiple backends does not prompt repeatedly.
-
-    NOTE: This action matches any caller of `pkexec /bin/sh`, not only Up.
-    True per-application scoping requires a D-Bus backend service. This file
-    is a significant improvement over the default org.freedesktop.policykit.exec
-    action and enables sysadmin rule customisation via polkit JS rules.
+    Legacy actions retained for backward compatibility during the transition
+    period (v1.x → v2.x). These are used by the pkexec fallback path when
+    the D-Bus daemon is not installed.
   -->
   <action id="io.github.up.pkexec.update">
-    <description>Update system packages</description>
-    <description xml:lang="en">Update system packages</description>
+    <description>Update system packages (legacy pkexec path)</description>
     <message>Up needs administrator privileges to update system packages.</message>
-    <message xml:lang="en">Up needs administrator privileges to update system packages.</message>
     <defaults>
       <allow_any>auth_admin</allow_any>
       <allow_inactive>auth_admin</allow_inactive>
@@ -35,19 +91,9 @@
     <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
   </action>
 
-  <!--
-    Action used when Up runs distribution upgrade commands via pkexec
-    with /usr/bin/env (NixOS upgrade path, see upgrade.rs).
-
-    Distribution upgrades are a more impactful operation than routine updates;
-    they use the same authentication level but a distinct action ID so that
-    sysadmins can apply stricter rules specifically for upgrades.
-  -->
   <action id="io.github.up.pkexec.upgrade">
-    <description>Upgrade the system distribution</description>
-    <description xml:lang="en">Upgrade the system distribution</description>
+    <description>Upgrade the system distribution (legacy pkexec path)</description>
     <message>Up needs administrator privileges to upgrade the system to a new release.</message>
-    <message xml:lang="en">Up needs administrator privileges to upgrade the system to a new release.</message>
     <defaults>
       <allow_any>auth_admin</allow_any>
       <allow_inactive>auth_admin</allow_inactive>

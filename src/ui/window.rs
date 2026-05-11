@@ -1005,6 +1005,7 @@ impl UpWindow {
                             row.set_status_checking();
                         }
                     }
+                    let kind_async = kind.clone();
                     let backend_clone = backend.clone();
                     glib::spawn_future_local(glib::clone!(
                         #[strong]
@@ -1041,7 +1042,7 @@ impl UpWindow {
                                     let borrowed = rows.borrow();
                                     borrowed
                                         .iter()
-                                        .find(|(k, _)| *k == kind)
+                                        .find(|(k, _)| *k == kind_async)
                                         .map(|(_, r)| r.clone())
                                 };
                                 let Some(row) = row else {
@@ -1155,7 +1156,7 @@ impl UpWindow {
                                         let skipped: Vec<BackendKind> = borrowed
                                             .iter()
                                             .filter(|(_, r)| r.is_skipped())
-                                            .map(|(k, _)| *k)
+                                            .map(|(k, _)| k.clone())
                                             .collect();
                                         drop(borrowed);
                                         let mut config = crate::config::load_config();

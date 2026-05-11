@@ -1,0 +1,55 @@
+---
+schema_version: 1
+
+id: swupd
+display_name: "swupd"
+description: "Clear Linux packages"
+icon_name: "system-software-install-symbolic"
+
+detection:
+  binary: "swupd"
+  os_id: ["clear-linux-os"]
+  file_exists: null
+
+privilege:
+  needs_root: true
+  polkit_action: "io.github.up.update.system"
+
+commands:
+  update:
+    program: "swupd"
+    args: ["update"]
+    environment:
+      LANG: "C"
+    parser:
+      type: "regex_count"
+      pattern: "^  (installed|updated)"
+
+  list_available:
+    program: "swupd"
+    args: ["update", "--status"]
+    parser:
+      type: "line_field"
+      field_index: 0
+      separator: " "
+      skip_lines: 2
+
+  cleanup:
+    program: "swupd"
+    args: ["clean"]
+    parser:
+      type: "line_count"
+      pattern: "^Deleted"
+
+capabilities:
+  update: true
+  list_available: true
+  cleanup: true
+  estimate_size: false
+  count_available: true
+
+metadata:
+  author: "Clear Linux Community"
+  version: "1.0.0"
+  min_up_version: "2.0.0"
+  license: "GPL-3.0-or-later"

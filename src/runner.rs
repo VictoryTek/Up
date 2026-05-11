@@ -191,7 +191,7 @@ impl PrivilegedShell {
                     evicted = true;
                 }
                 tail.push_back(content.clone());
-                let _ = tx.send(BackendEvent::LogLine(kind, content)).await;
+                let _ = tx.send(BackendEvent::LogLine(kind.clone(), content)).await;
             }
         })
         .await;
@@ -261,10 +261,7 @@ impl CommandRunner {
         if program == "pkexec" {
             if let Some(shell) = &self.shell {
                 let mut guard = shell.lock().await;
-                return guard
-                    .run_command(args, &self.tx, self.kind)
-                    .await
-                    .map_err(BackendError::from_string);
+                return guard.run_command(args, &self.tx, self.kind.clone()).await;
             }
         }
 
@@ -282,7 +279,7 @@ impl CommandRunner {
         // If one pipe fills its kernel buffer while we are draining the other,
         // the child process blocks and we never reach EOF on either pipe.
         let tx_stdout = self.tx.clone();
-        let kind_stdout = self.kind;
+        let kind_stdout = self.kind.clone();
         let stdout_task = async move {
             let mut tail: VecDeque<String> = VecDeque::with_capacity(OUTPUT_TAIL_LINES + 1);
             let mut evicted = false;
@@ -295,7 +292,7 @@ impl CommandRunner {
                     }
                     tail.push_back(line.clone());
                     let _ = tx_stdout
-                        .send(BackendEvent::LogLine(kind_stdout, line))
+                        .send(BackendEvent::LogLine(kind_stdout.clone(), line))
                         .await;
                 }
             }
@@ -308,7 +305,7 @@ impl CommandRunner {
         };
 
         let tx_stderr = self.tx.clone();
-        let kind_stderr = self.kind;
+        let kind_stderr = self.kind.clone();
         let stderr_task = async move {
             let mut tail: VecDeque<String> = VecDeque::with_capacity(OUTPUT_TAIL_LINES + 1);
             let mut evicted = false;
@@ -321,7 +318,7 @@ impl CommandRunner {
                     }
                     tail.push_back(line.clone());
                     let _ = tx_stderr
-                        .send(BackendEvent::LogLine(kind_stderr, line))
+                        .send(BackendEvent::LogLine(kind_stderr.clone(), line))
                         .await;
                 }
             }
@@ -354,7 +351,10 @@ impl CommandRunner {
     }
 
     async fn send(&self, msg: String) {
-        let _ = self.tx.send(BackendEvent::LogLine(self.kind, msg)).await;
+        let _ = self
+            .tx
+            .send(BackendEvent::LogLine(self.kind.clone(), msg))
+            .await;
     }
 }
 

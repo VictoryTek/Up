@@ -41,6 +41,7 @@ pub async fn fetch_changelog(
         BackendKind::Homebrew => fetch_homebrew(packages).await,
         BackendKind::Fwupd => fetch_fwupd().await,
         BackendKind::Nix => Err(ChangelogError::NotSupported),
+        BackendKind::Plugin(_) => Err(ChangelogError::NotSupported),
     }
 }
 

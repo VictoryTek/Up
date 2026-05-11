@@ -49,9 +49,24 @@
               $out/share/applications/io.github.up.desktop
             install -Dm644 data/io.github.up.metainfo.xml \
               $out/share/metainfo/io.github.up.metainfo.xml
+            install -Dm644 data/io.github.up.policy \
+              $out/share/polkit-1/actions/io.github.up.policy
             install -Dm644 data/icons/hicolor/256x256/apps/io.github.up.png \
               $out/share/icons/hicolor/256x256/apps/io.github.up.png
             gtk4-update-icon-cache -qtf $out/share/icons/hicolor
+
+            # D-Bus daemon
+            install -Dm755 target/release/up-daemon $out/libexec/up-daemon
+            install -Dm644 data/io.github.up.Daemon.service \
+              $out/lib/systemd/system/io.github.up.Daemon.service
+            install -Dm644 data/io.github.up.Daemon.conf \
+              $out/share/dbus-1/system.d/io.github.up.Daemon.conf
+
+            # Plugin backend descriptors
+            install -Dm644 data/backends.d/apk.yaml \
+              $out/share/up/backends.d/apk.yaml
+            install -Dm644 data/backends.d/xbps.yaml \
+              $out/share/up/backends.d/xbps.yaml
           '';
 
           meta = with pkgs.lib; {

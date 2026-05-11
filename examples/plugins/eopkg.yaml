@@ -1,0 +1,55 @@
+---
+schema_version: 1
+
+id: eopkg
+display_name: "eopkg"
+description: "Solus Linux packages"
+icon_name: "system-software-install-symbolic"
+
+detection:
+  binary: "eopkg"
+  os_id: ["solus"]
+  file_exists: null
+
+privilege:
+  needs_root: true
+  polkit_action: "io.github.up.update.system"
+
+commands:
+  update:
+    program: "eopkg"
+    args: ["upgrade", "-y"]
+    environment:
+      LANG: "C"
+    parser:
+      type: "regex_count"
+      pattern: "^Upgrading .+"
+
+  list_available:
+    program: "eopkg"
+    args: ["list-upgrades"]
+    parser:
+      type: "line_field"
+      field_index: 0
+      separator: " "
+      skip_lines: 0
+
+  cleanup:
+    program: "eopkg"
+    args: ["delete-cache"]
+    parser:
+      type: "line_count"
+      pattern: "^Removing"
+
+capabilities:
+  update: true
+  list_available: true
+  cleanup: true
+  estimate_size: false
+  count_available: true
+
+metadata:
+  author: "Solus Community"
+  version: "1.0.0"
+  min_up_version: "2.0.0"
+  license: "GPL-3.0-or-later"

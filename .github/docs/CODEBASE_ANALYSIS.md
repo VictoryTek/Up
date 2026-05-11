@@ -110,8 +110,8 @@
 - [x] **Disk-space pre-check** — surface transaction size from APT/DNF/Flatpak before applying
 
 #### Large / v2.0
-- [ ] **D-Bus backend service** — small privileged daemon with scoped polkit actions; eliminates `pkexec sh`, enables proper cancellation and audit logging
-- [ ] **Backend plugin/discovery system** — YAML descriptors under `/usr/lib/up/backends.d/` for community-added backends (apk, xbps, eopkg, etc.)
+- [x] **D-Bus backend service** — small privileged daemon with scoped polkit actions; eliminates `pkexec sh`, enables proper cancellation and audit logging
+- [x] **Backend plugin/discovery system** — YAML descriptors under `/usr/lib/up/backends.d/` for community-added backends (apk, xbps, eopkg, etc.)
 
 #### Out of Scope
 - ~~System tray / always-running daemon~~ — conflicts with stated scope and daemon-free design

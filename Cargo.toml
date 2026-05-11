@@ -1,6 +1,9 @@
+[workspace]
+members = [".", "daemon"]
+
 [package]
 name = "up"
-version = "1.1.0"
+version = "2.0.0"
 edition = "2021"
 description = "A modern system update & upgrade app for Linux"
 license = "GPL-3.0-or-later"
@@ -17,11 +20,16 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "io-util
 async-channel = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yml = "0.0.12"
+regex = "1"
 log = "0.4"
 env_logger = "0.11"
 which = "7"
 thiserror = "2"
 ureq = "3"
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures-util = "0.3"
 
 [profile.release]
 opt-level = "s"

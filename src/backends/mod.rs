@@ -69,7 +69,7 @@ impl BackendError {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BackendKind {
     Apt,
     Dnf,
@@ -79,6 +79,8 @@ pub enum BackendKind {
     Homebrew,
     Nix,
     Fwupd,
+    /// A dynamically-loaded plugin backend identified by its string ID.
+    Plugin(String),
 }
 
 impl fmt::Display for BackendKind {
@@ -92,6 +94,7 @@ impl fmt::Display for BackendKind {
             Self::Homebrew => write!(f, "Homebrew"),
             Self::Nix => write!(f, "Nix"),
             Self::Fwupd => write!(f, "Fwupd"),
+            Self::Plugin(id) => write!(f, "{}", id),
         }
     }
 }
@@ -212,6 +215,38 @@ pub fn detect_backends() -> Vec<Arc<dyn Backend>> {
     // fwupd — firmware updates via LVFS; unprivileged (polkit handled by daemon)
     if fwupd::is_available() {
         backends.push(Arc::new(fwupd::FwupdBackend));
+    }
+
+    // Plugin backends — discovered from YAML descriptors in XDG data dirs
+    let plugins = crate::plugins::discovery::discover_plugins();
+    for descriptor in plugins {
+        // Skip plugins whose detection binary is not available
+        if which::which(&descriptor.detection.binary).is_err() {
+            continue;
+        }
+        // Skip plugins that duplicate a built-in backend
+        let plugin_id = descriptor.id.clone();
+        let is_builtin = backends.iter().any(|b| {
+            let kind = b.kind();
+            matches!(
+                (&kind, plugin_id.as_str()),
+                (BackendKind::Apt, "apt")
+                    | (BackendKind::Dnf, "dnf")
+                    | (BackendKind::Pacman, "pacman")
+                    | (BackendKind::Zypper, "zypper")
+                    | (BackendKind::Flatpak, "flatpak")
+                    | (BackendKind::Homebrew, "homebrew")
+                    | (BackendKind::Nix, "nix")
+                    | (BackendKind::Fwupd, "fwupd")
+            )
+        });
+        if is_builtin {
+            continue;
+        }
+        info!("Plugin backend detected: {}", descriptor.display_name);
+        backends.push(Arc::new(crate::plugins::backend::PluginBackend::new(
+            descriptor,
+        )));
     }
 
     for b in &backends {

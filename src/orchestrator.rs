@@ -141,8 +141,10 @@ impl UpdateOrchestrator {
                     continue;
                 }
 
-                let _ = tx.send(OrchestratorEvent::BackendStarted(kind)).await;
-                let runner = CommandRunner::new(be_tx.clone(), kind, shell.clone());
+                let _ = tx
+                    .send(OrchestratorEvent::BackendStarted(kind.clone()))
+                    .await;
+                let runner = CommandRunner::new(be_tx.clone(), kind.clone(), shell.clone());
                 let result = backend.run_update(&runner).await;
 
                 // If the user cancelled while this backend was running, override the result.
@@ -233,8 +235,10 @@ impl CleanupOrchestrator {
 
             for backend in &backends {
                 let kind = backend.kind();
-                let _ = tx.send(OrchestratorEvent::BackendStarted(kind)).await;
-                let runner = CommandRunner::new(be_tx.clone(), kind, shell.clone());
+                let _ = tx
+                    .send(OrchestratorEvent::BackendStarted(kind.clone()))
+                    .await;
+                let runner = CommandRunner::new(be_tx.clone(), kind.clone(), shell.clone());
                 let result = backend.run_cleanup(&runner).await;
                 let _ = tx
                     .send(OrchestratorEvent::BackendFinished(kind, result))

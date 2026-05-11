@@ -1,0 +1,64 @@
+---
+schema_version: 1
+
+id: apk
+display_name: "APK"
+description: "Alpine Linux packages"
+icon_name: "system-software-install-symbolic"
+
+detection:
+  binary: "apk"
+  os_id: ["alpine"]
+  file_exists: null
+
+privilege:
+  needs_root: true
+  polkit_action: "io.github.up.update.system"
+
+commands:
+  update:
+    program: "apk"
+    args: ["upgrade", "--no-interactive"]
+    environment:
+      LANG: "C"
+      LC_ALL: "C"
+    parser:
+      type: "regex_count"
+      pattern: "^\\(\\d+/\\d+\\) Upgrading"
+
+  list_available:
+    program: "apk"
+    args: ["version", "-l", "<"]
+    parser:
+      type: "line_field"
+      field_index: 0
+      separator: " "
+      skip_lines: 0
+
+  cleanup:
+    program: "apk"
+    args: ["cache", "clean"]
+    parser:
+      type: "line_count"
+      pattern: "^Removing"
+
+  estimate_size:
+    program: "apk"
+    args: ["upgrade", "--simulate"]
+    parser:
+      type: "size_regex"
+      pattern: "After this operation, (\\d+) .iB"
+      unit_group: 1
+
+capabilities:
+  update: true
+  list_available: true
+  cleanup: true
+  estimate_size: true
+  count_available: true
+
+metadata:
+  author: "Alpine Linux Community"
+  version: "1.0.0"
+  min_up_version: "2.0.0"
+  license: "GPL-3.0-or-later"

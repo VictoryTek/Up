@@ -1,0 +1,55 @@
+---
+schema_version: 1
+
+id: xbps
+display_name: "XBPS"
+description: "Void Linux packages"
+icon_name: "system-software-install-symbolic"
+
+detection:
+  binary: "xbps-install"
+  os_id: ["void"]
+  file_exists: null
+
+privilege:
+  needs_root: true
+  polkit_action: "io.github.up.update.system"
+
+commands:
+  update:
+    program: "xbps-install"
+    args: ["-Syu"]
+    environment:
+      LANG: "C"
+    parser:
+      type: "regex_count"
+      pattern: "^\\S+ \\S+ -> \\S+"
+
+  list_available:
+    program: "xbps-install"
+    args: ["-Mun"]
+    parser:
+      type: "line_field"
+      field_index: 0
+      separator: " "
+      skip_lines: 0
+
+  cleanup:
+    program: "xbps-remove"
+    args: ["-Oo"]
+    parser:
+      type: "line_count"
+      pattern: "^Removing"
+
+capabilities:
+  update: true
+  list_available: true
+  cleanup: true
+  estimate_size: false
+  count_available: true
+
+metadata:
+  author: "Void Linux Community"
+  version: "1.0.0"
+  min_up_version: "2.0.0"
+  license: "GPL-3.0-or-later"

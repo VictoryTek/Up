@@ -134,10 +134,11 @@ impl UpdateRow {
             let packages_cache_click = packages_cache.clone();
             let row_weak = row.downgrade();
             let btn_weak = changelog_button.downgrade();
+            let backend_kind_closure = backend_kind.clone();
 
             changelog_button.connect_clicked(move |btn| {
                 let pkgs: Vec<String> = packages_cache_click.borrow().clone();
-                let kind = backend_kind;
+                let kind = backend_kind_closure.clone();
 
                 btn.set_sensitive(false);
 

@@ -1,0 +1,33 @@
+[Unit]
+Description=Up System Update Daemon
+Documentation=https://github.com/VictoryTek/Up
+After=dbus.service
+
+[Service]
+Type=dbus
+BusName=io.github.up.Daemon
+ExecStart=/usr/libexec/up-daemon
+User=root
+
+# Security hardening
+NoNewPrivileges=no
+ProtectSystem=false
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallFilter=@system-service @process @network-io
+
+# Resource limits
+MemoryMax=256M
+CPUQuota=50%
+
+# Restart on crash
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

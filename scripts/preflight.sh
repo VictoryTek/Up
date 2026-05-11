@@ -42,6 +42,9 @@ fi
 echo "--- Step 3: Build verification (cargo build) ---"
 cargo build
 
+echo "--- Step 3b: Build daemon crate (cargo build -p up-daemon) ---"
+cargo build -p up-daemon
+
 echo "--- Step 4: Test execution (cargo test) ---"
 cargo test
 
