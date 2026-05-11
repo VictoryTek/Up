@@ -23,6 +23,7 @@ impl PluginBackend {
     }
 
     /// Get the plugin ID.
+    #[allow(dead_code)]
     pub fn id(&self) -> &str {
         &self.descriptor.id
     }

@@ -58,6 +58,7 @@ trait UpDaemon {
 }
 
 /// The execution mode for privileged operations.
+#[allow(dead_code)]
 pub enum ExecutionMode {
     /// Use the D-Bus daemon for privileged operations.
     Daemon(zbus::Connection),
@@ -70,6 +71,7 @@ pub enum ExecutionMode {
 /// Attempts to connect to the `up-daemon` on the system bus. If the daemon
 /// is responsive, returns [`ExecutionMode::Daemon`]. Otherwise falls back to
 /// [`ExecutionMode::LegacyPkexec`].
+#[allow(dead_code)]
 pub async fn detect_execution_mode() -> ExecutionMode {
     match zbus::Connection::system().await {
         Ok(conn) => {
@@ -104,6 +106,7 @@ pub async fn detect_execution_mode() -> ExecutionMode {
 ///
 /// This executor starts an update operation via D-Bus and collects output from
 /// the `OperationOutput` signal, returning the collected output on completion.
+#[allow(dead_code)]
 pub struct DaemonExecutor {
     connection: zbus::Connection,
     backend_id: String,
@@ -111,6 +114,7 @@ pub struct DaemonExecutor {
     output_tx: Option<async_channel::Sender<String>>,
 }
 
+#[allow(dead_code)]
 impl DaemonExecutor {
     /// Create a new `DaemonExecutor` for the given backend.
     pub fn new(connection: zbus::Connection, backend_id: String) -> Self {
@@ -208,6 +212,7 @@ impl CommandExecutor for DaemonExecutor {
 }
 
 /// Cancel an operation via the daemon.
+#[allow(dead_code)]
 pub async fn cancel_operation(connection: &zbus::Connection, operation_id: &str) -> bool {
     match UpDaemonProxy::new(connection).await {
         Ok(proxy) => proxy.cancel(operation_id).await.unwrap_or(false),
