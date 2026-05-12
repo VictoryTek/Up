@@ -26,6 +26,11 @@
   <launchable type="desktop-id">io.github.up.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="2.0.1" date="2026-05-12">
+      <description>
+        <p>Fixed Nix build failing during installPhase because up-daemon was never compiled. Added cargoBuildFlags = ["--workspace"] so the full Cargo workspace is built, and corrected the postInstall path from the broken target/release/up-daemon to mv $out/bin/up-daemon $out/libexec/up-daemon.</p>
+      </description>
+    </release>
     <release version="2.0.0" date="2026-05-11">
       <description>
         <p>Major architectural release. Introduces a privileged D-Bus backend service (up-daemon) with scoped polkit actions, proper cancellation, and audit logging — replacing the pkexec persistent shell. Adds a YAML plugin discovery system so community backends (apk, xbps, eopkg, and others) can be loaded from XDG data directories without modifying core code.</p>
