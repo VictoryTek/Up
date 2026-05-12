@@ -21,6 +21,8 @@
             lockFile = ./Cargo.lock;
           };
 
+          cargoBuildFlags = [ "--workspace" ];
+
           nativeBuildInputs = with pkgs; [
             pkg-config
             wrapGAppsHook4
@@ -56,7 +58,8 @@
             gtk4-update-icon-cache -qtf $out/share/icons/hicolor
 
             # D-Bus daemon
-            install -Dm755 target/release/up-daemon $out/libexec/up-daemon
+            mkdir -p $out/libexec
+            mv $out/bin/up-daemon $out/libexec/up-daemon
             install -Dm644 data/io.github.up.Daemon.service \
               $out/lib/systemd/system/io.github.up.Daemon.service
             install -Dm644 data/io.github.up.Daemon.conf \
