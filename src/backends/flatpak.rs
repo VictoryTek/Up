@@ -1,4 +1,4 @@
-use crate::backends::{Backend, BackendKind, UpdateResult};
+use crate::backends::{Backend, BackendError, BackendKind, UpdateResult};
 use crate::executor::CommandExecutor;
 use std::future::Future;
 use std::pin::Pin;
@@ -272,7 +272,6 @@ pub(crate) fn parse_flatpak_app_line(line: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backends::BackendError;
     use crate::executor::test_utils::MockExecutor;
 
     #[test]
