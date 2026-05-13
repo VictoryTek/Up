@@ -743,7 +743,7 @@ impl UpWindow {
                         }
                     }
                 }
-                let backends: Vec<(Arc<dyn Backend>, Option<Vec<String>>)> = {
+                let backends: Vec<crate::orchestrator::BackendSelection> = {
                     let detected_borrow = detected.borrow();
                     let rows_borrow = rows.borrow();
                     detected_borrow

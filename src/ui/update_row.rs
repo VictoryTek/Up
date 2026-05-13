@@ -635,15 +635,4 @@ impl UpdateRow {
             Some(selected)
         }
     }
-
-    /// Returns `true` when some (not all) packages are deselected,
-    /// i.e., a selective update would run for this backend.
-    pub fn has_partial_selection(&self) -> bool {
-        if !self.supports_item_selection {
-            return false;
-        }
-        let all_count = self.all_item_ids.borrow().len();
-        let desel_count = self.deselected_items.borrow().len();
-        desel_count > 0 && desel_count < all_count
-    }
 }

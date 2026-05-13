@@ -59,17 +59,18 @@ pub enum OrchestratorEvent {
     AllFinished,
 }
 
+/// One entry in the orchestrator's backend list.
+/// `None` means run a full update; `Some(ids)` means update only those items.
+pub type BackendSelection = (Arc<dyn Backend>, Option<Vec<String>>);
+
 /// Drives the update sequence for a set of backends, sending progress events
 /// to the UI via an [`async_channel`].  Does not hold any GTK types.
 pub struct UpdateOrchestrator {
-    /// Each element is `(backend, selected_items)`.
-    /// - `selected_items = None`          → `run_update()` (full update)
-    /// - `selected_items = Some(v)` where `v` is non-empty → `run_selected_update(v)`
-    backends: Vec<(Arc<dyn Backend>, Option<Vec<String>>)>,
+    backends: Vec<BackendSelection>,
 }
 
 impl UpdateOrchestrator {
-    pub fn new(backends: Vec<(Arc<dyn Backend>, Option<Vec<String>>)>) -> Self {
+    pub fn new(backends: Vec<BackendSelection>) -> Self {
         Self { backends }
     }
 
