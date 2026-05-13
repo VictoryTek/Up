@@ -453,7 +453,7 @@ impl Backend for NixBackend {
                          nix --extra-experimental-features 'nix-command flakes' \
                          flake update --flake /etc/nixos && \
                          stdbuf -oL -eL \
-                         nixos-rebuild switch --flake /etc/nixos#{} --print-build-logs",
+                         nixos-rebuild switch --flake /etc/nixos#{} --refresh --print-build-logs",
                         config_name
                     );
                     match runner
