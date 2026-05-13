@@ -62,11 +62,14 @@ pub enum OrchestratorEvent {
 /// Drives the update sequence for a set of backends, sending progress events
 /// to the UI via an [`async_channel`].  Does not hold any GTK types.
 pub struct UpdateOrchestrator {
-    backends: Vec<Arc<dyn Backend>>,
+    /// Each element is `(backend, selected_items)`.
+    /// - `selected_items = None`          → `run_update()` (full update)
+    /// - `selected_items = Some(v)` where `v` is non-empty → `run_selected_update(v)`
+    backends: Vec<(Arc<dyn Backend>, Option<Vec<String>>)>,
 }
 
 impl UpdateOrchestrator {
-    pub fn new(backends: Vec<Arc<dyn Backend>>) -> Self {
+    pub fn new(backends: Vec<(Arc<dyn Backend>, Option<Vec<String>>)>) -> Self {
         Self { backends }
     }
 
@@ -87,7 +90,7 @@ impl UpdateOrchestrator {
         };
 
         spawn_background(move || async move {
-            let any_needs_root = backends.iter().any(|b| b.needs_root());
+            let any_needs_root = backends.iter().any(|(b, _)| b.needs_root());
 
             // --- Authentication phase ---
             let shell: Option<Arc<tokio::sync::Mutex<PrivilegedShell>>> = if any_needs_root {
@@ -127,7 +130,7 @@ impl UpdateOrchestrator {
             });
 
             // --- Backend iteration ---
-            for backend in &backends {
+            for (backend, selected_items) in &backends {
                 let kind = backend.kind();
 
                 // Check for cancellation before starting each backend.
@@ -145,7 +148,15 @@ impl UpdateOrchestrator {
                     .send(OrchestratorEvent::BackendStarted(kind.clone()))
                     .await;
                 let runner = CommandRunner::new(be_tx.clone(), kind.clone(), shell.clone());
-                let result = backend.run_update(&runner).await;
+
+                // Dispatch: use run_selected_update only when the backend supports item
+                // selection and a non-empty subset was provided by the UI.
+                let result = match selected_items {
+                    Some(items) if backend.supports_item_selection() && !items.is_empty() => {
+                        backend.run_selected_update(items, &runner).await
+                    }
+                    _ => backend.run_update(&runner).await,
+                };
 
                 // If the user cancelled while this backend was running, override the result.
                 let result = if cancelled.load(Ordering::SeqCst) {

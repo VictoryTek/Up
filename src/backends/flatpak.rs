@@ -196,6 +196,52 @@ impl Backend for FlatpakBackend {
             }
         })
     }
+
+    fn supports_item_selection(&self) -> bool {
+        true
+    }
+
+    fn run_selected_update<'a>(
+        &'a self,
+        items: &'a [String],
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            // Validate: app IDs must not contain shell-unsafe characters.
+            for id in items {
+                if id.is_empty()
+                    || id.len() > 255
+                    || id.contains([
+                        ' ', '\n', '\r', '\0', '\'', '"', ';', '&', '|', '`', '$', '\\',
+                    ])
+                {
+                    return UpdateResult::Error(BackendError::from_string(format!(
+                        "Invalid Flatpak app ID: {:?}",
+                        id
+                    )));
+                }
+            }
+            let mut sub_args = vec!["update", "-y"];
+            sub_args.extend(items.iter().map(|s| s.as_str()));
+            let (cmd, args) = build_flatpak_cmd(&sub_args);
+            let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            match runner.run(&cmd, &args_refs).await {
+                Ok(output) => {
+                    let count = output
+                        .lines()
+                        .filter(|l| {
+                            let t = l.trim();
+                            t.starts_with(|c: char| c.is_ascii_digit())
+                        })
+                        .count();
+                    UpdateResult::Success {
+                        updated_count: count,
+                    }
+                }
+                Err(e) => UpdateResult::Error(e),
+            }
+        })
+    }
 }
 
 /// Parse full output from `flatpak remote-ls --updates --columns=application`,

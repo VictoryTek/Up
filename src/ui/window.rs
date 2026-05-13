@@ -743,7 +743,7 @@ impl UpWindow {
                         }
                     }
                 }
-                let backends: Vec<Arc<dyn Backend>> = {
+                let backends: Vec<(Arc<dyn Backend>, Option<Vec<String>>)> = {
                     let detected_borrow = detected.borrow();
                     let rows_borrow = rows.borrow();
                     detected_borrow
@@ -755,7 +755,13 @@ impl UpWindow {
                                 .map(|(_, r)| !r.is_skipped())
                                 .unwrap_or(true)
                         })
-                        .cloned()
+                        .map(|b| {
+                            let items = rows_borrow
+                                .iter()
+                                .find(|(k, _)| *k == b.kind())
+                                .and_then(|(_, r)| r.items_to_update());
+                            (b.clone(), items)
+                        })
                         .collect()
                 };
 
@@ -1140,6 +1146,10 @@ impl UpWindow {
                                 let detected_retry = detected.clone();
                                 let updating_retry = updating.clone();
                                 let update_button_retry = update_button.clone();
+                                // Clones for the on_selection_changed closure
+                                let rows_sel = rows.clone();
+                                let button_sel = update_button.clone();
+                                let updating_sel = updating.clone();
                                 let row = UpdateRow::new(
                                     backend.as_ref(),
                                     move || {
@@ -1185,7 +1195,8 @@ impl UpWindow {
                                         log_panel_retry.append_line(&format!(
                                             "\u{2500}\u{2500}\u{2500} Retrying {kind} \u{2500}\u{2500}\u{2500}"
                                         ));
-                                        let orchestrator = UpdateOrchestrator::new(vec![backend]);
+                                        let orchestrator =
+                                            UpdateOrchestrator::new(vec![(backend, None)]);
                                         let (event_tx, event_rx) =
                                             async_channel::unbounded::<OrchestratorEvent>();
                                         orchestrator.run_all(event_tx);
@@ -1277,6 +1288,20 @@ impl UpWindow {
                                                 );
                                             }
                                         });
+                                    },
+                                    move || {
+                                        // on_selection_changed: re-evaluate Update All sensitivity
+                                        // (same logic as on_skip_changed).
+                                        if updating_sel.get() {
+                                            return;
+                                        }
+                                        let borrowed = rows_sel.borrow();
+                                        let non_skipped_available: usize = borrowed
+                                            .iter()
+                                            .filter(|(_, r)| !r.is_skipped())
+                                            .filter_map(|(_, r)| r.last_available_count())
+                                            .sum();
+                                        button_sel.set_sensitive(non_skipped_available > 0);
                                     },
                                 );
                                 backends_group.add(&row.row);

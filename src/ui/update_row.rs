@@ -2,6 +2,7 @@ use adw::prelude::*;
 use gettextrs::{gettext, ngettext};
 use gtk::glib;
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::backends::{Backend, BackendKind};
@@ -28,6 +29,18 @@ pub struct UpdateRow {
     /// Last estimated required disk space returned by `estimate_size()`.
     /// `None` means the backend does not support estimation or has not yet run.
     estimated_bytes: Rc<Cell<Option<u64>>>,
+    /// Whether the backend supports per-item selection (set once at construction).
+    supports_item_selection: bool,
+    /// Tracks item IDs that the user has DESELECTED (excluded from update).
+    deselected_items: Rc<RefCell<HashSet<String>>>,
+    /// All item IDs loaded by the most recent set_packages() call.
+    all_item_ids: Rc<RefCell<Vec<String>>>,
+    /// CheckButton widgets for displayed items (up to MAX_PACKAGES).
+    child_checkboxes: Rc<RefCell<Vec<gtk::CheckButton>>>,
+    /// Guard flag: true while parent checkbox state is being updated programmatically.
+    updating_parent: Rc<Cell<bool>>,
+    /// Callback invoked when per-item selection changes.
+    on_selection_changed: Rc<dyn Fn()>,
 }
 
 impl UpdateRow {
@@ -35,6 +48,7 @@ impl UpdateRow {
         backend: &dyn Backend,
         on_skip_changed: impl Fn() + 'static,
         on_retry: impl Fn() + 'static,
+        on_selection_changed: impl Fn() + 'static,
     ) -> Self {
         let status_label = gtk::Label::builder()
             .label(gettext("Ready"))
@@ -76,13 +90,93 @@ impl UpdateRow {
         row.add_suffix(&spinner);
         row.add_suffix(&status_label);
 
+        let supports_item_selection = backend.supports_item_selection();
+        let deselected_items: Rc<RefCell<HashSet<String>>> = Rc::new(RefCell::new(HashSet::new()));
+        let all_item_ids: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+        let child_checkboxes: Rc<RefCell<Vec<gtk::CheckButton>>> =
+            Rc::new(RefCell::new(Vec::new()));
+        let updating_parent: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let on_selection_changed: Rc<dyn Fn()> = Rc::new(on_selection_changed);
+
         {
             let skip_flag = skip_flag.clone();
             let last_available = last_available.clone();
             let status_label = status_label.clone();
+            let updating_parent = updating_parent.clone();
+            let deselected_items = deselected_items.clone();
+            let all_item_ids = all_item_ids.clone();
+            let child_checkboxes = child_checkboxes.clone();
+            let on_selection_changed_cb = on_selection_changed.clone();
             skip_checkbox.connect_toggled(move |cb| {
+                // Ignore programmatic updates triggered by child-checkbox handlers.
+                if updating_parent.get() {
+                    return;
+                }
+
+                // When the parent is in an indeterminate state and the user clicks it,
+                // interpret as "select all items" regardless of which direction active goes.
+                if supports_item_selection && cb.is_inconsistent() {
+                    deselected_items.borrow_mut().clear();
+                    updating_parent.set(true);
+                    cb.set_inconsistent(false);
+                    cb.set_active(false);
+                    for child_cb in child_checkboxes.borrow().iter() {
+                        child_cb.set_active(true);
+                    }
+                    updating_parent.set(false);
+                    skip_flag.set(false);
+                    // Restore the appropriate status label.
+                    match last_available.get() {
+                        Some(count) if count > 0 => {
+                            status_label.set_label(
+                                &ngettext(
+                                    "1 package available",
+                                    "{} packages available",
+                                    count as u32,
+                                )
+                                .replace("{}", &count.to_string()),
+                            );
+                            status_label.set_css_classes(&["accent"]);
+                        }
+                        Some(_) => {
+                            status_label.set_label(&gettext("Up to date"));
+                            status_label.set_css_classes(&["success"]);
+                        }
+                        None => {
+                            status_label.set_label(&gettext("Ready"));
+                            status_label.set_css_classes(&["dim-label"]);
+                        }
+                    }
+                    on_skip_changed();
+                    on_selection_changed_cb();
+                    return;
+                }
+
                 let skipped = cb.is_active();
                 skip_flag.set(skipped);
+
+                if supports_item_selection {
+                    if skipped {
+                        // Parent fully skipped → deselect all children.
+                        let ids = all_item_ids.borrow().clone();
+                        *deselected_items.borrow_mut() = ids.into_iter().collect();
+                        updating_parent.set(true);
+                        for child_cb in child_checkboxes.borrow().iter() {
+                            child_cb.set_active(false);
+                        }
+                        updating_parent.set(false);
+                    } else {
+                        // Parent un-skipped → re-select all children.
+                        deselected_items.borrow_mut().clear();
+                        updating_parent.set(true);
+                        for child_cb in child_checkboxes.borrow().iter() {
+                            child_cb.set_active(true);
+                        }
+                        updating_parent.set(false);
+                    }
+                    on_selection_changed_cb();
+                }
+
                 if skipped {
                     status_label.set_label(&gettext("Skipped"));
                     status_label.set_css_classes(&["dim-label"]);
@@ -218,6 +312,12 @@ impl UpdateRow {
             changelog_row,
             base_description: backend.description().to_string(),
             estimated_bytes: Rc::new(Cell::new(None)),
+            supports_item_selection,
+            deselected_items,
+            all_item_ids,
+            child_checkboxes,
+            updating_parent,
+            on_selection_changed,
         }
     }
 
@@ -262,6 +362,13 @@ impl UpdateRow {
         // Update the cache used by the changelog button.
         *self.packages_cache.borrow_mut() = packages.to_vec();
 
+        // Reset selection state: clear deselected set and repopulate all_item_ids.
+        self.deselected_items.borrow_mut().clear();
+        *self.all_item_ids.borrow_mut() = packages.to_vec();
+
+        // Clear child checkbox refs from the previous call.
+        self.child_checkboxes.borrow_mut().clear();
+
         // Remove previously added package rows to avoid duplicates on re-check.
         {
             let mut tracked = self.pkg_rows.borrow_mut();
@@ -272,6 +379,13 @@ impl UpdateRow {
 
         // Remove the changelog row so it can be re-appended at the bottom.
         self.row.remove(&self.changelog_row);
+
+        // Reset parent checkbox: all items are selected after a re-check.
+        if self.supports_item_selection {
+            self.updating_parent.set(true);
+            self.skip_checkbox.set_inconsistent(false);
+            self.updating_parent.set(false);
+        }
 
         // Hide the expand arrow when there is nothing to expand.
         self.row.set_enable_expansion(!packages.is_empty());
@@ -286,6 +400,64 @@ impl UpdateRow {
         let mut tracked = self.pkg_rows.borrow_mut();
         for pkg in &packages[..display_count] {
             let pkg_row = adw::ActionRow::builder().title(pkg.as_str()).build();
+
+            if self.supports_item_selection {
+                let cb = gtk::CheckButton::builder()
+                    .active(true)
+                    .valign(gtk::Align::Center)
+                    .build();
+                let label = gettext("Include {} in update").replace("{}", pkg.as_str());
+                cb.update_property(&[gtk::accessible::Property::Label(label.as_str())]);
+
+                // Wire up per-item toggle: updates deselected_items and the parent checkbox.
+                {
+                    let pkg_id = pkg.clone();
+                    let deselected = self.deselected_items.clone();
+                    let all_ids = self.all_item_ids.clone();
+                    let skip_cb = self.skip_checkbox.clone();
+                    let skip_flag = self.skip_flag.clone();
+                    let updating_parent = self.updating_parent.clone();
+                    let on_sel = self.on_selection_changed.clone();
+                    cb.connect_toggled(move |item_cb| {
+                        // Parent is driving a bulk toggle — skip redundant updates.
+                        if updating_parent.get() {
+                            return;
+                        }
+                        if item_cb.is_active() {
+                            deselected.borrow_mut().remove(&pkg_id);
+                        } else {
+                            deselected.borrow_mut().insert(pkg_id.clone());
+                        }
+                        // Derive and apply the new parent checkbox state.
+                        updating_parent.set(true);
+                        let total = all_ids.borrow().len();
+                        let desel_count = deselected.borrow().len();
+                        if desel_count == 0 {
+                            // All selected → parent shows checkmark (not skipped).
+                            skip_cb.set_inconsistent(false);
+                            skip_cb.set_active(false);
+                            skip_flag.set(false);
+                        } else if desel_count < total {
+                            // Partial → parent shows dash (indeterminate, not skipped).
+                            skip_cb.set_inconsistent(true);
+                            skip_cb.set_active(false);
+                            skip_flag.set(false);
+                        } else {
+                            // All deselected → parent shows unchecked (backend skipped).
+                            skip_cb.set_inconsistent(false);
+                            skip_cb.set_active(true);
+                            skip_flag.set(true);
+                        }
+                        updating_parent.set(false);
+                        (*on_sel)();
+                    });
+                }
+
+                pkg_row.add_prefix(&cb);
+                pkg_row.set_activatable_widget(Some(&cb));
+                self.child_checkboxes.borrow_mut().push(cb);
+            }
+
             self.row.add_row(&pkg_row);
             tracked.push(pkg_row);
         }
@@ -431,5 +603,47 @@ impl UpdateRow {
     /// Triggers the same visual update and on_skip_changed callback as a user click.
     pub fn set_skipped(&self, skipped: bool) {
         self.skip_checkbox.set_active(skipped);
+    }
+
+    /// Returns `Some(items)` when a non-empty proper subset of packages is
+    /// selected for updating.
+    ///
+    /// Returns `None` when:
+    /// - all packages are selected (full update, no filter needed), OR
+    /// - the backend does not support item selection, OR
+    /// - there are no packages loaded.
+    pub fn items_to_update(&self) -> Option<Vec<String>> {
+        if !self.supports_item_selection {
+            return None;
+        }
+        let all = self.all_item_ids.borrow();
+        let desel = self.deselected_items.borrow();
+        if desel.is_empty() || all.is_empty() {
+            return None; // All selected or nothing loaded.
+        }
+        if desel.len() >= all.len() {
+            return None; // All deselected — backend is skipped; is_skipped() handles this.
+        }
+        let selected: Vec<String> = all
+            .iter()
+            .filter(|id| !desel.contains(*id))
+            .cloned()
+            .collect();
+        if selected.is_empty() {
+            None
+        } else {
+            Some(selected)
+        }
+    }
+
+    /// Returns `true` when some (not all) packages are deselected,
+    /// i.e., a selective update would run for this backend.
+    pub fn has_partial_selection(&self) -> bool {
+        if !self.supports_item_selection {
+            return false;
+        }
+        let all_count = self.all_item_ids.borrow().len();
+        let desel_count = self.deselected_items.borrow().len();
+        desel_count > 0 && desel_count < all_count
     }
 }

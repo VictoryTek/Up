@@ -635,6 +635,60 @@ impl Backend for NixBackend {
             }
         })
     }
+
+    fn supports_item_selection(&self) -> bool {
+        is_nixos() && is_nixos_flake()
+    }
+
+    fn run_selected_update<'a>(
+        &'a self,
+        items: &'a [String],
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            // Validate all input names against the same rules as flake attributes.
+            for input in items {
+                if let Err(e) = validate_flake_attr(input) {
+                    return UpdateResult::Error(BackendError::from_string(e));
+                }
+            }
+            let config_name = match resolve_nixos_flake_attr() {
+                Ok(n) => n,
+                Err(e) => return UpdateResult::Error(BackendError::from_string(e)),
+            };
+            // Build: nix flake update <input1> <input2> ... --flake /etc/nixos
+            // Then: nixos-rebuild switch --flake /etc/nixos#<config>
+            // All inputs have been validated by validate_flake_attr above (ASCII
+            // alphanumeric / hyphen / underscore / dot only), so interpolation is safe.
+            let inputs_str = items.join(" ");
+            let cmd = format!(
+                "stdbuf -oL -eL \
+                 nix --extra-experimental-features 'nix-command flakes' \
+                 flake update {} --flake /etc/nixos && \
+                 stdbuf -oL -eL \
+                 nixos-rebuild switch --flake /etc/nixos#{} --refresh --print-build-logs",
+                inputs_str, config_name
+            );
+            match runner
+                .run(
+                    "pkexec",
+                    &[
+                        "env",
+                        "PATH=/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin",
+                        "sh",
+                        "-c",
+                        &cmd,
+                    ],
+                )
+                .await
+            {
+                Ok(output) => UpdateResult::Success {
+                    updated_count: count_nix_store_operations(&output),
+                },
+                Err(e) => UpdateResult::Error(e),
+            }
+        })
+    }
 }
 
 /// Count store paths freed by `nix-collect-garbage -d`.

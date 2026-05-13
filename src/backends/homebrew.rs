@@ -1,4 +1,4 @@
-use crate::backends::{Backend, BackendKind, UpdateResult};
+use crate::backends::{Backend, BackendError, BackendKind, UpdateResult};
 use crate::executor::CommandExecutor;
 use std::future::Future;
 use std::pin::Pin;
@@ -78,6 +78,45 @@ impl Backend for HomebrewBackend {
                         updated_count: removed,
                     }
                 }
+                Err(e) => UpdateResult::Error(e),
+            }
+        })
+    }
+
+    fn supports_item_selection(&self) -> bool {
+        true
+    }
+
+    fn run_selected_update<'a>(
+        &'a self,
+        items: &'a [String],
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            // Validate: formula names must not contain shell-unsafe characters.
+            for formula in items {
+                if formula.is_empty()
+                    || formula.len() > 255
+                    || formula.chars().any(|c| {
+                        !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '/')
+                    })
+                {
+                    return UpdateResult::Error(BackendError::from_string(format!(
+                        "Invalid formula name: {:?}",
+                        formula
+                    )));
+                }
+            }
+            // Refresh metadata before upgrading selected formulae.
+            if let Err(e) = runner.run("brew", &["update"]).await {
+                return UpdateResult::Error(e);
+            }
+            let mut args = vec!["upgrade"];
+            args.extend(items.iter().map(|s| s.as_str()));
+            match runner.run("brew", &args).await {
+                Ok(output) => UpdateResult::Success {
+                    updated_count: count_homebrew_upgraded(&output),
+                },
                 Err(e) => UpdateResult::Error(e),
             }
         })

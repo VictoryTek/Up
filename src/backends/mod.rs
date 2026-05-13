@@ -183,6 +183,38 @@ pub trait Backend: Send + Sync {
         let _ = runner;
         Box::pin(async { UpdateResult::Success { updated_count: 0 } })
     }
+
+    /// Whether this backend supports updating a user-specified subset of items
+    /// returned by `list_available()`.
+    ///
+    /// When `false`, per-item checkboxes in the UI are rendered read-only
+    /// (always checked, non-interactive). The full `run_update()` is always used.
+    ///
+    /// Default: `false`.
+    fn supports_item_selection(&self) -> bool {
+        false
+    }
+
+    /// Run an update restricted to the provided item IDs.
+    ///
+    /// `items` is a non-empty slice of IDs drawn from the `Vec<String>` that
+    /// `list_available()` returned for this backend.
+    ///
+    /// The default implementation ignores `items` and delegates to
+    /// `run_update()` for backward compatibility with backends that do not
+    /// override either method.
+    ///
+    /// Callers guarantee:
+    /// - `items.is_empty()` is never true when this method is called.
+    /// - All entries in `items` originate from the most-recent `list_available()` result.
+    fn run_selected_update<'a>(
+        &'a self,
+        items: &'a [String],
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        let _ = items;
+        self.run_update(runner)
+    }
 }
 
 /// Detect all available backends on the current system.

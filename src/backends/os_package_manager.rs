@@ -130,6 +130,50 @@ impl Backend for AptBackend {
             }
         })
     }
+
+    fn supports_item_selection(&self) -> bool {
+        true
+    }
+
+    fn run_selected_update<'a>(
+        &'a self,
+        items: &'a [String],
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            // Validate: package names must be safe shell tokens.
+            for pkg in items {
+                if pkg.is_empty()
+                    || pkg.len() > 255
+                    || pkg.chars().any(|c| {
+                        !(c.is_ascii_alphanumeric()
+                            || c == '-'
+                            || c == '+'
+                            || c == '.'
+                            || c == '_'
+                            || c == ':')
+                    })
+                {
+                    return UpdateResult::Error(BackendError::from_string(format!(
+                        "Invalid package name: {:?}",
+                        pkg
+                    )));
+                }
+            }
+            // DEBIAN_FRONTEND must be set in the shell environment; sh -c is required here
+            let pkg_list = items.join(" ");
+            let cmd = format!(
+                "DEBIAN_FRONTEND=noninteractive apt-get install --only-upgrade -y {}",
+                pkg_list
+            );
+            match runner.run("pkexec", &["sh", "-c", &cmd]).await {
+                Ok(output) => UpdateResult::Success {
+                    updated_count: count_apt_upgraded(&output),
+                },
+                Err(e) => UpdateResult::Error(e),
+            }
+        })
+    }
 }
 
 pub(crate) fn parse_apt_list_upgradable(output: &str) -> Vec<String> {
@@ -244,6 +288,41 @@ impl Backend for DnfBackend {
                         updated_count: removed,
                     }
                 }
+                Err(e) => UpdateResult::Error(e),
+            }
+        })
+    }
+
+    fn supports_item_selection(&self) -> bool {
+        true
+    }
+
+    fn run_selected_update<'a>(
+        &'a self,
+        items: &'a [String],
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            // Validate: package names must be safe shell tokens.
+            for pkg in items {
+                if pkg.is_empty()
+                    || pkg.len() > 255
+                    || pkg
+                        .chars()
+                        .any(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_'))
+                {
+                    return UpdateResult::Error(BackendError::from_string(format!(
+                        "Invalid package name: {:?}",
+                        pkg
+                    )));
+                }
+            }
+            let mut args = vec!["dnf", "upgrade", "-y"];
+            args.extend(items.iter().map(|s| s.as_str()));
+            match runner.run("pkexec", &args).await {
+                Ok(output) => UpdateResult::Success {
+                    updated_count: count_dnf_upgraded(&output),
+                },
                 Err(e) => UpdateResult::Error(e),
             }
         })
@@ -506,6 +585,41 @@ impl Backend for ZypperBackend {
             match runner.run("pkexec", &zypper_args).await {
                 Ok(_) => UpdateResult::Success {
                     updated_count: orphans.len(),
+                },
+                Err(e) => UpdateResult::Error(e),
+            }
+        })
+    }
+
+    fn supports_item_selection(&self) -> bool {
+        true
+    }
+
+    fn run_selected_update<'a>(
+        &'a self,
+        items: &'a [String],
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
+        Box::pin(async move {
+            // Validate: package names must be safe shell tokens.
+            for pkg in items {
+                if pkg.is_empty()
+                    || pkg.len() > 255
+                    || pkg
+                        .chars()
+                        .any(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_'))
+                {
+                    return UpdateResult::Error(BackendError::from_string(format!(
+                        "Invalid package name: {:?}",
+                        pkg
+                    )));
+                }
+            }
+            let mut args = vec!["zypper", "--non-interactive", "update"];
+            args.extend(items.iter().map(|s| s.as_str()));
+            match runner.run("pkexec", &args).await {
+                Ok(output) => UpdateResult::Success {
+                    updated_count: count_zypper_upgraded(&output),
                 },
                 Err(e) => UpdateResult::Error(e),
             }
