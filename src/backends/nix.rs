@@ -165,6 +165,12 @@ async fn nixos_flake_dry_run_check() -> Result<Option<Vec<String>>, String> {
         .args([
             "--extra-experimental-features",
             "nix-command flakes",
+            "--option",
+            "eval-cache",
+            "false",
+            "--option",
+            "tarball-ttl",
+            "0",
             "flake",
             "update",
             "--dry-run",
@@ -245,6 +251,12 @@ async fn nixos_flake_tempdir_check() -> Result<Vec<String>, String> {
         .args([
             "--extra-experimental-features",
             "nix-command flakes",
+            "--option",
+            "eval-cache",
+            "false",
+            "--option",
+            "tarball-ttl",
+            "0",
             "flake",
             "update",
         ])

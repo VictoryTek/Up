@@ -41,6 +41,8 @@ pub struct UpdateRow {
     updating_parent: Rc<Cell<bool>>,
     /// Callback invoked when per-item selection changes.
     on_selection_changed: Rc<dyn Fn()>,
+    /// True when the last check returned an error (set_status_unknown was called).
+    check_errored: Rc<Cell<bool>>,
 }
 
 impl UpdateRow {
@@ -318,6 +320,7 @@ impl UpdateRow {
             child_checkboxes,
             updating_parent,
             on_selection_changed,
+            check_errored: Rc::new(Cell::new(false)),
         }
     }
 
@@ -330,6 +333,11 @@ impl UpdateRow {
     /// `None` if no successful check has completed yet.
     pub fn last_available_count(&self) -> Option<usize> {
         self.last_available.get()
+    }
+
+    /// Returns `true` if the last check ended in an error (set_status_unknown was called).
+    pub fn check_errored(&self) -> bool {
+        self.check_errored.get()
     }
 
     /// Returns the last estimated required disk bytes from `estimate_size()`.
@@ -486,6 +494,7 @@ impl UpdateRow {
 
     pub fn set_status_checking(&self) {
         self.retry_button.set_visible(false);
+        self.check_errored.set(false);
         self.last_available.set(None);
         self.estimated_bytes.set(None);
         self.row.set_subtitle(&self.base_description);
@@ -568,6 +577,7 @@ impl UpdateRow {
     /// Used when the count cannot be determined without running the update (e.g. NixOS).
     pub fn set_status_unknown(&self, msg: &str) {
         self.retry_button.set_visible(false);
+        self.check_errored.set(true);
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);

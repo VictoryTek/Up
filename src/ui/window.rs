@@ -1093,8 +1093,21 @@ impl UpWindow {
                                             .replace("{}", &non_skipped_total.to_string()),
                                         );
                                     } else {
-                                        status_label_checks
-                                            .set_label(&gettext("Everything is up to date."));
+                                        let any_error = {
+                                            let borrowed = rows.borrow();
+                                            borrowed
+                                                .iter()
+                                                .filter(|(_, r)| !r.is_skipped())
+                                                .any(|(_, r)| r.check_errored())
+                                        };
+                                        if any_error {
+                                            status_label_checks.set_label(&gettext(
+                                                "Could not check all sources.",
+                                            ));
+                                        } else {
+                                            status_label_checks
+                                                .set_label(&gettext("Everything is up to date."));
+                                        }
                                     }
                                 }
                             }
