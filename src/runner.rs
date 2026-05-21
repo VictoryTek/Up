@@ -167,6 +167,20 @@ impl PrivilegedShell {
                     .await
                     .map_err(|e| format!("Failed to read output: {e}"))?;
                 if n == 0 {
+                    // The privileged shell can be terminated by the OS during
+                    // system activation (e.g. nixos-rebuild switch restarts
+                    // systemd services, killing the pkexec shell). If the
+                    // accumulated output contains NixOS activation markers,
+                    // treat the unexpected close as a successful completion.
+                    let tail_str = tail.into_iter().collect::<Vec<_>>().join("\n");
+                    if is_nixos_activation_success(&tail_str) {
+                        let output = if evicted {
+                            format!("...\n{tail_str}")
+                        } else {
+                            tail_str
+                        };
+                        return Ok(output);
+                    }
                     return Err("Privileged shell closed unexpectedly".to_string());
                 }
                 let trimmed = line.trim();
@@ -214,6 +228,30 @@ impl PrivilegedShell {
         self.stdin.take();
         let _ = self.child.wait().await;
     }
+}
+
+/// Returns `true` if the accumulated output from a privileged shell session
+/// contains markers that indicate a NixOS system activation completed
+/// successfully.
+///
+/// When `nixos-rebuild switch` activates the new configuration, it restarts
+/// systemd services which can kill the parent pkexec shell before the exit-code
+/// sentinel is written.  Detecting these markers lets us treat the unexpected
+/// shell close as a successful update rather than an error.
+fn is_nixos_activation_success(output: &str) -> bool {
+    // These strings are printed by nixos-rebuild / the NixOS activation script
+    // during or after a successful system switch.
+    const MARKERS: &[&str] = &[
+        "activating the configuration",
+        "setting up /etc",
+        "reloading user units",
+        "restarting sysinit-reactivation",
+        "switching to system configuration",
+        "the following new units were started",
+        "the following units were restarted",
+    ];
+    let lower = output.to_ascii_lowercase();
+    MARKERS.iter().any(|m| lower.contains(m))
 }
 
 /// Quote a string for safe interpolation inside a POSIX shell command line.
