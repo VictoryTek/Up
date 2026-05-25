@@ -700,7 +700,8 @@ impl UpWindow {
                                         log_panel_retry.append_line(&format!(
                                             "\u{2500}\u{2500}\u{2500} Retrying {kind} \u{2500}\u{2500}\u{2500}"
                                         ));
-                                        let orchestrator = UpdateOrchestrator::new(vec![(backend, None)]);
+                                        let orchestrator =
+                                            UpdateOrchestrator::new(vec![(backend, None)]);
                                         let (event_tx, event_rx) =
                                             async_channel::unbounded::<OrchestratorEvent>();
                                         orchestrator.run_all(event_tx);
