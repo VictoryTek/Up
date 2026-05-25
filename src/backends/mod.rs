@@ -115,6 +115,9 @@ pub enum UpdateResult {
     Skipped(String),
     /// The update was cancelled by the user before or during execution.
     Cancelled,
+    /// The update tool exited with a "cache miss" code (exit 2 on VexOS).
+    /// Updates are on hold while the binary cache catches up; this is not an error.
+    CacheMiss,
 }
 
 pub trait Backend: Send + Sync {

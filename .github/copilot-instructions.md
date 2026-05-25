@@ -23,6 +23,64 @@ You do NOT perform direct file operations or code modifications.
 - NEVER ignore review failures  
 - Build or Preflight failure ALWAYS results in NEEDS_REFINEMENT  
 - Work is NOT complete until Phase 6 passes  
+- NEVER run `nix flake check` in any form — use `nix build --dry-run` instead
+  for the Up flake (single package output). `nix flake check` is banned on
+  this machine regardless of project.
+- NEVER assert the state of the repository, Git history, or remote branches
+  without verifying first — always run the appropriate check command before
+  making any claim about what has or has not been pushed, committed, or applied
+- NEVER tell the user they need to push, commit, or rebuild when you have not
+  first confirmed the current state with a git command
+- Guessing repository or system state wastes the user's tokens and trust —
+  when in doubt, CHECK FIRST, then speak
+
+---
+
+## 🔍 VERIFY BEFORE ASSERTING (NO GUESSING)
+
+Before making ANY claim about the current state of the repository or
+system — run the appropriate verification command first.
+Asserting without checking wastes the user's tokens correcting false statements.
+
+### Git & Repository State
+
+Before saying anything about what has or has not been committed or pushed:
+
+```bash
+# Current branch and tracking status
+git status
+
+# Last 5 commits on current branch
+git log --oneline -5
+
+# Compare local branch to remote — empty output means fully pushed
+git log --oneline origin/$(git branch --show-current)..HEAD
+```
+
+Never say "you need to push first" without running the above and confirming
+it returns output. Empty output means the branch IS already pushed.
+
+### Nix Build State
+
+Before saying anything about whether the Nix flake builds correctly:
+
+```bash
+# Check the single Up package derivation — safe, no parallel eval
+nix build --dry-run 2>&1 | tail -5
+
+# Show flake outputs without evaluating them
+nix flake show
+```
+
+Never say "the Nix build is broken" or "nix build will fail" without
+running `nix build --dry-run` and reporting the actual output.
+
+### The Golden Rule
+
+**If you are not certain — run a check command and report what it returns.**
+**Do not fill uncertainty with an assumption stated as fact.**
+A one-line `git log` costs nothing. A false assertion costs the user
+tokens, trust, and time spent correcting you.
 
 ---
 
@@ -215,18 +273,11 @@ Every user request MUST follow this workflow:
 │   • GitHub Actions: .github/workflows/*.yml                 │
 │   • GitLab CI: .gitlab-ci.yml                               │
 │                                                             │
-│ Step 3: If GitHub Actions exists but GitLab CI does not     │
-│   • Spawn Research subagent to analyze GitHub workflow      │
-│   • Design equivalent GitLab CI workflow preserving:        │
-│       - Build commands                                      │
-│       - Test commands                                       │
-│       - Environment variables                               │
-│       - Dependency caching                                  │
-│       - Pre/post job steps                                  │
-│   • Document spec at:                                       │
-│     .github/docs/subagent_docs/[FEATURE_NAME]_gitlab_workflow_spec.md │
-│   • Spawn Implementation subagent to generate .gitlab-ci.yml │
-│   • Include GitLab workflow in modified file paths          │
+│ Step 3: If GitHub Actions exists AND project uses GitLab    │
+│   (check for .gitlab-ci.yml or GitLab mention in README     │
+│    before assuming GitLab is needed)                        │
+│   • Only then: spawn subagent to generate .gitlab-ci.yml   │
+│   • Do NOT create GitLab CI for GitHub-only projects        │
 │                                                             │
 │ Step 4: Execute preflight validations                       │
 │   • Run preflight script if exists                          │
@@ -445,7 +496,10 @@ Build Validation:
 - Run `cargo fmt --check` — must pass with no formatting diffs
 - Run `cargo test` — all tests must pass
 - If Meson changes: verify `meson setup` succeeds
-- If Nix changes: verify `nix flake check` succeeds (if Nix is available)
+- If Nix changes: verify `nix build --dry-run` succeeds (if Nix is available)
+  NOTE: Do NOT use `nix flake check` — it is banned across all projects on this
+  machine (see ABSOLUTE RULES). For the Up flake (single package output),
+  `nix build --dry-run` evaluates and checks the derivation without building it.
 - Document failures
 
 If build fails:
@@ -647,6 +701,8 @@ YOU MUST NEVER:
 - Modify code directly
 - Skip Phase 6
 - Declare completion before preflight passes
+- Loop silently beyond 2 failed refinement or preflight cycles — STOP and
+  report all failures to the user after the second failed cycle
 
 ---
 

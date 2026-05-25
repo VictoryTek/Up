@@ -1,11 +1,9 @@
 use crate::backends::{Backend, BackendKind, UpdateResult};
-use crate::ui::history_page::HistoryPage;
 use crate::ui::log_panel::LogPanel;
 use crate::ui::update_row::UpdateRow;
 use crate::ui::upgrade_page::UpgradePage;
 use crate::upgrade;
 use adw::prelude::*;
-use gettextrs::{gettext, ngettext};
 use gtk::gio;
 use gtk::glib;
 use std::cell::{Cell, RefCell};
@@ -18,19 +16,12 @@ type UpdatePageResult = (
     adw::ActionRow,
     adw::ActionRow,
     Rc<Cell<bool>>,
-    Rc<RefCell<Vec<Arc<dyn Backend>>>>,
-    Rc<RefCell<Vec<(BackendKind, UpdateRow)>>>,
-    LogPanel,
-    gtk::Label,
 );
 
 pub struct UpWindow;
 
 impl UpWindow {
-    pub fn build(
-        app: &adw::Application,
-        initial_skipped: Vec<BackendKind>,
-    ) -> adw::ApplicationWindow {
+    pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
         let window = adw::ApplicationWindow::builder()
             .application(app)
             .title("Up")
@@ -41,21 +32,12 @@ impl UpWindow {
         let view_stack = adw::ViewStack::new();
 
         // --- Update Page ---
-        let (
-            update_page,
-            run_checks,
-            sysinfo_distro_row,
-            sysinfo_version_row,
-            update_in_progress,
-            detected,
-            rows,
-            log_panel,
-            status_label,
-        ) = Self::build_update_page(initial_skipped);
+        let (update_page, run_checks, sysinfo_distro_row, sysinfo_version_row, update_in_progress) =
+            Self::build_update_page();
         view_stack.add_titled_with_icon(
             &update_page,
             Some("update"),
-            &gettext("Update"),
+            "Update",
             "software-update-available-symbolic",
         );
 
@@ -64,17 +46,8 @@ impl UpWindow {
         let upgrade_stack_page = view_stack.add_titled_with_icon(
             &upgrade_widget,
             Some("upgrade"),
-            &gettext("Upgrade"),
+            "Upgrade",
             "software-update-urgent-symbolic",
-        );
-
-        // --- History Page ---
-        let history_widget = HistoryPage::build();
-        view_stack.add_titled_with_icon(
-            &history_widget,
-            Some("history"),
-            &gettext("History"),
-            "document-open-recent-symbolic",
         );
 
         let view_switcher_bar = adw::ViewSwitcherBar::builder()
@@ -130,11 +103,9 @@ impl UpWindow {
 
         let refresh_button = gtk::Button::builder()
             .icon_name("view-refresh-symbolic")
-            .tooltip_text(gettext("Check for updates"))
+            .tooltip_text("Check for updates")
             .build();
-        refresh_button.update_property(&[gtk::accessible::Property::Label(&gettext(
-            "Refresh update list",
-        ))]);
+        refresh_button.update_property(&[gtk::accessible::Property::Label("Refresh update list")]);
         refresh_button.connect_clicked(glib::clone!(
             #[strong]
             run_checks,
@@ -151,16 +122,13 @@ impl UpWindow {
 
         // Application overflow menu (three-dot button on the end/right slot).
         let app_menu = gio::Menu::new();
-        app_menu.append(Some(&gettext("Run Maintenance")), Some("win.maintenance"));
-        app_menu.append(Some(&gettext("About Up")), Some("win.about"));
+        app_menu.append(Some("About Up"), Some("win.about"));
         let menu_button = gtk::MenuButton::builder()
             .icon_name("open-menu-symbolic")
             .menu_model(&app_menu)
-            .tooltip_text(gettext("Main menu"))
+            .tooltip_text("Main menu")
             .build();
-        menu_button.update_property(&[gtk::accessible::Property::Label(&gettext(
-            "Application menu",
-        ))]);
+        menu_button.update_property(&[gtk::accessible::Property::Label("Application menu")]);
         header.pack_end(&menu_button);
 
         let main_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -182,7 +150,7 @@ impl UpWindow {
                     .application_name("Up")
                     .version(env!("CARGO_PKG_VERSION"))
                     .developer_name("Up Contributors")
-                    .comments(gettext("A system updater for Linux"))
+                    .comments("A system updater for Linux")
                     .website("https://github.com/VictoryTek/Up")
                     .application_icon("io.github.up")
                     .license_type(gtk::License::Gpl30)
@@ -192,159 +160,10 @@ impl UpWindow {
         ));
         window.add_action(&about_action);
 
-        // Register the "maintenance" action that runs cleanup on all detected backends.
-        let maintenance_action = gio::SimpleAction::new("maintenance", None);
-        maintenance_action.connect_activate(glib::clone!(
-            #[weak]
-            window,
-            #[strong]
-            rows,
-            #[strong]
-            detected,
-            #[strong]
-            log_panel,
-            #[strong]
-            update_in_progress,
-            #[strong]
-            status_label,
-            #[upgrade_or]
-            return,
-            move |_, _| {
-                let _ = &window; // keep window alive for the duration of the closure
-                if update_in_progress.get() {
-                    return;
-                }
-                update_in_progress.set(true);
-                log_panel.clear();
-                log_panel.append_line(
-                    "\u{2500}\u{2500}\u{2500} Maintenance started \u{2500}\u{2500}\u{2500}",
-                );
-                status_label.set_label(&gettext("Running maintenance\u{2026}"));
-
-                // Collect non-skipped backends that support cleanup.
-                let backends: Vec<Arc<dyn Backend>> = {
-                    let detected_borrow = detected.borrow();
-                    let rows_borrow = rows.borrow();
-                    detected_borrow
-                        .iter()
-                        .filter(|b| b.supports_cleanup())
-                        .filter(|b| {
-                            rows_borrow
-                                .iter()
-                                .find(|(k, _)| *k == b.kind())
-                                .map(|(_, r)| !r.is_skipped())
-                                .unwrap_or(true)
-                        })
-                        .cloned()
-                        .collect()
-                };
-
-                if backends.is_empty() {
-                    status_label.set_label(&gettext("No maintenance actions available."));
-                    update_in_progress.set(false);
-                    return;
-                }
-
-                glib::spawn_future_local(glib::clone!(
-                    #[strong]
-                    rows,
-                    #[strong]
-                    log_panel,
-                    #[strong]
-                    update_in_progress,
-                    #[strong]
-                    status_label,
-                    async move {
-                        use crate::orchestrator::{CleanupOrchestrator, OrchestratorEvent};
-
-                        let orchestrator = CleanupOrchestrator::new(backends);
-                        let (event_tx, event_rx) = async_channel::unbounded::<OrchestratorEvent>();
-                        orchestrator.run_all(event_tx);
-
-                        let mut auth_started = false;
-                        let mut has_error = false;
-
-                        while let Ok(event) = event_rx.recv().await {
-                            match event {
-                                OrchestratorEvent::AuthStarted => {
-                                    auth_started = true;
-                                    status_label.set_label(&gettext("Authenticating\u{2026}"));
-                                    log_panel.append_line(&gettext(
-                                        "Requesting administrator privileges\u{2026}",
-                                    ));
-                                }
-                                OrchestratorEvent::AuthSucceeded => {
-                                    if auth_started {
-                                        log_panel
-                                            .append_line(&gettext("Authentication successful."));
-                                    }
-                                    status_label.set_label(&gettext("Running maintenance\u{2026}"));
-                                }
-                                OrchestratorEvent::AuthFailed(e) => {
-                                    log_panel.append_line(
-                                        &gettext("Authentication failed: {}")
-                                            .replace("{}", &e.to_string()),
-                                    );
-                                    status_label.set_label(&gettext("Maintenance cancelled."));
-                                    update_in_progress.set(false);
-                                    return;
-                                }
-                                OrchestratorEvent::BackendStarted(kind) => {
-                                    let rows_borrowed = rows.borrow();
-                                    if let Some((_, row)) =
-                                        rows_borrowed.iter().find(|(k, _)| *k == kind)
-                                    {
-                                        row.set_status_cleaning();
-                                    }
-                                }
-                                OrchestratorEvent::BackendLog(kind, line) => {
-                                    log_panel.append_line(&format!("[{kind}] {line}"));
-                                }
-                                OrchestratorEvent::BackendFinished(kind, result) => {
-                                    let rows_borrowed = rows.borrow();
-                                    if let Some((_, row)) =
-                                        rows_borrowed.iter().find(|(k, _)| *k == kind)
-                                    {
-                                        match &result {
-                                            UpdateResult::Success { updated_count } => {
-                                                row.set_status_cleaned(*updated_count);
-                                            }
-                                            UpdateResult::Error(e) => {
-                                                row.set_status_error(&e.to_string());
-                                                has_error = true;
-                                            }
-                                            UpdateResult::Skipped(msg) => {
-                                                row.set_status_skipped(msg);
-                                            }
-                                            UpdateResult::SuccessWithSelfUpdate {
-                                                updated_count,
-                                            } => {
-                                                row.set_status_cleaned(*updated_count);
-                                            }
-                                            UpdateResult::Cancelled => {}
-                                        }
-                                    }
-                                }
-                                OrchestratorEvent::AllFinished => break,
-                            }
-                        }
-
-                        if has_error {
-                            status_label.set_label(&gettext("Maintenance completed with errors."));
-                        } else {
-                            status_label.set_label(&gettext("Maintenance complete."));
-                        }
-                        update_in_progress.set(false);
-                    }
-                ));
-            }
-        ));
-        window.add_action(&maintenance_action);
-
         window
     }
 
-    fn build_update_page(initial_skipped: Vec<BackendKind>) -> UpdatePageResult {
+    fn build_update_page() -> UpdatePageResult {
         let page_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
         let scrolled = gtk::ScrolledWindow::builder()
@@ -364,25 +183,25 @@ impl UpWindow {
 
         // Status label
         let status_label = gtk::Label::builder()
-            .label(gettext("Detect available updates across your system."))
+            .label("Detect available updates across your system.")
             .css_classes(vec!["dim-label"])
             .build();
         content_box.append(&status_label);
 
         // System Information group (populated after background distro detection)
         let sys_info_group = adw::PreferencesGroup::builder()
-            .title(gettext("System Information"))
+            .title("System Information")
             .build();
 
         let distro_row = adw::ActionRow::builder()
-            .title(gettext("Distribution"))
+            .title("Distribution")
             .subtitle("Loading\u{2026}")
             .build();
         distro_row.add_prefix(&gtk::Image::from_icon_name("computer-symbolic"));
         sys_info_group.add(&distro_row);
 
         let version_row = adw::ActionRow::builder()
-            .title(gettext("Current Version"))
+            .title("Current Version")
             .subtitle("Loading\u{2026}")
             .build();
         sys_info_group.add(&version_row);
@@ -391,8 +210,8 @@ impl UpWindow {
 
         // Backend rows group
         let backends_group = adw::PreferencesGroup::builder()
-            .title(gettext("Sources"))
-            .description(gettext("Package managers detected on this system"))
+            .title("Sources")
+            .description("Package managers detected on this system")
             .build();
 
         let detected: Rc<RefCell<Vec<Arc<dyn Backend>>>> = Rc::new(RefCell::new(Vec::new()));
@@ -401,7 +220,7 @@ impl UpWindow {
 
         // Placeholder row shown while background detection runs
         let placeholder_row = adw::ActionRow::builder()
-            .title(gettext("Detecting package managers\u{2026}"))
+            .title("Detecting package managers\u{2026}")
             .build();
         let placeholder_spinner = gtk::Spinner::new();
         placeholder_spinner.start();
@@ -417,8 +236,8 @@ impl UpWindow {
         // Restart notification banner, revealed only when Up itself is updated
         // inside the Flatpak sandbox (new deployment is available on next launch).
         let restart_banner = adw::Banner::builder()
-            .title(gettext("Up was updated \u{2014} restart to apply changes"))
-            .button_label(gettext("Close Up"))
+            .title("Up was updated \u{2014} restart to apply changes")
+            .button_label("Close Up")
             .revealed(false)
             .build();
         restart_banner.connect_button_clicked(|banner| {
@@ -429,7 +248,7 @@ impl UpWindow {
 
         // Update All button
         let update_button = gtk::Button::builder()
-            .label(gettext("Update All"))
+            .label("Update All")
             .css_classes(vec!["suggested-action", "pill"])
             .halign(gtk::Align::Center)
             .margin_top(12)
@@ -439,32 +258,6 @@ impl UpWindow {
         let updating: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let bypass_metered: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let bypass_battery: Rc<Cell<bool>> = Rc::new(Cell::new(false));
-        let bypass_disk: Rc<Cell<bool>> = Rc::new(Cell::new(false));
-        let bypass_snapshot: Rc<Cell<bool>> = Rc::new(Cell::new(false));
-
-        let cancel_handle: Rc<RefCell<Option<crate::orchestrator::CancelHandle>>> =
-            Rc::new(RefCell::new(None));
-
-        let cancel_button = gtk::Button::builder()
-            .label(gettext("Cancel"))
-            .css_classes(vec!["destructive-action", "pill"])
-            .halign(gtk::Align::Center)
-            .margin_top(12)
-            .visible(false)
-            .build();
-        cancel_button
-            .update_property(&[gtk::accessible::Property::Label(&gettext("Cancel update"))]);
-
-        cancel_button.connect_clicked(glib::clone!(
-            #[strong]
-            cancel_handle,
-            move |btn| {
-                btn.set_sensitive(false);
-                if let Some(handle) = cancel_handle.borrow().as_ref() {
-                    handle.cancel();
-                }
-            }
-        ));
 
         update_button.connect_clicked(glib::clone!(
             #[weak]
@@ -483,23 +276,15 @@ impl UpWindow {
             bypass_metered,
             #[strong]
             bypass_battery,
-            #[strong]
-            bypass_disk,
-            #[strong]
-            bypass_snapshot,
-            #[strong]
-            cancel_handle,
-            #[weak]
-            cancel_button,
             move |button| {
                 let monitor = gio::NetworkMonitor::default();
                 if monitor.is_network_metered() && !bypass_metered.get() {
                     let dialog = adw::AlertDialog::new(
-                        Some(&gettext("Metered Connection")),
-                        Some(&gettext("You are on a metered connection. Downloading updates may use significant data.\n\nContinue anyway?")),
+                        Some("Metered Connection"),
+                        Some("You are on a metered connection. Downloading updates may use significant data.\n\nContinue anyway?"),
                     );
-                    dialog.add_response("cancel", &gettext("Cancel"));
-                    dialog.add_response("update", &gettext("Update Anyway"));
+                    dialog.add_response("cancel", "Cancel");
+                    dialog.add_response("update", "Update Anyway");
                     dialog.set_default_response(Some("cancel"));
                     dialog.set_close_response("cancel");
                     dialog.connect_response(None, glib::clone!(
@@ -522,11 +307,13 @@ impl UpWindow {
                 if !bypass_battery.get() {
                     if let Some(bat) = crate::battery::read_battery() {
                         if bat.discharging && bat.capacity < 40 {
-                            let msg = gettext("Battery is at {}% and discharging. Updates may be interrupted if the device shuts down. Continue anyway?")
-                                .replace("{}", &bat.capacity.to_string());
-                            let dialog = adw::AlertDialog::new(Some(&gettext("Low Battery")), Some(&msg));
-                            dialog.add_response("cancel", &gettext("Cancel"));
-                            dialog.add_response("update", &gettext("Update Anyway"));
+                            let msg = format!(
+                                "Battery is at {}% and discharging. Updates may be interrupted if the device shuts down. Continue anyway?",
+                                bat.capacity
+                            );
+                            let dialog = adw::AlertDialog::new(Some("Low Battery"), Some(&msg));
+                            dialog.add_response("cancel", "Cancel");
+                            dialog.add_response("update", "Update Anyway");
                             dialog.set_default_response(Some("cancel"));
                             dialog.set_close_response("cancel");
                             dialog.connect_response(
@@ -550,187 +337,7 @@ impl UpWindow {
                         }
                     }
                 }
-                // Disk space check
-                if !bypass_disk.get() {
-                    let required_bytes: u64 = {
-                        let borrowed = rows.borrow();
-                        borrowed
-                            .iter()
-                            .filter(|(_, r)| !r.is_skipped())
-                            .filter_map(|(_, r)| r.estimated_bytes())
-                            .sum()
-                    };
-                    if required_bytes > 0 {
-                        let available = crate::disk::detect_available_space();
-                        // Warn when available space < required * 1.1  (10% headroom).
-                        // Integer form: required * 11 > available * 10
-                        if available > 0
-                            && required_bytes.saturating_mul(11) > available.saturating_mul(10)
-                        {
-                            let msg = format!(
-                                "{} {} {}, {} {} {}",
-                                gettext("This update requires"),
-                                crate::disk::format_bytes(required_bytes),
-                                gettext("of disk space but only"),
-                                crate::disk::format_bytes(available),
-                                gettext("is available."),
-                                gettext("The update may fail or leave packages in a broken state.")
-                            );
-                            let dialog = adw::AlertDialog::new(
-                                Some(&gettext("Low Disk Space")),
-                                Some(&msg),
-                            );
-                            dialog.add_response("cancel", &gettext("Cancel"));
-                            dialog.add_response("proceed", &gettext("Proceed Anyway"));
-                            dialog.set_response_appearance(
-                                "proceed",
-                                adw::ResponseAppearance::Destructive,
-                            );
-                            dialog.set_default_response(Some("cancel"));
-                            dialog.set_close_response("cancel");
-                            dialog.connect_response(
-                                None,
-                                glib::clone!(
-                                    #[weak]
-                                    button,
-                                    #[strong]
-                                    bypass_disk,
-                                    move |_, response| {
-                                        if response == "proceed" {
-                                            bypass_disk.set(true);
-                                            button.emit_clicked();
-                                            bypass_disk.set(false);
-                                        }
-                                    }
-                                ),
-                            );
-                            dialog.present(Some(button));
-                            return;
-                        }
-                    }
-                }
-                // Snapshot check
-                if !bypass_snapshot.get() {
-                    use crate::config::SnapshotPreference;
-                    let config = crate::config::load_config();
-                    if config.snapshot_preference != SnapshotPreference::Never {
-                        if let Some(tool) = crate::snapshot::detect_snapshot_tool() {
-                            if config.snapshot_preference == SnapshotPreference::Always {
-                                let log_panel = log_panel.clone();
-                                let bypass_snapshot = bypass_snapshot.clone();
-                                let button = button.clone();
-                                glib::spawn_future_local(async move {
-                                    log_panel
-                                        .append_line(&gettext("Creating pre-update snapshot\u{2026}"));
-                                    let (snap_tx, snap_rx) =
-                                        async_channel::bounded::<Result<String, String>>(1);
-                                    super::spawn_background_async(move || async move {
-                                        let result = crate::snapshot::create_snapshot(tool)
-                                            .await
-                                            .map_err(|e| e.to_string());
-                                        let _ = snap_tx.send(result).await;
-                                    });
-                                    match snap_rx.recv().await {
-                                        Ok(Ok(desc)) => {
-                                            log_panel
-                                                .append_line(&format!("\u{2713} {desc}"));
-                                        }
-                                        Ok(Err(e)) => {
-                                            log_panel.append_line(&format!(
-                                                "\u{26a0} Snapshot failed: {e}. Continuing\u{2026}"
-                                            ));
-                                        }
-                                        Err(_) => {}
-                                    }
-                                    bypass_snapshot.set(true);
-                                    button.emit_clicked();
-                                    bypass_snapshot.set(false);
-                                });
-                                return;
-                            } else {
-                                // SnapshotPreference::Ask
-                                let dialog = adw::AlertDialog::new(
-                                    Some(&gettext("Create Snapshot?")),
-                                    Some(&gettext(
-                                        "Create a system snapshot before updating. \
-                                         This allows you to roll back if something goes wrong.",
-                                    )),
-                                );
-                                dialog.add_response("skip", &gettext("Skip"));
-                                dialog.add_response("snapshot", &gettext("Create Snapshot"));
-                                dialog.set_response_appearance(
-                                    "snapshot",
-                                    adw::ResponseAppearance::Suggested,
-                                );
-                                dialog.set_default_response(Some("snapshot"));
-                                dialog.set_close_response("skip");
-                                dialog.connect_response(
-                                    None,
-                                    glib::clone!(
-                                        #[weak]
-                                        button,
-                                        #[strong]
-                                        bypass_snapshot,
-                                        #[strong]
-                                        log_panel,
-                                        move |_, response| {
-                                            if response == "snapshot" {
-                                                let log_panel = log_panel.clone();
-                                                let bypass_snapshot = bypass_snapshot.clone();
-                                                let button = button.clone();
-                                                glib::spawn_future_local(async move {
-                                                    log_panel.append_line(
-                                                        &gettext("Creating pre-update snapshot\u{2026}"),
-                                                    );
-                                                    let (snap_tx, snap_rx) =
-                                                        async_channel::bounded::<
-                                                            Result<String, String>,
-                                                        >(1);
-                                                    super::spawn_background_async(
-                                                        move || async move {
-                                                            let result =
-                                                                crate::snapshot::create_snapshot(
-                                                                    tool,
-                                                                )
-                                                                .await
-                                                                .map_err(|e| e.to_string());
-                                                            let _ = snap_tx.send(result).await;
-                                                        },
-                                                    );
-                                                    match snap_rx.recv().await {
-                                                        Ok(Ok(desc)) => {
-                                                            log_panel.append_line(&format!(
-                                                                "\u{2713} {desc}"
-                                                            ));
-                                                        }
-                                                        Ok(Err(e)) => {
-                                                            log_panel.append_line(&format!(
-                                                                "\u{26a0} Snapshot failed: {e}. Continuing\u{2026}"
-                                                            ));
-                                                        }
-                                                        Err(_) => {}
-                                                    }
-                                                    bypass_snapshot.set(true);
-                                                    button.emit_clicked();
-                                                    bypass_snapshot.set(false);
-                                                });
-                                            } else {
-                                                bypass_snapshot.set(true);
-                                                button.emit_clicked();
-                                                bypass_snapshot.set(false);
-                                            }
-                                        }
-                                    ),
-                                );
-                                dialog.present(Some(button));
-                                return;
-                            }
-                        }
-                    }
-                }
                 button.set_sensitive(false);
-                cancel_button.set_visible(true);
-                cancel_button.set_sensitive(true);
                 updating.set(true);
                 log_panel.clear();
 
@@ -739,11 +346,11 @@ impl UpWindow {
                     let borrowed = rows.borrow();
                     for (_, row) in borrowed.iter() {
                         if row.is_skipped() {
-                            row.set_status_skipped(&gettext("Skipped by user"));
+                            row.set_status_skipped("Skipped by user");
                         }
                     }
                 }
-                let backends: Vec<crate::orchestrator::BackendSelection> = {
+                let backends: Vec<Arc<dyn Backend>> = {
                     let detected_borrow = detected.borrow();
                     let rows_borrow = rows.borrow();
                     detected_borrow
@@ -755,13 +362,7 @@ impl UpWindow {
                                 .map(|(_, r)| !r.is_skipped())
                                 .unwrap_or(true)
                         })
-                        .map(|b| {
-                            let items = rows_borrow
-                                .iter()
-                                .find(|(k, _)| *k == b.kind())
-                                .and_then(|(_, r)| r.items_to_update());
-                            (b.clone(), items)
-                        })
+                        .cloned()
                         .collect()
                 };
 
@@ -778,47 +379,34 @@ impl UpWindow {
                     restart_banner,
                     #[strong]
                     updating,
-                    #[strong]
-                    cancel_handle,
-                    #[weak]
-                    cancel_button,
                     async move {
                         use crate::orchestrator::{OrchestratorEvent, UpdateOrchestrator};
 
                         let orchestrator = UpdateOrchestrator::new(backends);
                         let (event_tx, event_rx) = async_channel::unbounded::<OrchestratorEvent>();
-                        let handle = orchestrator.run_all(event_tx);
-                        *cancel_handle.borrow_mut() = Some(handle);
+                        orchestrator.run_all(event_tx);
 
                         let mut auth_started = false;
                         let mut has_error = false;
-                        let mut was_cancelled = false;
                         let mut self_updated = false;
-                        let mut history_entries: Vec<crate::history::HistoryEntry> =
-                            Vec::new();
 
                         while let Ok(event) = event_rx.recv().await {
                             match event {
                                 OrchestratorEvent::AuthStarted => {
                                     auth_started = true;
-                                    status_label.set_label(&gettext("Authenticating\u{2026}"));
+                                    status_label.set_label("Authenticating\u{2026}");
                                     log_panel
-                                        .append_line(&gettext("Requesting administrator privileges\u{2026}"));
+                                        .append_line("Requesting administrator privileges\u{2026}");
                                 }
                                 OrchestratorEvent::AuthSucceeded => {
                                     if auth_started {
-                                        log_panel.append_line(&gettext("Authentication successful."));
+                                        log_panel.append_line("Authentication successful.");
                                     }
-                                    status_label.set_label(&gettext("Updating\u{2026}"));
+                                    status_label.set_label("Updating\u{2026}");
                                 }
                                 OrchestratorEvent::AuthFailed(e) => {
-                                    log_panel.append_line(
-                                        &gettext("Authentication failed: {}")
-                                            .replace("{}", &e.to_string()),
-                                    );
-                                    status_label.set_label(&gettext("Update cancelled."));
-                                    cancel_button.set_visible(false);
-                                    cancel_handle.borrow_mut().take();
+                                    log_panel.append_line(&format!("Authentication failed: {e}"));
+                                    status_label.set_label("Update cancelled.");
                                     button.set_sensitive(true);
                                     return;
                                 }
@@ -855,71 +443,10 @@ impl UpWindow {
                                             UpdateResult::Skipped(msg) => {
                                                 row.set_status_skipped(msg);
                                             }
-                                            UpdateResult::Cancelled => {
-                                                row.set_status_cancelled();
-                                            }
                                         }
-                                    }
-                                    // Record in history buffer (skip cancelled backends)
-                                    if !matches!(result, UpdateResult::Cancelled) {
-                                        let ts = crate::history::now_secs();
-                                        let entry = match &result {
-                                            UpdateResult::Success { updated_count } => {
-                                                crate::history::HistoryEntry {
-                                                    timestamp: ts,
-                                                    backend: kind.to_string(),
-                                                    result: "success".to_string(),
-                                                    updated_count: Some(*updated_count),
-                                                    error: None,
-                                                }
-                                            }
-                                            UpdateResult::SuccessWithSelfUpdate {
-                                                updated_count,
-                                            } => crate::history::HistoryEntry {
-                                                timestamp: ts,
-                                                backend: kind.to_string(),
-                                                result: "success_self_update".to_string(),
-                                                updated_count: Some(*updated_count),
-                                                error: None,
-                                            },
-                                            UpdateResult::Error(e) => {
-                                                crate::history::HistoryEntry {
-                                                    timestamp: ts,
-                                                    backend: kind.to_string(),
-                                                    result: "error".to_string(),
-                                                    updated_count: None,
-                                                    error: Some(e.to_string()),
-                                                }
-                                            }
-                                            UpdateResult::Skipped(msg) => {
-                                                crate::history::HistoryEntry {
-                                                    timestamp: ts,
-                                                    backend: kind.to_string(),
-                                                    result: "skipped".to_string(),
-                                                    updated_count: None,
-                                                    error: Some(msg.clone()),
-                                                }
-                                            }
-                                            // Safety: guarded by the `if !matches!` above.
-                                            UpdateResult::Cancelled => unreachable!(),
-                                        };
-                                        history_entries.push(entry);
                                     }
                                 }
                                 OrchestratorEvent::AllFinished => {
-                                    was_cancelled = cancel_handle
-                                        .borrow()
-                                        .as_ref()
-                                        .map(|h| h.is_cancelled())
-                                        .unwrap_or(false);
-                                    cancel_button.set_visible(false);
-                                    cancel_handle.borrow_mut().take();
-                                    // Flush history entries to disk
-                                    for entry in &history_entries {
-                                        if let Err(e) = crate::history::append_entry(entry) {
-                                            log::warn!("Failed to write history entry: {e}");
-                                        }
-                                    }
                                     break;
                                 }
                             }
@@ -928,16 +455,14 @@ impl UpWindow {
                         if self_updated {
                             restart_banner.set_revealed(true);
                         }
-                        if was_cancelled {
-                            status_label.set_label(&gettext("Update cancelled."));
-                        } else if has_error {
-                            status_label.set_label(&gettext("Update completed with errors."));
+                        if has_error {
+                            status_label.set_label("Update completed with errors.");
                         } else {
-                            status_label.set_label(&gettext("Update complete."));
+                            status_label.set_label("Update complete.");
                         }
                         updating.set(false);
                         button.set_sensitive(true);
-                        if !has_error && !was_cancelled {
+                        if !has_error {
                             // Check if reboot is actually required before prompting.
                             // reboot_required() performs fast filesystem/process checks
                             // and is safe to call on the GTK main thread.
@@ -952,14 +477,11 @@ impl UpWindow {
         ));
 
         content_box.append(&update_button);
-        content_box.append(&cancel_button);
 
         clamp.set_child(Some(&content_box));
         scrolled.set_child(Some(&clamp));
 
-        let metered_banner = adw::Banner::new(&gettext(
-            "On a metered connection. Consider updating later.",
-        ));
+        let metered_banner = adw::Banner::new("On a metered connection. Consider updating later.");
         metered_banner.set_use_markup(false);
         let monitor = gio::NetworkMonitor::default();
         metered_banner.set_revealed(monitor.is_network_metered());
@@ -1001,7 +523,7 @@ impl UpWindow {
                 // Increment epoch to invalidate in-flight futures from the previous check.
                 check_epoch.set(check_epoch.get() + 1);
                 let my_epoch = check_epoch.get();
-                status_label_checks.set_label(&gettext("Checking for updates..."));
+                status_label_checks.set_label("Checking for updates...");
 
                 for backend in detected.borrow().iter() {
                     let kind = backend.kind();
@@ -1011,7 +533,6 @@ impl UpWindow {
                             row.set_status_checking();
                         }
                     }
-                    let kind_async = kind.clone();
                     let backend_clone = backend.clone();
                     glib::spawn_future_local(glib::clone!(
                         #[strong]
@@ -1027,19 +548,15 @@ impl UpWindow {
                         #[strong]
                         check_epoch,
                         async move {
-                            type CheckPayload = (
-                                Result<usize, String>,
-                                Result<Vec<String>, String>,
-                                Option<u64>,
-                            );
+                            type CheckPayload =
+                                (Result<usize, String>, Result<Vec<String>, String>);
                             let (tx, rx) = async_channel::bounded::<CheckPayload>(1);
                             super::spawn_background_async(move || async move {
                                 let count = backend_clone.count_available().await;
                                 let list = backend_clone.list_available().await;
-                                let size = backend_clone.estimate_size().await;
-                                let _ = tx.send((count, list, size)).await;
+                                let _ = tx.send((count, list)).await;
                             });
-                            if let Ok((count_result, list_result, size_result)) = rx.recv().await {
+                            if let Ok((count_result, list_result)) = rx.recv().await {
                                 // Discard results from a superseded check cycle.
                                 if check_epoch.get() != my_epoch {
                                     return;
@@ -1048,7 +565,7 @@ impl UpWindow {
                                     let borrowed = rows.borrow();
                                     borrowed
                                         .iter()
-                                        .find(|(k, _)| *k == kind_async)
+                                        .find(|(k, _)| *k == kind)
                                         .map(|(_, r)| r.clone())
                                 };
                                 let Some(row) = row else {
@@ -1067,7 +584,6 @@ impl UpWindow {
                                     Ok(packages) => row.set_packages(&packages),
                                     Err(_) => row.set_packages(&[]),
                                 }
-                                row.set_download_size(size_result);
                                 let remaining = {
                                     let mut p = pending_checks.borrow_mut();
                                     *p -= 1;
@@ -1084,30 +600,12 @@ impl UpWindow {
                                     };
                                     if non_skipped_total > 0 {
                                         update_button_checks.set_sensitive(true);
-                                        status_label_checks.set_label(
-                                            &ngettext(
-                                                "{} update available",
-                                                "{} updates available",
-                                                non_skipped_total as u32,
-                                            )
-                                            .replace("{}", &non_skipped_total.to_string()),
-                                        );
+                                        status_label_checks.set_label(&format!(
+                                            "{non_skipped_total} update{} available",
+                                            if non_skipped_total == 1 { "" } else { "s" }
+                                        ));
                                     } else {
-                                        let any_error = {
-                                            let borrowed = rows.borrow();
-                                            borrowed
-                                                .iter()
-                                                .filter(|(_, r)| !r.is_skipped())
-                                                .any(|(_, r)| r.check_errored())
-                                        };
-                                        if any_error {
-                                            status_label_checks.set_label(&gettext(
-                                                "Could not check all sources.",
-                                            ));
-                                        } else {
-                                            status_label_checks
-                                                .set_label(&gettext("Everything is up to date."));
-                                        }
+                                        status_label_checks.set_label("Everything is up to date.");
                                     }
                                 }
                             }
@@ -1159,10 +657,6 @@ impl UpWindow {
                                 let detected_retry = detected.clone();
                                 let updating_retry = updating.clone();
                                 let update_button_retry = update_button.clone();
-                                // Clones for the on_selection_changed closure
-                                let rows_sel = rows.clone();
-                                let button_sel = update_button.clone();
-                                let updating_sel = updating.clone();
                                 let row = UpdateRow::new(
                                     backend.as_ref(),
                                     move || {
@@ -1176,17 +670,6 @@ impl UpWindow {
                                             .filter_map(|(_, r)| r.last_available_count())
                                             .sum();
                                         button_cb.set_sensitive(non_skipped_available > 0);
-                                        let skipped: Vec<BackendKind> = borrowed
-                                            .iter()
-                                            .filter(|(_, r)| r.is_skipped())
-                                            .map(|(k, _)| k.clone())
-                                            .collect();
-                                        drop(borrowed);
-                                        let mut config = crate::config::load_config();
-                                        config.skipped_backends = skipped;
-                                        if let Err(e) = crate::config::save_config(&config) {
-                                            log::warn!("Failed to save skip config: {e}");
-                                        }
                                     },
                                     move || {
                                         use crate::orchestrator::{
@@ -1209,7 +692,7 @@ impl UpWindow {
                                             "\u{2500}\u{2500}\u{2500} Retrying {kind} \u{2500}\u{2500}\u{2500}"
                                         ));
                                         let orchestrator =
-                                            UpdateOrchestrator::new(vec![(backend, None)]);
+                                            UpdateOrchestrator::new(vec![backend]);
                                         let (event_tx, event_rx) =
                                             async_channel::unbounded::<OrchestratorEvent>();
                                         orchestrator.run_all(event_tx);
@@ -1235,8 +718,9 @@ impl UpWindow {
                                                         }
                                                     }
                                                     OrchestratorEvent::BackendLog(k, line) => {
-                                                        log_panel_spawn
-                                                            .append_line(&format!("[{k}] {line}"));
+                                                        log_panel_spawn.append_line(&format!(
+                                                            "[{k}] {line}"
+                                                        ));
                                                     }
                                                     OrchestratorEvent::BackendFinished(
                                                         k,
@@ -1270,9 +754,6 @@ impl UpWindow {
                                                                 UpdateResult::Skipped(msg) => {
                                                                     row.set_status_skipped(msg);
                                                                 }
-                                                                UpdateResult::Cancelled => {
-                                                                    row.set_status_cancelled();
-                                                                }
                                                             }
                                                         }
                                                     }
@@ -1294,7 +775,8 @@ impl UpWindow {
                                             if non_skipped_total > 0 {
                                                 update_button_spawn.set_sensitive(true);
                                             }
-                                            let reboot_needed = crate::reboot::reboot_required();
+                                            let reboot_needed =
+                                                crate::reboot::reboot_required();
                                             if reboot_needed {
                                                 crate::ui::reboot_dialog::show_reboot_dialog(
                                                     &update_button_spawn,
@@ -1302,29 +784,9 @@ impl UpWindow {
                                             }
                                         });
                                     },
-                                    move || {
-                                        // on_selection_changed: re-evaluate Update All sensitivity
-                                        // (same logic as on_skip_changed).
-                                        if updating_sel.get() {
-                                            return;
-                                        }
-                                        let borrowed = rows_sel.borrow();
-                                        let non_skipped_available: usize = borrowed
-                                            .iter()
-                                            .filter(|(_, r)| !r.is_skipped())
-                                            .filter_map(|(_, r)| r.last_available_count())
-                                            .sum();
-                                        button_sel.set_sensitive(non_skipped_available > 0);
-                                    },
                                 );
                                 backends_group.add(&row.row);
                                 rows_mut.push((backend.kind(), row));
-                            }
-                        }
-                        // Apply persisted skip state now that borrow_mut is released.
-                        for (kind, row) in rows.borrow().iter() {
-                            if initial_skipped.contains(kind) {
-                                row.set_skipped(true);
                             }
                         }
                         // Store backends
@@ -1339,16 +801,6 @@ impl UpWindow {
             ));
         }
 
-        (
-            page_box,
-            run_checks,
-            distro_row,
-            version_row,
-            updating,
-            detected,
-            rows,
-            log_panel,
-            status_label,
-        )
+        (page_box, run_checks, distro_row, version_row, updating)
     }
 }

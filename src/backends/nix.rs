@@ -47,6 +47,21 @@ fn is_nixos_flake() -> bool {
     std::path::Path::new("/etc/nixos/flake.nix").exists()
 }
 
+/// True when running on VexOS (a NixOS variant).
+///
+/// Detection: presence of `/etc/nixos/vexos-variant`, a mandatory file
+/// created during VexOS configuration to record the active variant name.
+fn is_vexos() -> bool {
+    if crate::backends::flatpak::is_running_in_flatpak() {
+        return std::process::Command::new("flatpak-spawn")
+            .args(["--host", "test", "-e", "/etc/nixos/vexos-variant"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+    }
+    std::path::Path::new("/etc/nixos/vexos-variant").exists()
+}
+
 /// Validates that a string is safe to use as a NixOS flake output attribute.
 /// Only ASCII alphanumeric, hyphen, underscore, and dot are permitted.
 fn validate_flake_attr(name: &str) -> Result<String, String> {
@@ -450,25 +465,50 @@ impl Backend for NixBackend {
                     // Resolve the actual nixosConfigurations attribute name from the
                     // flake — the hostname alone may not match (e.g. hostname "vexos"
                     // but configs are "vexos-nvidia", "vexos-intel", "vexos-vm").
-                    let config_name = match resolve_nixos_flake_attr() {
-                        Ok(n) => n,
-                        Err(e) => return UpdateResult::Error(BackendError::from_string(e)),
-                    };
-                    // Single pkexec invocation so polkit only prompts once.
-                    // pkexec resets PATH, so we restore the NixOS binary paths
-                    // explicitly via `env PATH=...` before invoking sh.
-                    // config_name is validated by validate_flake_attr (ASCII
-                    // alphanumeric / hyphen / underscore / dot only), so it is
-                    // safe to interpolate into the shell command string.
-                    let cmd = format!(
-                        "stdbuf -oL -eL \
+                    if is_vexos() {
+                        // VexOS path: single wrapper script handles everything internally.
+                        // pkexec resets PATH, so we restore the NixOS binary paths
+                        // explicitly via `env PATH=...` before invoking sh.
+                        match runner
+                            .run(
+                                "pkexec",
+                                &[
+                                    "env",
+                                    "PATH=/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin",
+                                    "sh",
+                                    "-c",
+                                    "stdbuf -oL -eL vexos-update",
+                                ],
+                            )
+                            .await
+                        {
+                            Ok(output) => UpdateResult::Success {
+                                updated_count: count_nix_store_operations(&output),
+                            },
+                            Err(BackendError::Exit { code: 2, .. }) => UpdateResult::CacheMiss,
+                            Err(e) => UpdateResult::Error(e),
+                        }
+                    } else {
+                        // Standard NixOS flake path.
+                        let config_name = match resolve_nixos_flake_attr() {
+                            Ok(n) => n,
+                            Err(e) => return UpdateResult::Error(BackendError::from_string(e)),
+                        };
+                        // Single pkexec invocation so polkit only prompts once.
+                        // pkexec resets PATH, so we restore the NixOS binary paths
+                        // explicitly via `env PATH=...` before invoking sh.
+                        // config_name is validated by validate_flake_attr (ASCII
+                        // alphanumeric / hyphen / underscore / dot only), so it is
+                        // safe to interpolate into the shell command string.
+                        let cmd = format!(
+                            "stdbuf -oL -eL \
                          nix --extra-experimental-features 'nix-command flakes' \
                          flake update --flake /etc/nixos && \
                          stdbuf -oL -eL \
                          nixos-rebuild switch --flake /etc/nixos#{} --refresh --print-build-logs",
-                        config_name
-                    );
-                    match runner
+                            config_name
+                        );
+                        match runner
                         .run(
                             "pkexec",
                             &[
@@ -485,6 +525,7 @@ impl Backend for NixBackend {
                             updated_count: count_nix_store_operations(&output),
                         },
                         Err(e) => UpdateResult::Error(e),
+                    }
                     }
                 } else {
                     // Legacy NixOS channels: single pkexec so polkit only prompts once.
@@ -649,7 +690,7 @@ impl Backend for NixBackend {
     }
 
     fn supports_item_selection(&self) -> bool {
-        is_nixos() && is_nixos_flake()
+        is_nixos() && is_nixos_flake() && !is_vexos()
     }
 
     fn run_selected_update<'a>(
