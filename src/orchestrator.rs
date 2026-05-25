@@ -9,11 +9,13 @@ use std::sync::{Arc, Mutex};
 /// Clone freely; [`cancel`][CancelHandle::cancel] is safe to call from any
 /// thread including the GTK main thread.
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct CancelHandle {
     cancelled: Arc<AtomicBool>,
     shell_slot: Arc<Mutex<Option<Arc<tokio::sync::Mutex<PrivilegedShell>>>>>,
 }
 
+#[allow(dead_code)]
 impl CancelHandle {
     /// Signal the orchestrator to stop after the current backend finishes.
     ///
@@ -204,10 +206,12 @@ where
 
 /// Drives the cleanup/maintenance sequence for a set of backends, sending
 /// progress events to the UI via an [`async_channel`].  Reuses [`OrchestratorEvent`].
+#[allow(dead_code)]
 pub struct CleanupOrchestrator {
     backends: Vec<Arc<dyn Backend>>,
 }
 
+#[allow(dead_code)]
 impl CleanupOrchestrator {
     pub fn new(backends: Vec<Arc<dyn Backend>>) -> Self {
         Self { backends }

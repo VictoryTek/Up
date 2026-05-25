@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::backends::BackendKind;
 use tokio::time::{timeout, Duration};
 

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // src/disk.rs
 //
 // Disk-space utilities: detect available space, format byte counts,

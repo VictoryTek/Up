@@ -1,11 +1,18 @@
 mod app;
 mod backends;
 mod battery;
+mod changelog;
+mod check;
+mod config;
+mod disk;
 mod executor;
+mod history;
 mod orchestrator;
+mod plugins;
 mod reboot;
 mod runner;
 mod runtime;
+mod snapshot;
 mod ui;
 mod upgrade;
 

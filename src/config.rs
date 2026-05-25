@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::backends::BackendKind;
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufWriter, Write};

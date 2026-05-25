@@ -350,7 +350,7 @@ impl UpWindow {
                         }
                     }
                 }
-                let backends: Vec<Arc<dyn Backend>> = {
+                let backends: Vec<_> = {
                     let detected_borrow = detected.borrow();
                     let rows_borrow = rows.borrow();
                     detected_borrow
@@ -363,6 +363,7 @@ impl UpWindow {
                                 .unwrap_or(true)
                         })
                         .cloned()
+                        .map(|b| (b, None))
                         .collect()
                 };
 
@@ -442,6 +443,14 @@ impl UpWindow {
                                             }
                                             UpdateResult::Skipped(msg) => {
                                                 row.set_status_skipped(msg);
+                                            }
+                                            UpdateResult::Cancelled => {
+                                                row.set_status_skipped("Cancelled");
+                                            }
+                                            UpdateResult::CacheMiss => {
+                                                row.set_status_skipped(
+                                                    "Binary cache syncing, try again later",
+                                                );
                                             }
                                         }
                                     }
@@ -691,7 +700,7 @@ impl UpWindow {
                                         log_panel_retry.append_line(&format!(
                                             "\u{2500}\u{2500}\u{2500} Retrying {kind} \u{2500}\u{2500}\u{2500}"
                                         ));
-                                        let orchestrator = UpdateOrchestrator::new(vec![backend]);
+                                        let orchestrator = UpdateOrchestrator::new(vec![(backend, None)]);
                                         let (event_tx, event_rx) =
                                             async_channel::unbounded::<OrchestratorEvent>();
                                         orchestrator.run_all(event_tx);
@@ -751,6 +760,16 @@ impl UpWindow {
                                                                 }
                                                                 UpdateResult::Skipped(msg) => {
                                                                     row.set_status_skipped(msg);
+                                                                }
+                                                                UpdateResult::Cancelled => {
+                                                                    row.set_status_skipped(
+                                                                        "Cancelled",
+                                                                    );
+                                                                }
+                                                                UpdateResult::CacheMiss => {
+                                                                    row.set_status_skipped(
+                                                                        "Binary cache syncing, try again later",
+                                                                    );
                                                                 }
                                                             }
                                                         }

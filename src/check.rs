@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::backends;
 use crate::runtime::runtime;
 use log::{info, warn};

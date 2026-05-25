@@ -165,12 +165,14 @@ pub trait Backend: Send + Sync {
     ///
     /// This is called alongside `list_available()` on the background thread;
     /// failures are silent (treated as `None`).
+    #[allow(dead_code)]
     fn estimate_size(&self) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
         Box::pin(async { None })
     }
 
     /// Whether this backend supports a cleanup / maintenance operation.
     /// Default: false. Override to true in backends that implement run_cleanup.
+    #[allow(dead_code)]
     fn supports_cleanup(&self) -> bool {
         false
     }
@@ -179,6 +181,7 @@ pub trait Backend: Send + Sync {
     /// through `runner`. Returns UpdateResult where `updated_count` is the number
     /// of packages removed (0 = already clean).
     /// Default: no-op, returns Success { updated_count: 0 }.
+    #[allow(dead_code)]
     fn run_cleanup<'a>(
         &'a self,
         runner: &'a dyn CommandExecutor,

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
