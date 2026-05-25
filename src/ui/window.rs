@@ -691,8 +691,7 @@ impl UpWindow {
                                         log_panel_retry.append_line(&format!(
                                             "\u{2500}\u{2500}\u{2500} Retrying {kind} \u{2500}\u{2500}\u{2500}"
                                         ));
-                                        let orchestrator =
-                                            UpdateOrchestrator::new(vec![backend]);
+                                        let orchestrator = UpdateOrchestrator::new(vec![backend]);
                                         let (event_tx, event_rx) =
                                             async_channel::unbounded::<OrchestratorEvent>();
                                         orchestrator.run_all(event_tx);
@@ -718,9 +717,8 @@ impl UpWindow {
                                                         }
                                                     }
                                                     OrchestratorEvent::BackendLog(k, line) => {
-                                                        log_panel_spawn.append_line(&format!(
-                                                            "[{k}] {line}"
-                                                        ));
+                                                        log_panel_spawn
+                                                            .append_line(&format!("[{k}] {line}"));
                                                     }
                                                     OrchestratorEvent::BackendFinished(
                                                         k,
@@ -775,8 +773,7 @@ impl UpWindow {
                                             if non_skipped_total > 0 {
                                                 update_button_spawn.set_sensitive(true);
                                             }
-                                            let reboot_needed =
-                                                crate::reboot::reboot_required();
+                                            let reboot_needed = crate::reboot::reboot_required();
                                             if reboot_needed {
                                                 crate::ui::reboot_dialog::show_reboot_dialog(
                                                     &update_button_spawn,
