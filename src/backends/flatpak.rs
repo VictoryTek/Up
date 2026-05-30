@@ -118,14 +118,15 @@ impl Backend for FlatpakBackend {
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
         Box::pin(async move {
-            // Use `flatpak remote-ls --updates --user --columns=application` to detect
+            // Use `flatpak remote-ls --updates --columns=application` to detect
             // pending updates without applying them. The `--columns=application` flag
             // ensures one application ID per line for predictable parsing.
-            // The `--user` flag is intentional: the `--system` variant triggers a polkit
-            // prompt on every background check, which is poor UX. System Flatpak installs
-            // are uncommon on desktop systems, so only user installations are checked here.
+            // No scope flag is passed so both user and system installations are covered,
+            // matching the behaviour of `flatpak update -y` in `run_update()`.
+            // `flatpak remote-ls --updates` is a read-only metadata query and does not
+            // require elevated privileges regardless of installation scope.
             let (cmd, args) =
-                build_flatpak_cmd(&["remote-ls", "--updates", "--user", "--columns=application"]);
+                build_flatpak_cmd(&["remote-ls", "--updates", "--columns=application"]);
             let out = tokio::process::Command::new(&cmd)
                 .args(&args)
                 .output()
@@ -144,12 +145,8 @@ impl Backend for FlatpakBackend {
 
     fn estimate_size(&self) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
         Box::pin(async move {
-            let (cmd, args) = build_flatpak_cmd(&[
-                "remote-ls",
-                "--updates",
-                "--user",
-                "--columns=download-size",
-            ]);
+            let (cmd, args) =
+                build_flatpak_cmd(&["remote-ls", "--updates", "--columns=download-size"]);
             let out = tokio::process::Command::new(&cmd)
                 .args(&args)
                 .env("LANG", "C")
@@ -258,7 +255,7 @@ pub(crate) fn parse_flatpak_updates(output: &str) -> Vec<String> {
     apps
 }
 
-/// Parse a line from `flatpak update --no-deploy --columns=application` output.
+/// Parse a line from `flatpak remote-ls --updates --columns=application` output.
 /// Returns `Some(app_id)` for valid (non-empty, non-header) lines.
 pub(crate) fn parse_flatpak_app_line(line: &str) -> Option<String> {
     let t = line.trim();

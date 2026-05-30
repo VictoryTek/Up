@@ -174,7 +174,7 @@ pub fn parse_zypper_size(output: &str) -> Option<u64> {
     None
 }
 
-/// Parse `flatpak remote-ls --updates --user --columns=download-size` output.
+/// Parse `flatpak remote-ls --updates --columns=download-size` output.
 ///
 /// Each non-empty line is a size like `"234.5 MB"`, `"1.2 GB"`, `"512 kB"`,
 /// or a bare number in bytes.  Sums all parsed values; returns 0 if none
