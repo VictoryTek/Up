@@ -29,7 +29,6 @@ impl UpdateRow {
             .label("Ready")
             .css_classes(vec!["dim-label"])
             .ellipsize(gtk::pango::EllipsizeMode::End)
-            .max_width_chars(30)
             .build();
 
         let spinner = gtk::Spinner::builder().visible(false).build();

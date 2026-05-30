@@ -172,7 +172,8 @@ impl UpWindow {
             .build();
 
         let clamp = adw::Clamp::builder()
-            .maximum_size(600)
+            .maximum_size(800)
+            .tightening_threshold(600)
             .margin_top(24)
             .margin_bottom(24)
             .margin_start(12)
@@ -187,6 +188,16 @@ impl UpWindow {
             .css_classes(vec!["dim-label"])
             .build();
         content_box.append(&status_label);
+
+        let progress_bar = gtk::ProgressBar::new();
+        progress_bar.set_fraction(0.0);
+        progress_bar.set_show_text(false);
+        progress_bar.set_margin_top(4);
+        progress_bar.set_margin_bottom(4);
+        progress_bar.set_margin_start(0);
+        progress_bar.set_margin_end(0);
+        progress_bar.set_visible(false);
+        content_box.append(&progress_bar);
 
         // System Information group (populated after background distro detection)
         let sys_info_group = adw::PreferencesGroup::builder()
@@ -229,9 +240,9 @@ impl UpWindow {
 
         content_box.append(&backends_group);
 
-        // Log panel (expandable terminal output)
+        // Log panel (expandable terminal output) — appended to page_box below the
+        // scroll area so it can fill remaining vertical space when expanded.
         let log_panel = LogPanel::new();
-        content_box.append(&log_panel.expander);
 
         // Restart notification banner, revealed only when Up itself is updated
         // inside the Flatpak sandbox (new deployment is available on next launch).
@@ -256,12 +267,16 @@ impl UpWindow {
             .build();
 
         let updating: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let total_backends: Rc<Cell<usize>> = Rc::new(Cell::new(0));
+        let finished_backends: Rc<Cell<usize>> = Rc::new(Cell::new(0));
         let bypass_metered: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let bypass_battery: Rc<Cell<bool>> = Rc::new(Cell::new(false));
 
         update_button.connect_clicked(glib::clone!(
             #[weak]
             status_label,
+            #[weak]
+            progress_bar,
             #[strong]
             rows,
             #[strong]
@@ -272,6 +287,10 @@ impl UpWindow {
             restart_banner,
             #[strong]
             updating,
+            #[strong]
+            total_backends,
+            #[strong]
+            finished_backends,
             #[strong]
             bypass_metered,
             #[strong]
@@ -367,6 +386,12 @@ impl UpWindow {
                         .collect()
                 };
 
+                let n_backends = backends.len();
+                total_backends.set(n_backends);
+                finished_backends.set(0);
+                progress_bar.set_fraction(0.0);
+                progress_bar.set_visible(true);
+
                 glib::spawn_future_local(glib::clone!(
                     #[strong]
                     rows,
@@ -375,11 +400,17 @@ impl UpWindow {
                     #[weak]
                     status_label,
                     #[weak]
+                    progress_bar,
+                    #[weak]
                     button,
                     #[weak]
                     restart_banner,
                     #[strong]
                     updating,
+                    #[strong]
+                    total_backends,
+                    #[strong]
+                    finished_backends,
                     async move {
                         use crate::orchestrator::{OrchestratorEvent, UpdateOrchestrator};
 
@@ -408,6 +439,7 @@ impl UpWindow {
                                 OrchestratorEvent::AuthFailed(e) => {
                                     log_panel.append_line(&format!("Authentication failed: {e}"));
                                     status_label.set_label("Update cancelled.");
+                                    progress_bar.set_visible(false);
                                     button.set_sensitive(true);
                                     return;
                                 }
@@ -417,6 +449,13 @@ impl UpWindow {
                                         rows_borrowed.iter().find(|(k, _)| *k == kind)
                                     {
                                         row.set_status_running();
+                                    }
+                                    let finished = finished_backends.get();
+                                    let total = total_backends.get();
+                                    if total > 0 {
+                                        progress_bar.set_fraction(
+                                            (finished as f64 + 0.5) / total as f64,
+                                        );
                                     }
                                 }
                                 OrchestratorEvent::BackendLog(kind, line) => {
@@ -454,8 +493,18 @@ impl UpWindow {
                                             }
                                         }
                                     }
+                                    let finished = finished_backends.get() + 1;
+                                    finished_backends.set(finished);
+                                    let total = total_backends.get();
+                                    let fraction = if total == 0 {
+                                        1.0
+                                    } else {
+                                        finished as f64 / total as f64
+                                    };
+                                    progress_bar.set_fraction(fraction);
                                 }
                                 OrchestratorEvent::AllFinished => {
+                                    progress_bar.set_fraction(1.0);
                                     break;
                                 }
                             }
@@ -469,6 +518,7 @@ impl UpWindow {
                         } else {
                             status_label.set_label("Update complete.");
                         }
+                        progress_bar.set_visible(false);
                         updating.set(false);
                         button.set_sensitive(true);
                         if !has_error {
@@ -505,6 +555,19 @@ impl UpWindow {
         page_box.append(&restart_banner);
         page_box.append(&metered_banner);
         page_box.append(&scrolled);
+
+        // Dock the log panel below the scrolled content so it can expand to fill
+        // the remaining window height. Toggle vexpand on the expander itself so
+        // it only claims extra space when it is actually open.
+        log_panel.expander.set_margin_start(12);
+        log_panel.expander.set_margin_end(12);
+        log_panel.expander.set_margin_bottom(12);
+        log_panel
+            .expander
+            .connect_notify_local(Some("expanded"), |exp, _| {
+                exp.set_vexpand(exp.is_expanded());
+            });
+        page_box.append(&log_panel.expander);
 
         // Shared state for gating the Update All button on check completion.
         let pending_checks: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));

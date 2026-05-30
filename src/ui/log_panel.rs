@@ -32,8 +32,8 @@ impl LogPanel {
             .build();
 
         let scrolled = gtk::ScrolledWindow::builder()
-            .min_content_height(200)
-            .max_content_height(400)
+            .min_content_height(150)
+            .vexpand(true)
             .child(&text_view)
             .build();
 
