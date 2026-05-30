@@ -77,6 +77,7 @@ pub fn apply_parser_list(parser: &ParserDef, output: &str) -> Vec<String> {
 
 /// Apply a size parser to extract byte count from output.
 /// Returns None if parsing fails.
+#[allow(dead_code)]
 pub fn apply_parser_size(parser: &ParserDef, output: &str) -> Option<u64> {
     match parser {
         ParserDef::SizeRegex {
@@ -104,6 +105,7 @@ pub fn apply_parser_size(parser: &ParserDef, output: &str) -> Option<u64> {
 }
 
 /// Detect the byte multiplier from a size string containing unit indicators.
+#[allow(dead_code)]
 fn detect_size_multiplier(text: &str) -> f64 {
     let lower = text.to_ascii_lowercase();
     if lower.contains("gib") || lower.contains("gb") {
