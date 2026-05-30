@@ -118,47 +118,55 @@ impl Backend for FlatpakBackend {
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
         Box::pin(async move {
-            // Use `flatpak remote-ls --updates --columns=application` to detect
-            // pending updates without applying them. The `--columns=application` flag
-            // ensures one application ID per line for predictable parsing.
-            // No scope flag is passed so both user and system installations are covered,
-            // matching the behaviour of `flatpak update -y` in `run_update()`.
-            // `flatpak remote-ls --updates` is a read-only metadata query and does not
-            // require elevated privileges regardless of installation scope.
-            let (cmd, args) =
-                build_flatpak_cmd(&["remote-ls", "--updates", "--columns=application"]);
-            let out = tokio::process::Command::new(&cmd)
-                .args(&args)
-                .output()
-                .await
-                .map_err(|e| e.to_string())?;
-
-            if !out.status.success() {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                return Err(format!("flatpak remote-ls --updates failed: {stderr}"));
+            // Query --user and --system installations separately.  An unscoped call
+            // fails entirely if any single remote's summary is unavailable; querying
+            // each scope independently lets a broken system remote (or unreachable
+            // network) avoid hiding user-app updates and vice versa.
+            let (user_result, system_result) = tokio::join!(
+                flatpak_remote_ls_updates("--user"),
+                flatpak_remote_ls_updates("--system"),
+            );
+            match (user_result, system_result) {
+                (Ok(user_pkgs), Ok(sys_pkgs)) => {
+                    let mut all = user_pkgs;
+                    for pkg in sys_pkgs {
+                        if !all.contains(&pkg) {
+                            all.push(pkg);
+                        }
+                    }
+                    Ok(all)
+                }
+                (Ok(pkgs), Err(_)) | (Err(_), Ok(pkgs)) => Ok(pkgs),
+                (Err(e), Err(_)) => Err(e),
             }
-
-            let text = String::from_utf8_lossy(&out.stdout);
-            Ok(parse_flatpak_updates(&text))
         })
     }
 
     fn estimate_size(&self) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
         Box::pin(async move {
-            let (cmd, args) =
-                build_flatpak_cmd(&["remote-ls", "--updates", "--columns=download-size"]);
-            let out = tokio::process::Command::new(&cmd)
-                .args(&args)
-                .env("LANG", "C")
-                .env("LC_ALL", "C")
-                .output()
-                .await
-                .ok()?;
-            if !out.status.success() {
-                return None;
+            // Mirror the per-scope approach used in list_available so a failing
+            // system remote doesn't suppress a valid user-scope size estimate.
+            let mut total: u64 = 0;
+            for scope in ["--user", "--system"] {
+                let (cmd, args) = build_flatpak_cmd(&[
+                    "remote-ls",
+                    "--updates",
+                    scope,
+                    "--columns=download-size",
+                ]);
+                if let Ok(out) = tokio::process::Command::new(&cmd)
+                    .args(&args)
+                    .env("LANG", "C")
+                    .env("LC_ALL", "C")
+                    .output()
+                    .await
+                {
+                    if out.status.success() {
+                        let text = String::from_utf8_lossy(&out.stdout);
+                        total += crate::disk::parse_flatpak_sizes(&text);
+                    }
+                }
             }
-            let text = String::from_utf8_lossy(&out.stdout);
-            let total = crate::disk::parse_flatpak_sizes(&text);
             if total == 0 {
                 None
             } else {
@@ -239,6 +247,29 @@ impl Backend for FlatpakBackend {
             }
         })
     }
+}
+
+/// Run `flatpak remote-ls --updates <scope> --columns=application` and return
+/// the parsed list of application IDs, or an error message.
+///
+/// `scope` should be `"--user"` or `"--system"`.  Querying scopes individually
+/// means a broken remote in one installation does not hide updates in another.
+async fn flatpak_remote_ls_updates(scope: &str) -> Result<Vec<String>, String> {
+    let (cmd, args) =
+        build_flatpak_cmd(&["remote-ls", "--updates", scope, "--columns=application"]);
+    let out = tokio::process::Command::new(&cmd)
+        .args(&args)
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!(
+            "flatpak remote-ls --updates {scope} failed: {stderr}"
+        ));
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    Ok(parse_flatpak_updates(&text))
 }
 
 /// Parse full output from `flatpak remote-ls --updates --columns=application`,
