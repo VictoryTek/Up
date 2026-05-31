@@ -266,11 +266,30 @@ impl UpWindow {
             .sensitive(false)
             .build();
 
+        let cancel_button = gtk::Button::builder()
+            .label("Cancel")
+            .css_classes(vec!["pill"])
+            .visible(false)
+            .build();
+
         let updating: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let total_backends: Rc<Cell<usize>> = Rc::new(Cell::new(0));
         let finished_backends: Rc<Cell<usize>> = Rc::new(Cell::new(0));
         let bypass_metered: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let bypass_battery: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let cancel_handle: Rc<RefCell<Option<crate::orchestrator::CancelHandle>>> =
+            Rc::new(RefCell::new(None));
+
+        cancel_button.connect_clicked(glib::clone!(
+            #[strong]
+            cancel_handle,
+            move |btn| {
+                if let Some(handle) = cancel_handle.borrow_mut().take() {
+                    handle.cancel();
+                }
+                btn.set_sensitive(false);
+            }
+        ));
 
         update_button.connect_clicked(glib::clone!(
             #[weak]
@@ -295,6 +314,10 @@ impl UpWindow {
             bypass_metered,
             #[strong]
             bypass_battery,
+            #[weak]
+            cancel_button,
+            #[strong]
+            cancel_handle,
             move |button| {
                 let monitor = gio::NetworkMonitor::default();
                 if monitor.is_network_metered() && !bypass_metered.get() {
@@ -359,6 +382,7 @@ impl UpWindow {
                 button.set_sensitive(false);
                 updating.set(true);
                 log_panel.clear();
+                cancel_button.set_visible(true);
 
                 // Visually mark skipped rows before starting; collect only active backends.
                 {
@@ -411,12 +435,17 @@ impl UpWindow {
                     total_backends,
                     #[strong]
                     finished_backends,
+                    #[weak]
+                    cancel_button,
+                    #[strong]
+                    cancel_handle,
                     async move {
                         use crate::orchestrator::{OrchestratorEvent, UpdateOrchestrator};
 
                         let orchestrator = UpdateOrchestrator::new(backends);
                         let (event_tx, event_rx) = async_channel::unbounded::<OrchestratorEvent>();
-                        orchestrator.run_all(event_tx);
+                        let handle = orchestrator.run_all(event_tx);
+                        *cancel_handle.borrow_mut() = Some(handle);
 
                         let mut auth_started = false;
                         let mut has_error = false;
@@ -440,6 +469,9 @@ impl UpWindow {
                                     log_panel.append_line(&format!("Authentication failed: {e}"));
                                     status_label.set_label("Update cancelled.");
                                     progress_bar.set_visible(false);
+                                    *cancel_handle.borrow_mut() = None;
+                                    cancel_button.set_visible(false);
+                                    cancel_button.set_sensitive(true);
                                     button.set_sensitive(true);
                                     return;
                                 }
@@ -519,6 +551,9 @@ impl UpWindow {
                             status_label.set_label("Update complete.");
                         }
                         progress_bar.set_visible(false);
+                        *cancel_handle.borrow_mut() = None;
+                        cancel_button.set_visible(false);
+                        cancel_button.set_sensitive(true);
                         updating.set(false);
                         button.set_sensitive(true);
                         if !has_error {
@@ -534,8 +569,6 @@ impl UpWindow {
                 ));
             }
         ));
-
-        content_box.append(&update_button);
 
         clamp.set_child(Some(&content_box));
         scrolled.set_child(Some(&clamp));
@@ -555,6 +588,18 @@ impl UpWindow {
         page_box.append(&restart_banner);
         page_box.append(&metered_banner);
         page_box.append(&scrolled);
+
+        // Fixed footer with cancel + update buttons — always visible regardless of log state.
+        let footer_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .halign(gtk::Align::Center)
+            .spacing(12)
+            .margin_top(8)
+            .margin_bottom(8)
+            .build();
+        footer_box.append(&cancel_button);
+        footer_box.append(&update_button);
+        page_box.append(&footer_box);
 
         // Dock the log panel below the scrolled content so it can expand to fill
         // the remaining window height. Toggle vexpand on the expander itself so

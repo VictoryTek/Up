@@ -616,8 +616,17 @@ impl Backend for NixBackend {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
         Box::pin(async move {
             if is_nixos() && is_nixos_flake() {
-                // Flake-based NixOS: return changed input names.
-                nixos_flake_changed_inputs().await
+                if is_vexos() {
+                    // VexOS uses vexos-update which always rebuilds the system configuration.
+                    // A rebuild can be necessary even when flake inputs haven't changed
+                    // (e.g., the running generation is behind the current derivation).
+                    // Since we cannot determine if a rebuild is needed without running the
+                    // command (which requires root), always indicate that an update is available.
+                    Ok(vec!["NixOS system".to_string()])
+                } else {
+                    // Standard flake NixOS: compare flake.lock to detect input changes.
+                    nixos_flake_changed_inputs().await
+                }
             } else if is_determinate_nix() {
                 // Determinate Nix: check version output for upgrade availability.
                 let out = tokio::process::Command::new("determinate-nixd")
