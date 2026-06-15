@@ -1,6 +1,6 @@
 [package]
 name = "up-daemon"
-version = "2.0.3"
+version = "2.0.4"
 edition = "2021"
 description = "Privileged backend service for Up system updater"
 license = "GPL-3.0-or-later"
