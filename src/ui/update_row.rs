@@ -15,6 +15,9 @@ pub struct UpdateRow {
     skip_flag: Rc<Cell<bool>>,
     /// Last resolved available-update count; used to restore status on un-skip.
     last_available: Rc<Cell<Option<usize>>>,
+    /// Set when the most recent check returned an error; reset when a new check starts.
+    /// Lets the window distinguish "0 updates confirmed" from "check failed".
+    check_errored: Rc<Cell<bool>>,
     skip_checkbox: gtk::CheckButton,
     retry_button: gtk::Button,
 }
@@ -102,6 +105,7 @@ impl UpdateRow {
             pkg_rows: Rc::new(RefCell::new(Vec::new())),
             skip_flag,
             last_available,
+            check_errored: Rc::new(Cell::new(false)),
             skip_checkbox,
             retry_button,
         }
@@ -116,6 +120,12 @@ impl UpdateRow {
     /// `None` if no successful check has completed yet.
     pub fn last_available_count(&self) -> Option<usize> {
         self.last_available.get()
+    }
+
+    /// Returns `true` if the most recent check produced an error.
+    /// Reset to `false` at the start of each check cycle via `set_status_checking()`.
+    pub fn has_check_error(&self) -> bool {
+        self.check_errored.get()
     }
 
     /// Populate the expander with a list of pending package names.
@@ -156,6 +166,7 @@ impl UpdateRow {
     pub fn set_status_checking(&self) {
         self.retry_button.set_visible(false);
         self.last_available.set(None);
+        self.check_errored.set(false);
         self.spinner.set_visible(true);
         self.spinner.set_spinning(true);
         self.status_label.set_label("Checking...");
@@ -218,12 +229,14 @@ impl UpdateRow {
         self.status_label.set_css_classes(&["dim-label"]);
     }
 
-    /// Used when the count cannot be determined without running the update (e.g. NixOS).
+    /// Used when the count cannot be determined (e.g. NixOS) or a check error occurred.
+    /// Sets `check_errored` so the window can avoid a false "Everything is up to date."
     pub fn set_status_unknown(&self, msg: &str) {
         self.retry_button.set_visible(false);
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
+        self.check_errored.set(true);
         self.status_label.set_label(msg);
         self.status_label.set_css_classes(&["dim-label"]);
     }

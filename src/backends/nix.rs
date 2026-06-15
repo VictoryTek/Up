@@ -617,12 +617,15 @@ impl Backend for NixBackend {
         Box::pin(async move {
             if is_nixos() && is_nixos_flake() {
                 if is_vexos() {
-                    // VexOS uses vexos-update which always rebuilds the system configuration.
-                    // A rebuild can be necessary even when flake inputs haven't changed
-                    // (e.g., the running generation is behind the current derivation).
-                    // Since we cannot determine if a rebuild is needed without running the
-                    // command (which requires root), always indicate that an update is available.
-                    Ok(vec!["NixOS system".to_string()])
+                    // VexOS uses vexos-update for the actual update, but we can still
+                    // detect whether upstream flake inputs have changed before claiming an
+                    // update is available — the same nixos_flake_changed_inputs() check used
+                    // for standard NixOS flake systems works identically here.
+                    match nixos_flake_changed_inputs().await {
+                        Ok(inputs) if inputs.is_empty() => Ok(vec![]),
+                        Ok(_) => Ok(vec!["NixOS system".to_string()]),
+                        Err(e) => Err(e),
+                    }
                 } else {
                     // Standard flake NixOS: compare flake.lock to detect input changes.
                     nixos_flake_changed_inputs().await

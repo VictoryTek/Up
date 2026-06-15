@@ -715,12 +715,22 @@ impl UpWindow {
                                             .filter_map(|(_, r)| r.last_available_count())
                                             .sum()
                                     };
+                                    let any_check_error = {
+                                        let borrowed = rows.borrow();
+                                        borrowed
+                                            .iter()
+                                            .filter(|(_, r)| !r.is_skipped())
+                                            .any(|(_, r)| r.has_check_error())
+                                    };
                                     if non_skipped_total > 0 {
                                         update_button_checks.set_sensitive(true);
                                         status_label_checks.set_label(&format!(
                                             "{non_skipped_total} update{} available",
                                             if non_skipped_total == 1 { "" } else { "s" }
                                         ));
+                                    } else if any_check_error {
+                                        status_label_checks
+                                            .set_label("Could not check all sources.");
                                     } else {
                                         status_label_checks.set_label("Everything is up to date.");
                                     }

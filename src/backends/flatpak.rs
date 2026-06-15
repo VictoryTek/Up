@@ -136,7 +136,23 @@ impl Backend for FlatpakBackend {
                     }
                     Ok(all)
                 }
-                (Ok(pkgs), Err(_)) | (Err(_), Ok(pkgs)) => Ok(pkgs),
+                // If one scope found updates, return them even if the other scope failed.
+                // If the successful scope is empty and the other scope errored, surface the
+                // error — returning Ok([]) in that case would be a false "up to date".
+                (Ok(pkgs), Err(e)) => {
+                    if pkgs.is_empty() {
+                        Err(e)
+                    } else {
+                        Ok(pkgs)
+                    }
+                }
+                (Err(e), Ok(pkgs)) => {
+                    if pkgs.is_empty() {
+                        Err(e)
+                    } else {
+                        Ok(pkgs)
+                    }
+                }
                 (Err(e), Err(_)) => Err(e),
             }
         })
@@ -249,14 +265,16 @@ impl Backend for FlatpakBackend {
     }
 }
 
-/// Run `flatpak remote-ls --updates <scope> --columns=application` and return
-/// the parsed list of application IDs, or an error message.
+/// Run `flatpak remote-ls --updates <scope> --columns=name` and return
+/// the parsed list of application/runtime IDs, or an error message.
 ///
 /// `scope` should be `"--user"` or `"--system"`.  Querying scopes individually
 /// means a broken remote in one installation does not hide updates in another.
+/// Uses `--columns=name` (not `--columns=application`) so runtime updates
+/// (e.g., org.gnome.Platform) are included; the "application" column is empty
+/// for runtimes and would silently drop them.
 async fn flatpak_remote_ls_updates(scope: &str) -> Result<Vec<String>, String> {
-    let (cmd, args) =
-        build_flatpak_cmd(&["remote-ls", "--updates", scope, "--columns=application"]);
+    let (cmd, args) = build_flatpak_cmd(&["remote-ls", "--updates", scope, "--columns=name"]);
     let out = tokio::process::Command::new(&cmd)
         .args(&args)
         .output()
@@ -272,8 +290,8 @@ async fn flatpak_remote_ls_updates(scope: &str) -> Result<Vec<String>, String> {
     Ok(parse_flatpak_updates(&text))
 }
 
-/// Parse full output from `flatpak remote-ls --updates --columns=application`,
-/// returning a deduplicated list of application IDs.
+/// Parse full output from `flatpak remote-ls --updates --columns=name`,
+/// returning a deduplicated list of application/runtime IDs.
 pub(crate) fn parse_flatpak_updates(output: &str) -> Vec<String> {
     let mut apps: Vec<String> = Vec::new();
     for line in output.lines() {
@@ -286,11 +304,12 @@ pub(crate) fn parse_flatpak_updates(output: &str) -> Vec<String> {
     apps
 }
 
-/// Parse a line from `flatpak remote-ls --updates --columns=application` output.
-/// Returns `Some(app_id)` for valid (non-empty, non-header) lines.
+/// Parse a line from `flatpak remote-ls --updates --columns=name` output.
+/// Returns `Some(id)` for valid (non-empty, non-header) lines.
+/// Filters both "Name" and "Application" column headers for robustness.
 pub(crate) fn parse_flatpak_app_line(line: &str) -> Option<String> {
     let t = line.trim();
-    if !t.is_empty() && !t.eq_ignore_ascii_case("application") {
+    if !t.is_empty() && !t.eq_ignore_ascii_case("name") && !t.eq_ignore_ascii_case("application") {
         Some(t.to_string())
     } else {
         None
@@ -314,6 +333,8 @@ mod tests {
     fn test_parse_flatpak_app_line_header_skipped() {
         assert_eq!(parse_flatpak_app_line("Application"), None);
         assert_eq!(parse_flatpak_app_line("application"), None);
+        assert_eq!(parse_flatpak_app_line("Name"), None);
+        assert_eq!(parse_flatpak_app_line("name"), None);
     }
 
     #[test]
@@ -332,25 +353,27 @@ mod tests {
 
     #[test]
     fn test_parse_flatpak_updates_happy_path() {
-        let output = "Application\norg.gnome.Calculator\ncom.example.App\n";
+        // --columns=name output: Name header + app IDs + runtime IDs
+        let output = "Name\norg.gnome.Calculator\ncom.example.App\norg.gnome.Platform\n";
         let result = parse_flatpak_updates(output);
         assert_eq!(
             result,
             vec![
                 "org.gnome.Calculator".to_string(),
-                "com.example.App".to_string()
+                "com.example.App".to_string(),
+                "org.gnome.Platform".to_string(),
             ]
         );
     }
 
     #[test]
     fn test_parse_flatpak_updates_only_header() {
-        assert!(parse_flatpak_updates("Application\n").is_empty());
+        assert!(parse_flatpak_updates("Name\n").is_empty());
     }
 
     #[test]
     fn test_parse_flatpak_updates_deduplicates() {
-        let output = "Application\norg.gnome.Calculator\norg.gnome.Calculator\n";
+        let output = "Name\norg.gnome.Calculator\norg.gnome.Calculator\n";
         let result = parse_flatpak_updates(output);
         assert_eq!(result, vec!["org.gnome.Calculator".to_string()]);
     }
