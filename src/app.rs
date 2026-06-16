@@ -27,6 +27,14 @@ impl UpApplication {
         // on the host system.
         if let Some(display) = gtk::gdk::Display::default() {
             gtk::IconTheme::for_display(&display).add_resource_path("/io/github/up");
+
+            let provider = gtk::CssProvider::new();
+            provider.load_from_resource("/io/github/up/style.css");
+            gtk::style_context_add_provider_for_display(
+                &display,
+                &provider,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
         }
 
         gtk::Window::set_default_icon_name("io.github.up");

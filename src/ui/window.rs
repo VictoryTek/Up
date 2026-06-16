@@ -25,9 +25,10 @@ impl UpWindow {
         let window = adw::ApplicationWindow::builder()
             .application(app)
             .title("Up")
-            .default_width(700)
-            .default_height(600)
+            .default_width(760)
+            .default_height(650)
             .build();
+        window.add_css_class("up-window");
 
         let view_stack = adw::ViewStack::new();
 
@@ -50,10 +51,12 @@ impl UpWindow {
             "software-update-urgent-symbolic",
         );
 
-        let view_switcher_bar = adw::ViewSwitcherBar::builder()
+        // ViewSwitcher lives in the header bar center slot (hidden when only one tab is visible).
+        let view_switcher = adw::ViewSwitcher::builder()
             .stack(&view_stack)
-            .reveal(true)
+            .policy(adw::ViewSwitcherPolicy::Wide)
             .build();
+
 
         // Spawn single distro detection, fanning out to update-page sysinfo and upgrade page.
         {
@@ -74,7 +77,7 @@ impl UpWindow {
                 let _ = detect_tx.send((info, nixos_extra)).await;
             });
 
-            let view_switcher_bar = view_switcher_bar.clone();
+            let view_switcher_async = view_switcher.clone();
             glib::spawn_future_local(async move {
                 if let Ok((info, nixos_extra)) = detect_rx.recv().await {
                     // 1. Populate update-page system info rows
@@ -84,7 +87,9 @@ impl UpWindow {
                     // 2. Gate upgrade tab visibility — hide for unsupported distros.
                     if !info.upgrade_supported {
                         upgrade_stack_page.set_visible(false);
-                        view_switcher_bar.set_reveal(false);
+                        view_switcher_async.set_visible(false);
+                    } else {
+                        view_switcher_async.set_visible(true);
                     }
 
                     // 3. Forward to upgrade page
@@ -100,6 +105,7 @@ impl UpWindow {
         }
 
         let header = adw::HeaderBar::new();
+        header.set_title_widget(Some(&view_switcher));
 
         let refresh_button = gtk::Button::builder()
             .icon_name("view-refresh-symbolic")
@@ -134,7 +140,6 @@ impl UpWindow {
         let main_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
         main_box.append(&header);
         main_box.append(&view_stack);
-        main_box.append(&view_switcher_bar);
 
         window.set_content(Some(&main_box));
 
@@ -182,12 +187,39 @@ impl UpWindow {
 
         let content_box = gtk::Box::new(gtk::Orientation::Vertical, 18);
 
-        // Status label
-        let status_label = gtk::Label::builder()
-            .label("Detect available updates across your system.")
-            .css_classes(vec!["dim-label"])
+        // ── Hero area ────────────────────────────────────────────────
+        let hero_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(14)
+            .css_classes(vec!["up-hero"])
             .build();
-        content_box.append(&status_label);
+
+        let hero_icon = gtk::Image::builder()
+            .icon_name("io.github.up")
+            .pixel_size(52)
+            .build();
+
+        let hero_text_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        hero_text_box.set_valign(gtk::Align::Center);
+
+        let hero_title = gtk::Label::builder()
+            .label("System Updater")
+            .halign(gtk::Align::Start)
+            .css_classes(vec!["up-hero-title"])
+            .build();
+
+        let status_label = gtk::Label::builder()
+            .label("Detecting available updates across your system…")
+            .halign(gtk::Align::Start)
+            .css_classes(vec!["up-hero-subtitle"])
+            .wrap(true)
+            .build();
+
+        hero_text_box.append(&hero_title);
+        hero_text_box.append(&status_label);
+        hero_box.append(&hero_icon);
+        hero_box.append(&hero_text_box);
+        content_box.append(&hero_box);
 
         let progress_bar = gtk::ProgressBar::new();
         progress_bar.set_fraction(0.0);
@@ -223,6 +255,7 @@ impl UpWindow {
         let backends_group = adw::PreferencesGroup::builder()
             .title("Sources")
             .description("Package managers detected on this system")
+            .css_classes(vec!["vex-sources-group"])
             .build();
 
         let detected: Rc<RefCell<Vec<Arc<dyn Backend>>>> = Rc::new(RefCell::new(Vec::new()));
@@ -268,7 +301,7 @@ impl UpWindow {
 
         let cancel_button = gtk::Button::builder()
             .label("Cancel")
-            .css_classes(vec!["pill"])
+            .css_classes(vec!["pill", "up-cancel"])
             .visible(false)
             .build();
 

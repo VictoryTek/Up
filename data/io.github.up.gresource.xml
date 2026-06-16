@@ -2,5 +2,6 @@
 <gresources>
   <gresource prefix="/io/github/up">
     <file alias="icons/hicolor/256x256/apps/io.github.up.png">icons/hicolor/256x256/apps/io.github.up.png</file>
+    <file alias="style.css">style.css</file>
   </gresource>
 </gresources>

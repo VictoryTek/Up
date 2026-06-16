@@ -1,0 +1,151 @@
+/* VexOS — Up facelift stylesheet */
+
+/* ── Brand tokens ─────────────────────────────────────────── */
+@define-color vex_cyan        #00D4FF;
+@define-color vex_cyan_dim    rgba(0, 212, 255, 0.15);
+@define-color vex_orange      #FF7A00;
+@define-color vex_orange_dim  rgba(255, 122, 0, 0.12);
+@define-color vex_dark        #0D1117;
+
+/* Override libadwaita's accent with our cyan */
+@define-color accent_color              @vex_cyan;
+@define-color accent_bg_color          @vex_cyan;
+@define-color accent_fg_color          @vex_dark;
+
+/* ── Window ───────────────────────────────────────────────── */
+window.up-window {
+  background-color: @window_bg_color;
+}
+
+/* ── Header bar ───────────────────────────────────────────── */
+headerbar {
+  background-color: @headerbar_bg_color;
+  border-bottom: 1px solid @borders;
+}
+
+/* ── ViewSwitcher in header ───────────────────────────────── */
+headerbar viewswitcher button {
+  border-radius: 8px;
+  min-width: 100px;
+}
+
+headerbar viewswitcher button:checked {
+  background-color: @vex_cyan_dim;
+  color: @vex_cyan;
+  box-shadow: inset 0 -2px 0 @vex_cyan;
+}
+
+/* ── Hero status area ─────────────────────────────────────── */
+.up-hero {
+  padding: 24px 12px 8px;
+}
+
+.up-hero-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: @window_fg_color;
+  letter-spacing: -0.5px;
+}
+
+.up-hero-subtitle {
+  font-size: 13px;
+  color: alpha(@window_fg_color, 0.55);
+  margin-top: 2px;
+}
+
+/* ── Suggested-action (Update All) ───────────────────────── */
+button.suggested-action {
+  background: linear-gradient(135deg, @vex_cyan 0%, #0099BB 100%);
+  color: @vex_dark;
+  font-weight: 700;
+  border: none;
+  box-shadow: 0 2px 12px rgba(0, 212, 255, 0.35);
+  transition: box-shadow 150ms ease, transform 80ms ease;
+}
+
+button.suggested-action:hover {
+  box-shadow: 0 4px 20px rgba(0, 212, 255, 0.5);
+  transform: translateY(-1px);
+}
+
+button.suggested-action:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 6px rgba(0, 212, 255, 0.25);
+}
+
+button.suggested-action:disabled {
+  background: alpha(@window_fg_color, 0.12);
+  color: alpha(@window_fg_color, 0.35);
+  box-shadow: none;
+  transform: none;
+}
+
+/* Cancel button styling */
+button.up-cancel {
+  border: 1px solid @borders;
+}
+
+/* ── PreferencesGroup cards ───────────────────────────────── */
+preferencesgroup > box {
+  border-radius: 14px;
+}
+
+/* Subtle cyan left-bar on the Sources group header */
+.vex-sources-group > box > box > label:first-child {
+  color: @vex_cyan;
+}
+
+/* ── ExpanderRow (backend rows) ───────────────────────────── */
+row.expander {
+  border-radius: 10px;
+}
+
+row.expander:hover {
+  background-color: @vex_cyan_dim;
+}
+
+/* ── Status label colours ─────────────────────────────────── */
+label.success {
+  color: #2EC27E;
+  font-weight: 600;
+}
+
+label.accent {
+  color: @vex_cyan;
+  font-weight: 600;
+}
+
+label.error {
+  color: #E01B24;
+  font-weight: 600;
+}
+
+/* ── Progress bar ─────────────────────────────────────────── */
+progressbar trough {
+  border-radius: 99px;
+  min-height: 4px;
+  background-color: alpha(@vex_cyan, 0.12);
+}
+
+progressbar progress {
+  border-radius: 99px;
+  background: linear-gradient(90deg, @vex_cyan, #0099BB);
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.4);
+}
+
+/* ── Log panel expander ───────────────────────────────────── */
+.log-expander > box > box > label {
+  font-family: monospace;
+  font-size: 12px;
+}
+
+/* ── Banners ──────────────────────────────────────────────── */
+banner {
+  background-color: @vex_orange_dim;
+  border-bottom: 1px solid @vex_orange_dim;
+}
+
+banner > revealer > widget > label {
+  color: @vex_orange;
+  font-weight: 600;
+}
