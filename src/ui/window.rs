@@ -57,7 +57,6 @@ impl UpWindow {
             .policy(adw::ViewSwitcherPolicy::Wide)
             .build();
 
-
         // Spawn single distro detection, fanning out to update-page sysinfo and upgrade page.
         {
             let (detect_tx, detect_rx) = async_channel::bounded::<(
@@ -217,8 +216,17 @@ impl UpWindow {
 
         hero_text_box.append(&hero_title);
         hero_text_box.append(&status_label);
+
+        let hero_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        hero_spacer.set_hexpand(true);
+
+        let hero_button_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        hero_button_box.set_valign(gtk::Align::Center);
+
         hero_box.append(&hero_icon);
         hero_box.append(&hero_text_box);
+        hero_box.append(&hero_spacer);
+        hero_box.append(&hero_button_box);
         content_box.append(&hero_box);
 
         let progress_bar = gtk::ProgressBar::new();
@@ -294,14 +302,14 @@ impl UpWindow {
         let update_button = gtk::Button::builder()
             .label("Update All")
             .css_classes(vec!["suggested-action", "pill"])
-            .halign(gtk::Align::Center)
-            .margin_top(12)
+            .valign(gtk::Align::Center)
             .sensitive(false)
             .build();
 
         let cancel_button = gtk::Button::builder()
             .label("Cancel")
             .css_classes(vec!["pill", "up-cancel"])
+            .valign(gtk::Align::Center)
             .visible(false)
             .build();
 
@@ -323,6 +331,9 @@ impl UpWindow {
                 btn.set_sensitive(false);
             }
         ));
+
+        hero_button_box.append(&cancel_button);
+        hero_button_box.append(&update_button);
 
         update_button.connect_clicked(glib::clone!(
             #[weak]
@@ -622,29 +633,10 @@ impl UpWindow {
         page_box.append(&metered_banner);
         page_box.append(&scrolled);
 
-        // Fixed footer with cancel + update buttons — always visible regardless of log state.
-        let footer_box = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .halign(gtk::Align::Center)
-            .spacing(12)
-            .margin_top(8)
-            .margin_bottom(8)
-            .build();
-        footer_box.append(&cancel_button);
-        footer_box.append(&update_button);
-        page_box.append(&footer_box);
-
-        // Dock the log panel below the scrolled content so it can expand to fill
-        // the remaining window height. Toggle vexpand on the expander itself so
-        // it only claims extra space when it is actually open.
+        // Dock the log panel below the scrolled content.
         log_panel.expander.set_margin_start(12);
         log_panel.expander.set_margin_end(12);
         log_panel.expander.set_margin_bottom(12);
-        log_panel
-            .expander
-            .connect_notify_local(Some("expanded"), |exp, _| {
-                exp.set_vexpand(exp.is_expanded());
-            });
         page_box.append(&log_panel.expander);
 
         // Shared state for gating the Update All button on check completion.

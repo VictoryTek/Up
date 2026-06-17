@@ -1,0 +1,39 @@
+{
+  "effortLevel": "medium",
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git branch:*)",
+      "Bash(git show:*)",
+      "Bash(git fetch:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo audit:*)",
+      "Bash(cargo metadata:*)",
+      "Bash(scripts/preflight.sh:*)",
+      "Bash(desktop-file-validate:*)",
+      "Bash(appstreamcli validate:*)",
+      "Bash(find .:*)",
+      "Bash(grep:*)",
+      "Bash(stat:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)"
+    ],
+    "deny": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git stash:*)",
+      "Bash(git reset:*)",
+      "Bash(git rebase:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(rm -rf:*)",
+      "Bash(cargo clean:*)"
+    ]
+  }
+}
