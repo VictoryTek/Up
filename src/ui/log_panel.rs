@@ -60,6 +60,7 @@ impl LogPanel {
         let expander = gtk::Expander::builder()
             .label_widget(&header_box)
             .margin_top(12)
+            .expanded(true)
             .child(&toast_overlay)
             .build();
 

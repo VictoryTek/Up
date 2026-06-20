@@ -26,7 +26,7 @@ impl UpWindow {
             .application(app)
             .title("Up")
             .default_width(760)
-            .default_height(650)
+            .default_height(900)
             .build();
         window.add_css_class("up-window");
 
