@@ -194,6 +194,51 @@ impl UpdateOrchestrator {
     }
 }
 
+/// Runs a single VexOS cache-bypass command (`just deploy` / `just
+/// update-all`) on a background thread, authenticating once via
+/// [`PrivilegedShell`] and reporting progress through the same
+/// [`OrchestratorEvent`] stream used by [`UpdateOrchestrator`].
+pub fn run_cache_bypass(
+    mode: crate::backends::nix::CacheBypassMode,
+    tx: async_channel::Sender<OrchestratorEvent>,
+) {
+    spawn_background(move || async move {
+        let _ = tx.send(OrchestratorEvent::AuthStarted).await;
+        let shell = match PrivilegedShell::new().await {
+            Ok(s) => Arc::new(tokio::sync::Mutex::new(s)),
+            Err(e) => {
+                let _ = tx.send(OrchestratorEvent::AuthFailed(e)).await;
+                return;
+            }
+        };
+        let _ = tx.send(OrchestratorEvent::AuthSucceeded).await;
+
+        let (be_tx, be_rx) = async_channel::unbounded::<BackendEvent>();
+        let tx_fwd = tx.clone();
+        let fwd_handle = tokio::spawn(async move {
+            while let Ok(event) = be_rx.recv().await {
+                let BackendEvent::LogLine(k, line) = event;
+                let _ = tx_fwd.send(OrchestratorEvent::BackendLog(k, line)).await;
+            }
+        });
+
+        let kind = BackendKind::Nix;
+        let _ = tx
+            .send(OrchestratorEvent::BackendStarted(kind.clone()))
+            .await;
+        let runner = CommandRunner::new(be_tx.clone(), kind.clone(), Some(shell.clone()));
+        let result = crate::backends::nix::run_cache_bypass(mode, &runner).await;
+        let _ = tx
+            .send(OrchestratorEvent::BackendFinished(kind, result))
+            .await;
+
+        drop(be_tx);
+        let _ = fwd_handle.await;
+        shell.lock().await.close().await;
+        let _ = tx.send(OrchestratorEvent::AllFinished).await;
+    });
+}
+
 /// Spawns a background OS thread with a single-threaded Tokio runtime and
 /// drives the provided async closure to completion on it.
 fn spawn_background<F, Fut>(f: F)

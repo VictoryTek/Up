@@ -494,6 +494,7 @@ impl UpWindow {
                         let mut auth_started = false;
                         let mut has_error = false;
                         let mut self_updated = false;
+                        let mut nix_log_lines: Vec<String> = Vec::new();
 
                         while let Ok(event) = event_rx.recv().await {
                             match event {
@@ -535,39 +536,93 @@ impl UpWindow {
                                     }
                                 }
                                 OrchestratorEvent::BackendLog(kind, line) => {
+                                    if kind == BackendKind::Nix {
+                                        nix_log_lines.push(line.clone());
+                                    }
                                     log_panel.append_line(&format!("[{kind}] {line}"));
                                 }
                                 OrchestratorEvent::BackendFinished(kind, result) => {
-                                    let rows_borrowed = rows.borrow();
-                                    if let Some((_, row)) =
-                                        rows_borrowed.iter().find(|(k, _)| *k == kind)
+                                    let mut show_cache_dialog = false;
                                     {
-                                        match &result {
-                                            UpdateResult::Success { updated_count } => {
-                                                row.set_status_success(*updated_count);
-                                            }
-                                            UpdateResult::SuccessWithSelfUpdate {
-                                                updated_count,
-                                            } => {
-                                                row.set_status_success(*updated_count);
-                                                self_updated = true;
-                                            }
-                                            UpdateResult::Error(msg) => {
-                                                row.set_status_error(&msg.to_string());
-                                                has_error = true;
-                                            }
-                                            UpdateResult::Skipped(msg) => {
-                                                row.set_status_skipped(msg);
-                                            }
-                                            UpdateResult::Cancelled => {
-                                                row.set_status_skipped("Cancelled");
-                                            }
-                                            UpdateResult::CacheMiss => {
-                                                row.set_status_skipped(
-                                                    "Binary cache syncing, try again later",
-                                                );
+                                        let rows_borrowed = rows.borrow();
+                                        if let Some((_, row)) =
+                                            rows_borrowed.iter().find(|(k, _)| *k == kind)
+                                        {
+                                            match &result {
+                                                UpdateResult::Success { updated_count } => {
+                                                    row.set_status_success(*updated_count);
+                                                }
+                                                UpdateResult::SuccessWithSelfUpdate {
+                                                    updated_count,
+                                                } => {
+                                                    row.set_status_success(*updated_count);
+                                                    self_updated = true;
+                                                }
+                                                UpdateResult::Error(msg) => {
+                                                    row.set_status_error(&msg.to_string());
+                                                    has_error = true;
+                                                }
+                                                UpdateResult::Skipped(msg) => {
+                                                    row.set_status_skipped(msg);
+                                                }
+                                                UpdateResult::Cancelled => {
+                                                    row.set_status_skipped("Cancelled");
+                                                }
+                                                UpdateResult::CacheMiss => {
+                                                    row.set_status_skipped(
+                                                        "Binary cache syncing, try again later",
+                                                    );
+                                                    show_cache_dialog = true;
+                                                }
                                             }
                                         }
+                                    }
+                                    if show_cache_dialog {
+                                        let details =
+                                            crate::backends::nix::extract_cache_block_message(
+                                                &nix_log_lines,
+                                            )
+                                            .unwrap_or_else(|| {
+                                                "No further detail was provided.".to_string()
+                                            });
+                                        crate::ui::cache_block_dialog::show_cache_block_dialog(
+                                            &button,
+                                            &details,
+                                            glib::clone!(
+                                                #[strong]
+                                                rows,
+                                                #[strong]
+                                                log_panel,
+                                                #[weak]
+                                                status_label,
+                                                #[weak]
+                                                button,
+                                                move || spawn_cache_bypass(
+                                                    crate::backends::nix::CacheBypassMode::Deploy,
+                                                    rows.clone(),
+                                                    log_panel.clone(),
+                                                    status_label.clone(),
+                                                    button.clone(),
+                                                )
+                                            ),
+                                            glib::clone!(
+                                                #[strong]
+                                                rows,
+                                                #[strong]
+                                                log_panel,
+                                                #[weak]
+                                                status_label,
+                                                #[weak]
+                                                button,
+                                                move || spawn_cache_bypass(
+                                                    crate::backends::nix::CacheBypassMode::UpdateAll,
+                                                    rows.clone(),
+                                                    log_panel.clone(),
+                                                    status_label.clone(),
+                                                    button.clone(),
+                                                )
+                                            ),
+                                        );
                                     }
                                     let finished = finished_backends.get() + 1;
                                     finished_backends.set(finished);
@@ -791,6 +846,8 @@ impl UpWindow {
                 updating,
                 #[strong]
                 log_panel,
+                #[weak]
+                status_label,
                 async move {
                     if let Ok(new_backends) = detect_rx.recv().await {
                         // Remove placeholder
@@ -806,6 +863,7 @@ impl UpWindow {
                                 // Clones for the retry closure
                                 let rows_retry = rows.clone();
                                 let log_panel_retry = log_panel.clone();
+                                let status_label_retry = status_label.clone();
                                 let detected_retry = detected.clone();
                                 let updating_retry = updating.clone();
                                 let update_button_retry = update_button.clone();
@@ -852,7 +910,9 @@ impl UpWindow {
                                         let log_panel_spawn = log_panel_retry.clone();
                                         let updating_spawn = updating_retry.clone();
                                         let update_button_spawn = update_button_retry.clone();
+                                        let status_label_spawn = status_label_retry.clone();
                                         glib::spawn_future_local(async move {
+                                            let mut nix_log_lines: Vec<String> = Vec::new();
                                             while let Ok(event) = event_rx.recv().await {
                                                 match event {
                                                     OrchestratorEvent::AuthFailed(e) => {
@@ -870,6 +930,9 @@ impl UpWindow {
                                                         }
                                                     }
                                                     OrchestratorEvent::BackendLog(k, line) => {
+                                                        if k == BackendKind::Nix {
+                                                            nix_log_lines.push(line.clone());
+                                                        }
                                                         log_panel_spawn
                                                             .append_line(&format!("[{k}] {line}"));
                                                     }
@@ -877,45 +940,83 @@ impl UpWindow {
                                                         k,
                                                         result,
                                                     ) => {
-                                                        let rows_borrowed = rows_spawn.borrow();
-                                                        if let Some((_, row)) = rows_borrowed
-                                                            .iter()
-                                                            .find(|(rk, _)| *rk == k)
+                                                        let mut show_cache_dialog = false;
                                                         {
-                                                            match &result {
-                                                                UpdateResult::Success {
-                                                                    updated_count,
-                                                                } => {
-                                                                    row.set_status_success(
-                                                                        *updated_count,
-                                                                    );
-                                                                }
-                                                                UpdateResult::SuccessWithSelfUpdate {
-                                                                    updated_count,
-                                                                } => {
-                                                                    row.set_status_success(
-                                                                        *updated_count,
-                                                                    );
-                                                                }
-                                                                UpdateResult::Error(msg) => {
-                                                                    row.set_status_error(
-                                                                        &msg.to_string(),
-                                                                    );
-                                                                }
-                                                                UpdateResult::Skipped(msg) => {
-                                                                    row.set_status_skipped(msg);
-                                                                }
-                                                                UpdateResult::Cancelled => {
-                                                                    row.set_status_skipped(
-                                                                        "Cancelled",
-                                                                    );
-                                                                }
-                                                                UpdateResult::CacheMiss => {
-                                                                    row.set_status_skipped(
-                                                                        "Binary cache syncing, try again later",
-                                                                    );
+                                                            let rows_borrowed = rows_spawn.borrow();
+                                                            if let Some((_, row)) = rows_borrowed
+                                                                .iter()
+                                                                .find(|(rk, _)| *rk == k)
+                                                            {
+                                                                match &result {
+                                                                    UpdateResult::Success {
+                                                                        updated_count,
+                                                                    } => {
+                                                                        row.set_status_success(
+                                                                            *updated_count,
+                                                                        );
+                                                                    }
+                                                                    UpdateResult::SuccessWithSelfUpdate {
+                                                                        updated_count,
+                                                                    } => {
+                                                                        row.set_status_success(
+                                                                            *updated_count,
+                                                                        );
+                                                                    }
+                                                                    UpdateResult::Error(msg) => {
+                                                                        row.set_status_error(
+                                                                            &msg.to_string(),
+                                                                        );
+                                                                    }
+                                                                    UpdateResult::Skipped(msg) => {
+                                                                        row.set_status_skipped(msg);
+                                                                    }
+                                                                    UpdateResult::Cancelled => {
+                                                                        row.set_status_skipped(
+                                                                            "Cancelled",
+                                                                        );
+                                                                    }
+                                                                    UpdateResult::CacheMiss => {
+                                                                        row.set_status_skipped(
+                                                                            "Binary cache syncing, try again later",
+                                                                        );
+                                                                        show_cache_dialog = true;
+                                                                    }
                                                                 }
                                                             }
+                                                        }
+                                                        if show_cache_dialog {
+                                                            let details = crate::backends::nix::extract_cache_block_message(&nix_log_lines)
+                                                                .unwrap_or_else(|| "No further detail was provided.".to_string());
+                                                            crate::ui::cache_block_dialog::show_cache_block_dialog(
+                                                                &update_button_spawn,
+                                                                &details,
+                                                                glib::clone!(
+                                                                    #[strong] rows_spawn,
+                                                                    #[strong] log_panel_spawn,
+                                                                    #[strong] status_label_spawn,
+                                                                    #[strong] update_button_spawn,
+                                                                    move || spawn_cache_bypass(
+                                                                        crate::backends::nix::CacheBypassMode::Deploy,
+                                                                        rows_spawn.clone(),
+                                                                        log_panel_spawn.clone(),
+                                                                        status_label_spawn.clone(),
+                                                                        update_button_spawn.clone(),
+                                                                    )
+                                                                ),
+                                                                glib::clone!(
+                                                                    #[strong] rows_spawn,
+                                                                    #[strong] log_panel_spawn,
+                                                                    #[strong] status_label_spawn,
+                                                                    #[strong] update_button_spawn,
+                                                                    move || spawn_cache_bypass(
+                                                                        crate::backends::nix::CacheBypassMode::UpdateAll,
+                                                                        rows_spawn.clone(),
+                                                                        log_panel_spawn.clone(),
+                                                                        status_label_spawn.clone(),
+                                                                        update_button_spawn.clone(),
+                                                                    )
+                                                                ),
+                                                            );
                                                         }
                                                     }
                                                     OrchestratorEvent::AllFinished => {
@@ -963,4 +1064,79 @@ impl UpWindow {
 
         (page_box, run_checks, distro_row, version_row, updating)
     }
+}
+
+/// Runs a VexOS cache-bypass command (`just deploy` / `just update-all`)
+/// chosen from the cache-block dialog, reporting progress on the existing
+/// Nix row and log panel. `button` is disabled while the bypass command
+/// runs and re-enabled once it finishes.
+fn spawn_cache_bypass(
+    mode: crate::backends::nix::CacheBypassMode,
+    rows: Rc<RefCell<Vec<(BackendKind, UpdateRow)>>>,
+    log_panel: LogPanel,
+    status_label: gtk::Label,
+    button: gtk::Button,
+) {
+    use crate::orchestrator::{run_cache_bypass, OrchestratorEvent};
+
+    button.set_sensitive(false);
+    let (event_tx, event_rx) = async_channel::unbounded::<OrchestratorEvent>();
+    run_cache_bypass(mode, event_tx);
+
+    glib::spawn_future_local(async move {
+        while let Ok(event) = event_rx.recv().await {
+            match event {
+                OrchestratorEvent::AuthStarted => {
+                    log_panel.append_line("Requesting administrator privileges\u{2026}");
+                }
+                OrchestratorEvent::AuthSucceeded => {
+                    status_label.set_label("Updating\u{2026}");
+                }
+                OrchestratorEvent::AuthFailed(e) => {
+                    log_panel.append_line(&format!("Authentication failed: {e}"));
+                    button.set_sensitive(true);
+                    return;
+                }
+                OrchestratorEvent::BackendStarted(kind) => {
+                    let rows_borrowed = rows.borrow();
+                    if let Some((_, row)) = rows_borrowed.iter().find(|(k, _)| *k == kind) {
+                        row.set_status_running();
+                    }
+                }
+                OrchestratorEvent::BackendLog(kind, line) => {
+                    log_panel.append_line(&format!("[{kind}] {line}"));
+                }
+                OrchestratorEvent::BackendFinished(kind, result) => {
+                    let rows_borrowed = rows.borrow();
+                    if let Some((_, row)) = rows_borrowed.iter().find(|(k, _)| *k == kind) {
+                        match &result {
+                            UpdateResult::Success { updated_count } => {
+                                row.set_status_success(*updated_count);
+                                status_label.set_label("Update complete.");
+                            }
+                            UpdateResult::SuccessWithSelfUpdate { updated_count } => {
+                                row.set_status_success(*updated_count);
+                                status_label.set_label("Update complete.");
+                            }
+                            UpdateResult::Error(msg) => {
+                                row.set_status_error(&msg.to_string());
+                                status_label.set_label("Update failed.");
+                            }
+                            UpdateResult::Skipped(msg) => {
+                                row.set_status_skipped(msg);
+                            }
+                            UpdateResult::Cancelled => {
+                                row.set_status_skipped("Cancelled");
+                            }
+                            UpdateResult::CacheMiss => {
+                                row.set_status_skipped("Binary cache syncing, try again later");
+                            }
+                        }
+                    }
+                }
+                OrchestratorEvent::AllFinished => break,
+            }
+        }
+        button.set_sensitive(true);
+    });
 }

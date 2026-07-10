@@ -1,3 +1,4 @@
+pub mod cache_block_dialog;
 pub mod history_page;
 pub mod log_panel;
 pub mod reboot_dialog;

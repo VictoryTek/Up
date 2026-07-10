@@ -756,6 +756,70 @@ impl Backend for NixBackend {
     }
 }
 
+/// Which `just` recipe to run when the user chooses to bypass a
+/// VEXOS_CACHE_BLOCK hold from the cache-block dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CacheBypassMode {
+    Deploy,
+    UpdateAll,
+}
+
+impl CacheBypassMode {
+    fn just_recipe(self) -> &'static str {
+        match self {
+            CacheBypassMode::Deploy => "deploy",
+            CacheBypassMode::UpdateAll => "update-all",
+        }
+    }
+}
+
+/// Run `just deploy` / `just update-all` in `/etc/nixos` as root, via the
+/// same pkexec + PATH-restoration pattern used for `vexos-update`.
+pub(crate) async fn run_cache_bypass(
+    mode: CacheBypassMode,
+    runner: &dyn CommandExecutor,
+) -> UpdateResult {
+    let cmd = format!(
+        "cd /etc/nixos && stdbuf -oL -eL just {}",
+        mode.just_recipe()
+    );
+    match runner
+        .run(
+            "pkexec",
+            &[
+                "env",
+                "PATH=/run/current-system/sw/bin:/run/wrappers/bin:/nix/var/nix/profiles/default/bin",
+                "sh",
+                "-c",
+                &cmd,
+            ],
+        )
+        .await
+    {
+        Ok(output) => UpdateResult::Success {
+            updated_count: count_nix_store_operations(&output),
+        },
+        Err(e) => UpdateResult::Error(e),
+    }
+}
+
+/// Extract the human-readable VEXOS_CACHE_BLOCK explanation from the raw
+/// (unprefixed) log lines captured during a single backend run. Returns
+/// `None` if no such lines were present.
+pub(crate) fn extract_cache_block_message(lines: &[String]) -> Option<String> {
+    let msgs: Vec<&str> = lines
+        .iter()
+        .filter_map(|l| l.strip_prefix("VEXOS_CACHE_BLOCK:"))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if msgs.is_empty() {
+        None
+    } else {
+        Some(msgs.join("\n"))
+    }
+}
+
 /// Count store paths freed by `nix-collect-garbage -d`.
 /// Output contains lines like: "1234 store paths deleted, 567.89 MiB freed"
 pub(crate) fn count_nix_freed_paths(output: &str) -> usize {
@@ -773,7 +837,8 @@ pub(crate) fn count_nix_freed_paths(output: &str) -> usize {
 mod tests {
     use super::{
         compare_lock_nodes, count_determinate_upgraded, count_nix_store_operations,
-        is_determinate_nix, is_nixos, upgrade_available_in_output, validate_flake_attr, NixBackend,
+        extract_cache_block_message, is_determinate_nix, is_nixos, upgrade_available_in_output,
+        validate_flake_attr, NixBackend,
     };
     use crate::backends::{Backend, UpdateResult};
     use crate::executor::test_utils::MockExecutor;
@@ -959,6 +1024,39 @@ mod tests {
             matches!(result, UpdateResult::Error(_)),
             "Expected Error, got {:?}",
             result
+        );
+    }
+
+    #[test]
+    fn extract_cache_block_message_none_when_absent() {
+        let lines = vec!["hello".to_string(), "world".to_string()];
+        assert_eq!(extract_cache_block_message(&lines), None);
+    }
+
+    #[test]
+    fn extract_cache_block_message_extracts_and_strips_prefix() {
+        let lines: Vec<String> = [
+            "Checking for packages that require a local source build...",
+            "",
+            "VEXOS_CACHE_BLOCK: Update paused — kernel packages require a",
+            "VEXOS_CACHE_BLOCK: local source build (typically 1-3 days until Hydra caches them):",
+            "VEXOS_CACHE_BLOCK:   linux-7.1.2-modules.drv",
+            "VEXOS_CACHE_BLOCK:   linux-7.1.2-modules-shrunk.drv",
+            "VEXOS_CACHE_BLOCK:",
+            "VEXOS_CACHE_BLOCK: flake.lock restored. No changes were applied.",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        let result = extract_cache_block_message(&lines).expect("expected Some(..)");
+        assert_eq!(
+            result,
+            "Update paused — kernel packages require a\n\
+             local source build (typically 1-3 days until Hydra caches them):\n\
+             linux-7.1.2-modules.drv\n\
+             linux-7.1.2-modules-shrunk.drv\n\
+             flake.lock restored. No changes were applied."
         );
     }
 }
