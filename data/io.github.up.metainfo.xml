@@ -26,6 +26,11 @@
   <launchable type="desktop-id">io.github.up.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="2.1.0" date="2026-07-09">
+      <description translate="no">
+        <p>Add a VexOS cache-block dialog with just deploy/just update-all bypass options, a new cyan/orange brand theme, and layout improvements including a hero-row button layout and a terminal panel expanded by default.</p>
+      </description>
+    </release>
     <release version="2.0.4" date="2026-06-14">
       <description translate="no">
         <p>Fix NixOS/VexOS false positive update detection, Flatpak false negative update detection, and move the update button to a fixed footer with a new Cancel action.</p>
