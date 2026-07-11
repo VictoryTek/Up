@@ -84,12 +84,14 @@ impl Backend for FwupdBackend {
                     let count = count_fwupd_updated(&output);
                     UpdateResult::Success {
                         updated_count: count,
+                        updated_items: Vec::new(),
                     }
                 }
                 // Exit code 2 = no updates pending; treat as clean success.
-                Err(BackendError::Exit { code: 2, .. }) => {
-                    UpdateResult::Success { updated_count: 0 }
-                }
+                Err(BackendError::Exit { code: 2, .. }) => UpdateResult::Success {
+                    updated_count: 0,
+                    updated_items: Vec::new(),
+                },
                 Err(e) => UpdateResult::Error(e),
             }
         })
@@ -267,7 +269,13 @@ mod tests {
             .unwrap()
             .block_on(FwupdBackend.run_update(&mock));
         assert!(
-            matches!(result, UpdateResult::Success { updated_count: 0 }),
+            matches!(
+                result,
+                UpdateResult::Success {
+                    updated_count: 0,
+                    ..
+                }
+            ),
             "Expected Success {{ updated_count: 0 }} for exit 2, got {:?}",
             result
         );
@@ -292,7 +300,13 @@ mod tests {
         let mock = MockExecutor::with_output(output);
         let result = FwupdBackend.run_update(&mock).await;
         assert!(
-            matches!(result, UpdateResult::Success { updated_count: 1 }),
+            matches!(
+                result,
+                UpdateResult::Success {
+                    updated_count: 1,
+                    ..
+                }
+            ),
             "Expected Success {{ updated_count: 1 }}, got {:?}",
             result
         );

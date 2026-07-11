@@ -549,12 +549,18 @@ impl UpWindow {
                                             rows_borrowed.iter().find(|(k, _)| *k == kind)
                                         {
                                             match &result {
-                                                UpdateResult::Success { updated_count } => {
+                                                UpdateResult::Success {
+                                                    updated_count,
+                                                    updated_items,
+                                                } => {
+                                                    row.set_packages(updated_items);
                                                     row.set_status_success(*updated_count);
                                                 }
                                                 UpdateResult::SuccessWithSelfUpdate {
                                                     updated_count,
+                                                    updated_items,
                                                 } => {
+                                                    row.set_packages(updated_items);
                                                     row.set_status_success(*updated_count);
                                                     self_updated = true;
                                                 }
@@ -950,14 +956,22 @@ impl UpWindow {
                                                                 match &result {
                                                                     UpdateResult::Success {
                                                                         updated_count,
+                                                                        updated_items,
                                                                     } => {
+                                                                        row.set_packages(
+                                                                            updated_items,
+                                                                        );
                                                                         row.set_status_success(
                                                                             *updated_count,
                                                                         );
                                                                     }
                                                                     UpdateResult::SuccessWithSelfUpdate {
                                                                         updated_count,
+                                                                        updated_items,
                                                                     } => {
+                                                                        row.set_packages(
+                                                                            updated_items,
+                                                                        );
                                                                         row.set_status_success(
                                                                             *updated_count,
                                                                         );
@@ -1110,11 +1124,19 @@ fn spawn_cache_bypass(
                     let rows_borrowed = rows.borrow();
                     if let Some((_, row)) = rows_borrowed.iter().find(|(k, _)| *k == kind) {
                         match &result {
-                            UpdateResult::Success { updated_count } => {
+                            UpdateResult::Success {
+                                updated_count,
+                                updated_items,
+                            } => {
+                                row.set_packages(updated_items);
                                 row.set_status_success(*updated_count);
                                 status_label.set_label("Update complete.");
                             }
-                            UpdateResult::SuccessWithSelfUpdate { updated_count } => {
+                            UpdateResult::SuccessWithSelfUpdate {
+                                updated_count,
+                                updated_items,
+                            } => {
+                                row.set_packages(updated_items);
                                 row.set_status_success(*updated_count);
                                 status_label.set_label("Update complete.");
                             }

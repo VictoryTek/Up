@@ -61,6 +61,7 @@ impl Backend for AptBackend {
                     let count = count_apt_upgraded(&output);
                     UpdateResult::Success {
                         updated_count: count,
+                        updated_items: Vec::new(),
                     }
                 }
                 Err(e) => UpdateResult::Error(e),
@@ -124,6 +125,7 @@ impl Backend for AptBackend {
                     let removed = count_apt_autoremovals(&output);
                     UpdateResult::Success {
                         updated_count: removed,
+                        updated_items: Vec::new(),
                     }
                 }
                 Err(e) => UpdateResult::Error(e),
@@ -169,6 +171,7 @@ impl Backend for AptBackend {
             match runner.run("pkexec", &["sh", "-c", &cmd]).await {
                 Ok(output) => UpdateResult::Success {
                     updated_count: count_apt_upgraded(&output),
+                    updated_items: Vec::new(),
                 },
                 Err(e) => UpdateResult::Error(e),
             }
@@ -230,6 +233,7 @@ impl Backend for DnfBackend {
                     let count = count_dnf_upgraded(&output);
                     UpdateResult::Success {
                         updated_count: count,
+                        updated_items: Vec::new(),
                     }
                 }
                 Err(e) => UpdateResult::Error(e),
@@ -286,6 +290,7 @@ impl Backend for DnfBackend {
                     let removed = count_dnf_autoremovals(&output);
                     UpdateResult::Success {
                         updated_count: removed,
+                        updated_items: Vec::new(),
                     }
                 }
                 Err(e) => UpdateResult::Error(e),
@@ -322,6 +327,7 @@ impl Backend for DnfBackend {
             match runner.run("pkexec", &args).await {
                 Ok(output) => UpdateResult::Success {
                     updated_count: count_dnf_upgraded(&output),
+                    updated_items: Vec::new(),
                 },
                 Err(e) => UpdateResult::Error(e),
             }
@@ -392,6 +398,7 @@ impl Backend for PacmanBackend {
                     let count = count_pacman_upgraded(&output);
                     UpdateResult::Success {
                         updated_count: count,
+                        updated_items: Vec::new(),
                     }
                 }
                 Err(e) => UpdateResult::Error(e),
@@ -444,7 +451,10 @@ impl Backend for PacmanBackend {
                 .collect();
 
             if orphans.is_empty() {
-                return UpdateResult::Success { updated_count: 0 };
+                return UpdateResult::Success {
+                    updated_count: 0,
+                    updated_items: Vec::new(),
+                };
             }
 
             // Step 2: Remove orphans with privilege.
@@ -454,6 +464,7 @@ impl Backend for PacmanBackend {
             match runner.run("pkexec", &args).await {
                 Ok(_) => UpdateResult::Success {
                     updated_count: orphans.len(),
+                    updated_items: Vec::new(),
                 },
                 Err(e) => UpdateResult::Error(e),
             }
@@ -502,6 +513,7 @@ impl Backend for ZypperBackend {
                     let count = count_zypper_upgraded(&output);
                     UpdateResult::Success {
                         updated_count: count,
+                        updated_items: Vec::new(),
                     }
                 }
                 Err(e) => UpdateResult::Error(e),
@@ -574,7 +586,10 @@ impl Backend for ZypperBackend {
                 .collect();
 
             if orphans.is_empty() {
-                return UpdateResult::Success { updated_count: 0 };
+                return UpdateResult::Success {
+                    updated_count: 0,
+                    updated_items: Vec::new(),
+                };
             }
 
             // Step 2: Remove orphans with privilege via a shell string.
@@ -585,6 +600,7 @@ impl Backend for ZypperBackend {
             match runner.run("pkexec", &zypper_args).await {
                 Ok(_) => UpdateResult::Success {
                     updated_count: orphans.len(),
+                    updated_items: Vec::new(),
                 },
                 Err(e) => UpdateResult::Error(e),
             }
@@ -620,6 +636,7 @@ impl Backend for ZypperBackend {
             match runner.run("pkexec", &args).await {
                 Ok(output) => UpdateResult::Success {
                     updated_count: count_zypper_upgraded(&output),
+                    updated_items: Vec::new(),
                 },
                 Err(e) => UpdateResult::Error(e),
             }
@@ -836,7 +853,13 @@ mod tests {
         let mock = MockExecutor::with_output(output);
         let result = AptBackend.run_update(&mock).await;
         assert!(
-            matches!(result, UpdateResult::Success { updated_count: 3 }),
+            matches!(
+                result,
+                UpdateResult::Success {
+                    updated_count: 3,
+                    ..
+                }
+            ),
             "Expected Success {{ updated_count: 3 }}, got {:?}",
             result
         );
@@ -859,7 +882,13 @@ mod tests {
         let mock = MockExecutor::with_output(output);
         let result = DnfBackend.run_update(&mock).await;
         assert!(
-            matches!(result, UpdateResult::Success { updated_count: 7 }),
+            matches!(
+                result,
+                UpdateResult::Success {
+                    updated_count: 7,
+                    ..
+                }
+            ),
             "Expected Success {{ updated_count: 7 }}, got {:?}",
             result
         );
@@ -878,7 +907,13 @@ mod tests {
         let mock = MockExecutor::with_output(output);
         let result = PacmanBackend.run_update(&mock).await;
         assert!(
-            matches!(result, UpdateResult::Success { updated_count: 3 }),
+            matches!(
+                result,
+                UpdateResult::Success {
+                    updated_count: 3,
+                    ..
+                }
+            ),
             "Expected Success {{ updated_count: 3 }}, got {:?}",
             result
         );
@@ -901,7 +936,13 @@ mod tests {
         let mock = MockExecutor::with_output(output);
         let result = ZypperBackend.run_update(&mock).await;
         assert!(
-            matches!(result, UpdateResult::Success { updated_count: 3 }),
+            matches!(
+                result,
+                UpdateResult::Success {
+                    updated_count: 3,
+                    ..
+                }
+            ),
             "Expected Success {{ updated_count: 3 }}, got {:?}",
             result
         );

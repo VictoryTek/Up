@@ -36,6 +36,7 @@ impl Backend for HomebrewBackend {
                     let count = count_homebrew_upgraded(&output);
                     UpdateResult::Success {
                         updated_count: count,
+                        updated_items: Vec::new(),
                     }
                 }
                 Err(e) => UpdateResult::Error(e),
@@ -76,6 +77,7 @@ impl Backend for HomebrewBackend {
                     let removed = count_brew_cleaned(&output);
                     UpdateResult::Success {
                         updated_count: removed,
+                        updated_items: Vec::new(),
                     }
                 }
                 Err(e) => UpdateResult::Error(e),
@@ -116,6 +118,7 @@ impl Backend for HomebrewBackend {
             match runner.run("brew", &args).await {
                 Ok(output) => UpdateResult::Success {
                     updated_count: count_homebrew_upgraded(&output),
+                    updated_items: Vec::new(),
                 },
                 Err(e) => UpdateResult::Error(e),
             }
@@ -191,7 +194,13 @@ mod tests {
         ]);
         let result = HomebrewBackend.run_update(&mock).await;
         assert!(
-            matches!(result, UpdateResult::Success { updated_count: 4 }),
+            matches!(
+                result,
+                UpdateResult::Success {
+                    updated_count: 4,
+                    ..
+                }
+            ),
             "Expected Success {{ updated_count: 4 }}, got {:?}",
             result
         );

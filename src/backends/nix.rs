@@ -123,21 +123,49 @@ pub(crate) fn resolve_nixos_flake_attr() -> Result<String, String> {
 ///
 /// These lines are only present when real work is done. When the system is
 /// already up to date they are absent, so this function correctly returns 0.
+///
+/// Defined in terms of `parse_nix_build_items` so the count and the item
+/// list can never disagree. No longer called from `run_update` (which now
+/// derives `updated_count` directly from `parse_nix_build_items(&output).len()`
+/// alongside `updated_items`); kept for its unit tests and as the documented
+/// counting behavior.
+#[allow(dead_code)]
 pub(crate) fn count_nix_store_operations(output: &str) -> usize {
-    let mut total = 0usize;
+    parse_nix_build_items(output).len()
+}
+
+/// Parse the combined stdout+stderr output of Nix build commands to extract
+/// human-readable names of the store paths that were actually built or
+/// fetched.
+///
+/// Scans for the same header lines matched by `count_nix_store_operations`
+/// ("these N derivations will be built:" / "these N paths will be fetched
+/// ...:"), then collects the indented `/nix/store/...` path lines that
+/// follow each header, stripping the `/nix/store/<hash>-` prefix and `.drv`
+/// suffix to produce a readable name (e.g. `firefox-128.0`).
+pub(crate) fn parse_nix_build_items(output: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let mut in_list = false;
     for line in output.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("these ")
             && (trimmed.contains("derivations will be built")
                 || trimmed.contains("paths will be fetched"))
         {
-            let after_these = &trimmed["these ".len()..];
-            if let Some(n_str) = after_these.split_whitespace().next() {
-                total += n_str.parse::<usize>().unwrap_or(0);
+            in_list = true;
+            continue;
+        }
+        if in_list {
+            if let Some(rest) = trimmed.strip_prefix("/nix/store/") {
+                let name = rest.split_once('-').map(|(_, n)| n).unwrap_or(rest);
+                let name = name.strip_suffix(".drv").unwrap_or(name);
+                items.push(name.to_string());
+            } else {
+                in_list = false;
             }
         }
     }
-    total
+    items
 }
 
 /// Compare two flake.lock JSON values and return the names of inputs whose
@@ -482,9 +510,13 @@ impl Backend for NixBackend {
                             )
                             .await
                         {
-                            Ok(output) => UpdateResult::Success {
-                                updated_count: count_nix_store_operations(&output),
-                            },
+                            Ok(output) => {
+                                let items = parse_nix_build_items(&output);
+                                UpdateResult::Success {
+                                    updated_count: items.len(),
+                                    updated_items: items,
+                                }
+                            }
                             Err(BackendError::Exit { code: 2, .. }) => UpdateResult::CacheMiss,
                             Err(e) => UpdateResult::Error(e),
                         }
@@ -521,9 +553,13 @@ impl Backend for NixBackend {
                         )
                         .await
                     {
-                        Ok(output) => UpdateResult::Success {
-                            updated_count: count_nix_store_operations(&output),
-                        },
+                        Ok(output) => {
+                            let items = parse_nix_build_items(&output);
+                            UpdateResult::Success {
+                                updated_count: items.len(),
+                                updated_items: items,
+                            }
+                        }
                         Err(e) => UpdateResult::Error(e),
                     }
                     }
@@ -542,9 +578,13 @@ impl Backend for NixBackend {
                             ],
                         )
                         .await {
-                        Ok(output) => UpdateResult::Success {
-                            updated_count: count_nix_store_operations(&output),
-                        },
+                        Ok(output) => {
+                            let items = parse_nix_build_items(&output);
+                            UpdateResult::Success {
+                                updated_count: items.len(),
+                                updated_items: items,
+                            }
+                        }
                         Err(e) => UpdateResult::Error(e),
                     }
                 }
@@ -567,6 +607,7 @@ impl Backend for NixBackend {
                     match runner.run("pkexec", &[nixd_path.as_str(), "upgrade"]).await {
                         Ok(output) => UpdateResult::Success {
                             updated_count: count_determinate_upgraded(&output),
+                            updated_items: Vec::new(),
                         },
                         Err(e) => UpdateResult::Error(e),
                     }
@@ -588,21 +629,33 @@ impl Backend for NixBackend {
                     };
                     if use_legacy_nix_env {
                         match runner.run("nix-env", &["-u"]).await {
-                            Ok(output) => UpdateResult::Success {
-                                updated_count: output
+                            Ok(output) => {
+                                let items: Vec<String> = output
                                     .lines()
                                     .filter(|l| l.contains("upgrading"))
-                                    .count(),
-                            },
+                                    .filter_map(|l| l.split('\'').nth(1).map(|s| s.to_string()))
+                                    .collect();
+                                UpdateResult::Success {
+                                    updated_count: output
+                                        .lines()
+                                        .filter(|l| l.contains("upgrading"))
+                                        .count(),
+                                    updated_items: items,
+                                }
+                            }
                             Err(e) => UpdateResult::Error(e),
                         }
                     } else {
                         // Use the version-aware helper: tries `--all` (Nix ≥ 2.18)
                         // then falls back to the legacy `.*` regex argument.
                         match nix_profile_upgrade_all().await {
-                            Ok(output) => UpdateResult::Success {
-                                updated_count: count_nix_store_operations(&output),
-                            },
+                            Ok(output) => {
+                                let items = parse_nix_build_items(&output);
+                                UpdateResult::Success {
+                                    updated_count: items.len(),
+                                    updated_items: items,
+                                }
+                            }
                             Err(e) => UpdateResult::Error(BackendError::from_string(e)),
                         }
                     }
@@ -621,11 +674,7 @@ impl Backend for NixBackend {
                     // detect whether upstream flake inputs have changed before claiming an
                     // update is available — the same nixos_flake_changed_inputs() check used
                     // for standard NixOS flake systems works identically here.
-                    match nixos_flake_changed_inputs().await {
-                        Ok(inputs) if inputs.is_empty() => Ok(vec![]),
-                        Ok(_) => Ok(vec!["NixOS system".to_string()]),
-                        Err(e) => Err(e),
-                    }
+                    nixos_flake_changed_inputs().await
                 } else {
                     // Standard flake NixOS: compare flake.lock to detect input changes.
                     nixos_flake_changed_inputs().await
@@ -694,6 +743,7 @@ impl Backend for NixBackend {
                     let freed = count_nix_freed_paths(&output);
                     UpdateResult::Success {
                         updated_count: freed,
+                        updated_items: Vec::new(),
                     }
                 }
                 Err(e) => UpdateResult::Error(e),
@@ -747,9 +797,13 @@ impl Backend for NixBackend {
                 )
                 .await
             {
-                Ok(output) => UpdateResult::Success {
-                    updated_count: count_nix_store_operations(&output),
-                },
+                Ok(output) => {
+                    let items = parse_nix_build_items(&output);
+                    UpdateResult::Success {
+                        updated_count: items.len(),
+                        updated_items: items,
+                    }
+                }
                 Err(e) => UpdateResult::Error(e),
             }
         })
@@ -796,9 +850,13 @@ pub(crate) async fn run_cache_bypass(
         )
         .await
     {
-        Ok(output) => UpdateResult::Success {
-            updated_count: count_nix_store_operations(&output),
-        },
+        Ok(output) => {
+            let items = parse_nix_build_items(&output);
+            UpdateResult::Success {
+                updated_count: items.len(),
+                updated_items: items,
+            }
+        }
         Err(e) => UpdateResult::Error(e),
     }
 }
@@ -837,8 +895,8 @@ pub(crate) fn count_nix_freed_paths(output: &str) -> usize {
 mod tests {
     use super::{
         compare_lock_nodes, count_determinate_upgraded, count_nix_store_operations,
-        extract_cache_block_message, is_determinate_nix, is_nixos, upgrade_available_in_output,
-        validate_flake_attr, NixBackend,
+        extract_cache_block_message, is_determinate_nix, is_nixos, parse_nix_build_items,
+        upgrade_available_in_output, validate_flake_attr, NixBackend,
     };
     use crate::backends::{Backend, UpdateResult};
     use crate::executor::test_utils::MockExecutor;
@@ -880,21 +938,59 @@ mod tests {
 
     #[test]
     fn test_count_nix_store_ops_build_only() {
-        let output = "these 3 derivations will be built:\n  /nix/store/foo.drv\n";
+        let output = "these 3 derivations will be built:\n  \
+             /nix/store/aaa-foo-1.0.drv\n  \
+             /nix/store/bbb-bar-2.0.drv\n  \
+             /nix/store/ccc-baz-3.0.drv\n";
         assert_eq!(count_nix_store_operations(output), 3);
     }
 
     #[test]
     fn test_count_nix_store_ops_fetch_only() {
-        let output = "these 5 paths will be fetched (10 MiB download, 50 MiB unpacked):\n";
+        let output = "these 5 paths will be fetched (10 MiB download, 50 MiB unpacked):\n  \
+             /nix/store/aaa-foo-1.0\n  \
+             /nix/store/bbb-bar-2.0\n  \
+             /nix/store/ccc-baz-3.0\n  \
+             /nix/store/ddd-qux-4.0\n  \
+             /nix/store/eee-quux-5.0\n";
         assert_eq!(count_nix_store_operations(output), 5);
     }
 
     #[test]
     fn test_count_nix_store_ops_build_and_fetch() {
-        let output =
-            "these 2 derivations will be built:\nthese 5 paths will be fetched (10 MiB download, 50 MiB unpacked):";
+        let output = "these 2 derivations will be built:\n  \
+             /nix/store/aaa-foo-1.0.drv\n  \
+             /nix/store/bbb-bar-2.0.drv\n\
+             these 5 paths will be fetched (10 MiB download, 50 MiB unpacked):\n  \
+             /nix/store/ccc-baz-3.0\n  \
+             /nix/store/ddd-qux-4.0\n  \
+             /nix/store/eee-quux-5.0\n  \
+             /nix/store/fff-corge-6.0\n  \
+             /nix/store/ggg-grault-7.0\n";
         assert_eq!(count_nix_store_operations(output), 7);
+    }
+
+    #[test]
+    fn parse_nix_build_items_no_op() {
+        assert_eq!(parse_nix_build_items("nothing to do"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn parse_nix_build_items_multi_derivation_build() {
+        let output = "these 2 derivations will be built:\n  \
+             /nix/store/aaa-firefox-128.0.drv\n  \
+             /nix/store/bbb-htop-3.3.0.drv\n";
+        assert_eq!(
+            parse_nix_build_items(output),
+            vec!["firefox-128.0".to_string(), "htop-3.3.0".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_nix_build_items_single_fetch() {
+        let output = "these 1 paths will be fetched (5 MiB download, 10 MiB unpacked):\n  \
+             /nix/store/ccc-vim-9.1\n";
+        assert_eq!(parse_nix_build_items(output), vec!["vim-9.1".to_string()]);
     }
 
     #[test]
@@ -989,7 +1085,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp_home);
 
         match result {
-            UpdateResult::Success { updated_count } => assert_eq!(updated_count, 1),
+            UpdateResult::Success {
+                updated_count,
+                updated_items,
+            } => {
+                assert_eq!(updated_count, 1);
+                assert_eq!(updated_items, vec!["hello-2.10".to_string()]);
+            }
             other => panic!("Expected Success {{ updated_count: 1 }}, got {:?}", other),
         }
     }

@@ -74,14 +74,10 @@ impl Backend for FlatpakBackend {
             match runner.run(&cmd, &args_refs).await {
                 Ok(output) => {
                     // Flatpak shows a table of updates; lines starting with a number
-                    // indicate an actual update operation.
-                    let count = output
-                        .lines()
-                        .filter(|l| {
-                            let t = l.trim();
-                            t.starts_with(|c: char| c.is_ascii_digit())
-                        })
-                        .count();
+                    // indicate an actual update operation. Parse the app/runtime ID
+                    // out of each such line so the count and dropdown list are
+                    // always derived from the same data and can never disagree.
+                    let items = parse_flatpak_update_items(&output);
 
                     // When running inside the sandbox, detect whether Up itself was
                     // updated so the UI can prompt the user to restart.
@@ -101,11 +97,13 @@ impl Backend for FlatpakBackend {
 
                     if updated_self || github_self_updated {
                         UpdateResult::SuccessWithSelfUpdate {
-                            updated_count: count,
+                            updated_count: items.len(),
+                            updated_items: items,
                         }
                     } else {
                         UpdateResult::Success {
-                            updated_count: count,
+                            updated_count: items.len(),
+                            updated_items: items,
                         }
                     }
                 }
@@ -211,6 +209,7 @@ impl Backend for FlatpakBackend {
                         .count();
                     UpdateResult::Success {
                         updated_count: removed,
+                        updated_items: Vec::new(),
                     }
                 }
                 Err(e) => UpdateResult::Error(e),
@@ -248,21 +247,40 @@ impl Backend for FlatpakBackend {
             let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
             match runner.run(&cmd, &args_refs).await {
                 Ok(output) => {
-                    let count = output
-                        .lines()
-                        .filter(|l| {
-                            let t = l.trim();
-                            t.starts_with(|c: char| c.is_ascii_digit())
-                        })
-                        .count();
+                    let items = parse_flatpak_update_items(&output);
                     UpdateResult::Success {
-                        updated_count: count,
+                        updated_count: items.len(),
+                        updated_items: items,
                     }
                 }
                 Err(e) => UpdateResult::Error(e),
             }
         })
     }
+}
+
+/// Parse the digit-prefixed table rows emitted by `flatpak update -y` (and
+/// `flatpak update -y <ids...>`) to extract the application/runtime ID of
+/// each item actually updated, e.g.:
+///
+///   1. org.gnome.Calculator          stable  u   flathub 1.5 MB
+///
+/// Each matched line's second whitespace-separated token (after the `N.`
+/// index) is the ID. Lines that don't parse cleanly are omitted rather than
+/// erroring the whole update.
+pub(crate) fn parse_flatpak_update_items(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter_map(|l| {
+            let t = l.trim();
+            if !t.starts_with(|c: char| c.is_ascii_digit()) {
+                return None;
+            }
+            let mut parts = t.split_whitespace();
+            parts.next()?; // the "N." index
+            parts.next().map(|s| s.to_string())
+        })
+        .collect()
 }
 
 /// Run `flatpak remote-ls --updates <scope> --columns=name` and return
@@ -378,6 +396,25 @@ mod tests {
         assert_eq!(result, vec!["org.gnome.Calculator".to_string()]);
     }
 
+    #[test]
+    fn test_parse_flatpak_update_items_numbered_table() {
+        let output = "Looking for updates...\n\n   ID                            Branch  Op  Remote  Download\n1. org.gnome.Calculator          stable  u   flathub 1.5 MB\n2. com.spotify.Client            stable  u   flathub 87.3 MB\n\nUpdating: org.gnome.Calculator/x86_64/stable from flathub\n";
+        assert_eq!(
+            parse_flatpak_update_items(output),
+            vec![
+                "org.gnome.Calculator".to_string(),
+                "com.spotify.Client".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_flatpak_update_items_nothing_to_do() {
+        assert!(
+            parse_flatpak_update_items("Looking for updates...\n\nNothing to do.\n").is_empty()
+        );
+    }
+
     // --- run_update pipeline tests ---
 
     #[tokio::test]
@@ -385,11 +422,22 @@ mod tests {
         let output = "Looking for updates...\n\n   ID                            Branch  Op  Remote  Download\n1. org.gnome.Calculator          stable  u   flathub 1.5 MB\n2. com.spotify.Client            stable  u   flathub 87.3 MB\n\nUpdating: org.gnome.Calculator/x86_64/stable from flathub\n";
         let mock = MockExecutor::with_output(output);
         let result = FlatpakBackend.run_update(&mock).await;
-        assert!(
-            matches!(result, UpdateResult::Success { updated_count: 2 }),
-            "Expected Success {{ updated_count: 2 }}, got {:?}",
-            result
-        );
+        match result {
+            UpdateResult::Success {
+                updated_count,
+                updated_items,
+            } => {
+                assert_eq!(updated_count, 2);
+                assert_eq!(
+                    updated_items,
+                    vec![
+                        "org.gnome.Calculator".to_string(),
+                        "com.spotify.Client".to_string()
+                    ]
+                );
+            }
+            other => panic!("Expected Success {{ updated_count: 2 }}, got {:?}", other),
+        }
     }
 
     #[tokio::test]
@@ -397,7 +445,13 @@ mod tests {
         let mock = MockExecutor::with_output("Looking for updates...\n\nNothing to do.\n");
         let result = FlatpakBackend.run_update(&mock).await;
         assert!(
-            matches!(result, UpdateResult::Success { updated_count: 0 }),
+            matches!(
+                result,
+                UpdateResult::Success {
+                    updated_count: 0,
+                    ..
+                }
+            ),
             "Expected Success {{ updated_count: 0 }}, got {:?}",
             result
         );

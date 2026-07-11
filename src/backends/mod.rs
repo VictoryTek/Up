@@ -103,12 +103,14 @@ impl fmt::Display for BackendKind {
 pub enum UpdateResult {
     Success {
         updated_count: usize,
+        updated_items: Vec<String>,
     },
     /// Emitted by `FlatpakBackend` when running inside the Flatpak sandbox and
     /// the update output indicates that Up itself (`APP_ID`) was updated.  The
     /// UI layer uses this variant to reveal a restart notification banner.
     SuccessWithSelfUpdate {
         updated_count: usize,
+        updated_items: Vec<String>,
     },
     Error(BackendError),
     #[allow(dead_code)]
@@ -187,7 +189,12 @@ pub trait Backend: Send + Sync {
         runner: &'a dyn CommandExecutor,
     ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
         let _ = runner;
-        Box::pin(async { UpdateResult::Success { updated_count: 0 } })
+        Box::pin(async {
+            UpdateResult::Success {
+                updated_count: 0,
+                updated_items: Vec::new(),
+            }
+        })
     }
 
     /// Whether this backend supports updating a user-specified subset of items

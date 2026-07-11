@@ -67,6 +67,7 @@ impl Backend for PluginBackend {
                     let count = parser::apply_parser_count(&cmd.parser, &output);
                     UpdateResult::Success {
                         updated_count: count,
+                        updated_items: Vec::new(),
                     }
                 }
                 Err(e) => UpdateResult::Error(e),
@@ -125,7 +126,10 @@ impl Backend for PluginBackend {
     ) -> Pin<Box<dyn Future<Output = UpdateResult> + Send + 'a>> {
         Box::pin(async move {
             let Some(cmd) = &self.descriptor.commands.cleanup else {
-                return UpdateResult::Success { updated_count: 0 };
+                return UpdateResult::Success {
+                    updated_count: 0,
+                    updated_items: Vec::new(),
+                };
             };
 
             let args: Vec<&str> = cmd.args.iter().map(|s| s.as_str()).collect();
@@ -136,6 +140,7 @@ impl Backend for PluginBackend {
                     let count = parser::apply_parser_count(&cmd.parser, &output);
                     UpdateResult::Success {
                         updated_count: count,
+                        updated_items: Vec::new(),
                     }
                 }
                 Err(e) => UpdateResult::Error(e),
