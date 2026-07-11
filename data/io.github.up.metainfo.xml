@@ -26,6 +26,11 @@
   <launchable type="desktop-id">io.github.up.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="2.2.0" date="2026-07-11">
+      <description translate="no">
+        <p>Show a package-count popover instead of an inline expanding list for updated packages, so viewing them no longer grows the page or triggers the page scrollbar, and fix the updated-items list to reflect what was actually updated.</p>
+      </description>
+    </release>
     <release version="2.1.0" date="2026-07-09">
       <description translate="no">
         <p>Add a VexOS cache-block dialog with just deploy/just update-all bypass options, a new cyan/orange brand theme, and layout improvements including a hero-row button layout and a terminal panel expanded by default.</p>

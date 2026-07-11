@@ -3,7 +3,7 @@ members = [".", "daemon"]
 
 [package]
 name = "up"
-version = "2.1.0"
+version = "2.2.0"
 edition = "2021"
 description = "A modern system update & upgrade app for Linux"
 license = "GPL-3.0-or-later"
