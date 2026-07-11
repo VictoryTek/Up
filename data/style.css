@@ -95,13 +95,19 @@ preferencesgroup > box {
   color: @vex_cyan;
 }
 
-/* ── ExpanderRow (backend rows) ───────────────────────────── */
-row.expander {
-  border-radius: 10px;
+/* ── Backend rows ─────────────────────────────────────────── */
+.vex-sources-group row:hover {
+  background-color: @vex_cyan_dim;
 }
 
-row.expander:hover {
+/* Package-count pill button that opens the package list popover */
+.pkg-count-pill {
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-weight: 600;
+  font-size: 12px;
   background-color: @vex_cyan_dim;
+  color: @vex_cyan;
 }
 
 /* ── Status label colours ─────────────────────────────────── */

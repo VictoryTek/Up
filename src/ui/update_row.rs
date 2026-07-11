@@ -1,16 +1,23 @@
 use adw::prelude::*;
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::rc::Rc;
 
 use crate::backends::Backend;
 
 #[derive(Clone)]
 pub struct UpdateRow {
-    pub row: adw::ExpanderRow,
+    pub row: adw::ActionRow,
     status_label: gtk::Label,
     spinner: gtk::Spinner,
-    /// Tracks child rows added by set_packages() so they can be cleared on re-check.
-    pkg_rows: Rc<RefCell<Vec<adw::ActionRow>>>,
+    /// Opens the popover listing this backend's pending/updated packages.
+    menu_button: gtk::MenuButton,
+    /// Heading inside the popover, e.g. "NixOS — 42 packages".
+    popover_heading: gtk::Label,
+    /// Holds one row per package name shown in the popover; cleared and
+    /// repopulated on each set_packages() call.
+    popover_list: gtk::ListBox,
+    /// Backend display name, reused for the popover heading.
+    backend_name: String,
     /// Current skip state; toggled by the skip checkbox.
     skip_flag: Rc<Cell<bool>>,
     /// Last resolved available-update count; used to restore status on un-skip.
@@ -51,7 +58,9 @@ impl UpdateRow {
             .build();
         skip_checkbox.update_property(&[gtk::accessible::Property::Label(kind_label.as_str())]);
 
-        let row = adw::ExpanderRow::builder()
+        let backend_name = backend.display_name().to_string();
+
+        let row = adw::ActionRow::builder()
             .title(backend.display_name())
             .subtitle(backend.description())
             .build();
@@ -61,11 +70,50 @@ impl UpdateRow {
         retry_button.set_visible(false);
         retry_button.connect_clicked(move |_| on_retry());
 
+        let popover_heading = gtk::Label::builder()
+            .css_classes(vec!["heading"])
+            .halign(gtk::Align::Start)
+            .margin_bottom(6)
+            .build();
+
+        let popover_list = gtk::ListBox::builder()
+            .selection_mode(gtk::SelectionMode::None)
+            .css_classes(vec!["boxed-list", "pkg-popover-list"])
+            .build();
+
+        let popover_scroller = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .max_content_height(320)
+            .propagate_natural_height(true)
+            .child(&popover_list)
+            .build();
+
+        let popover_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .margin_top(10)
+            .margin_bottom(10)
+            .margin_start(10)
+            .margin_end(10)
+            .width_request(240)
+            .build();
+        popover_box.append(&popover_heading);
+        popover_box.append(&popover_scroller);
+
+        let popover = gtk::Popover::builder().child(&popover_box).build();
+
+        let menu_button = gtk::MenuButton::builder()
+            .valign(gtk::Align::Center)
+            .css_classes(vec!["pkg-count-pill"])
+            .visible(false)
+            .build();
+        menu_button.set_popover(Some(&popover));
+
         row.add_prefix(&icon);
         row.add_suffix(&skip_checkbox);
         row.add_suffix(&retry_button);
         row.add_suffix(&spinner);
         row.add_suffix(&status_label);
+        row.add_suffix(&menu_button);
 
         {
             let skip_flag = skip_flag.clone();
@@ -102,7 +150,10 @@ impl UpdateRow {
             row,
             status_label,
             spinner,
-            pkg_rows: Rc::new(RefCell::new(Vec::new())),
+            menu_button,
+            popover_heading,
+            popover_list,
+            backend_name,
             skip_flag,
             last_available,
             check_errored: Rc::new(Cell::new(false)),
@@ -128,38 +179,45 @@ impl UpdateRow {
         self.check_errored.get()
     }
 
-    /// Populate the expander with a list of pending package names.
+    /// Populate the popover with a list of pending package names.
     /// Clears any previously added rows before adding new ones.
     /// Caps display at 50 items with a summary row for the remainder.
     pub fn set_packages(&self, packages: &[String]) {
         // Remove previously added package rows to avoid duplicates on re-check.
-        {
-            let mut tracked = self.pkg_rows.borrow_mut();
-            for pkg_row in tracked.drain(..) {
-                self.row.remove(&pkg_row);
-            }
+        while let Some(child) = self.popover_list.first_child() {
+            self.popover_list.remove(&child);
         }
-        // Hide the expand arrow when there is nothing to expand.
-        self.row.set_enable_expansion(!packages.is_empty());
+        // Hide the pill button when there is nothing to show.
         if packages.is_empty() {
-            self.row.set_expanded(false);
+            self.menu_button.set_visible(false);
             return;
         }
+        self.menu_button
+            .set_label(&format!("{} pkgs", packages.len()));
+        self.menu_button.set_visible(true);
+        self.popover_heading.set_label(&format!(
+            "{} \u{2014} {} packages",
+            self.backend_name,
+            packages.len()
+        ));
+
         const MAX_PACKAGES: usize = 50;
         let display_count = packages.len().min(MAX_PACKAGES);
-        let mut tracked = self.pkg_rows.borrow_mut();
         for pkg in &packages[..display_count] {
-            let pkg_row = adw::ActionRow::builder().title(pkg.as_str()).build();
-            self.row.add_row(&pkg_row);
-            tracked.push(pkg_row);
+            let label = gtk::Label::builder()
+                .label(pkg.as_str())
+                .halign(gtk::Align::Start)
+                .build();
+            self.popover_list.append(&label);
         }
         if packages.len() > MAX_PACKAGES {
             let remaining = packages.len() - MAX_PACKAGES;
-            let more_row = adw::ActionRow::builder()
-                .title(format!("\u{2026} and {remaining} more").as_str())
+            let label = gtk::Label::builder()
+                .label(format!("\u{2026} and {remaining} more"))
+                .halign(gtk::Align::Start)
+                .css_classes(vec!["dim-label"])
                 .build();
-            self.row.add_row(&more_row);
-            tracked.push(more_row);
+            self.popover_list.append(&label);
         }
     }
 
