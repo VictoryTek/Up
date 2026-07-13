@@ -109,11 +109,11 @@ impl UpdateRow {
         menu_button.set_popover(Some(&popover));
 
         row.add_prefix(&icon);
-        row.add_suffix(&skip_checkbox);
-        row.add_suffix(&retry_button);
-        row.add_suffix(&spinner);
-        row.add_suffix(&status_label);
         row.add_suffix(&menu_button);
+        row.add_suffix(&status_label);
+        row.add_suffix(&spinner);
+        row.add_suffix(&retry_button);
+        row.add_suffix(&skip_checkbox);
 
         {
             let skip_flag = skip_flag.clone();
