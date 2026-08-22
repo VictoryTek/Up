@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use crate::backends::BackendKind;
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufWriter, Write};
@@ -66,4 +65,38 @@ pub fn save_config(config: &AppConfig) -> io::Result<()> {
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     write!(writer, "{json}")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_and_load_round_trip_preserves_skipped_backends() {
+        let tmp = std::env::temp_dir().join(format!(
+            "up-config-test-{}-{}",
+            std::process::id(),
+            crate::history::now_secs()
+        ));
+        // SAFETY: single-threaded within this test; no other test reads/writes XDG_CONFIG_HOME.
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &tmp);
+        }
+
+        let config = AppConfig {
+            skipped_backends: vec![BackendKind::Apt, BackendKind::Plugin("xbps".into())],
+            snapshot_preference: SnapshotPreference::Always,
+        };
+        save_config(&config).expect("save_config should succeed");
+
+        let loaded = load_config();
+        assert_eq!(loaded.skipped_backends, config.skipped_backends);
+        assert_eq!(loaded.snapshot_preference, config.snapshot_preference);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+        // SAFETY: same single-threaded context as the set_var above.
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+    }
 }

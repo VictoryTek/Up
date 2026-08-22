@@ -866,11 +866,13 @@ impl UpWindow {
                     if let Ok(new_backends) = detect_rx.recv().await {
                         // Remove placeholder
                         backends_group.remove(&placeholder_row);
+                        let config = crate::config::load_config();
                         // Populate rows
                         {
                             let mut rows_mut = rows.borrow_mut();
                             for backend in &new_backends {
                                 let kind = backend.kind();
+                                let initial_skipped = config.skipped_backends.contains(&kind);
                                 let rows_cb = rows.clone();
                                 let button_cb = update_button.clone();
                                 let updating_cb = updating.clone();
@@ -883,6 +885,7 @@ impl UpWindow {
                                 let update_button_retry = update_button.clone();
                                 let row = UpdateRow::new(
                                     backend.as_ref(),
+                                    initial_skipped,
                                     move || {
                                         if updating_cb.get() {
                                             return;
@@ -894,6 +897,14 @@ impl UpWindow {
                                             .filter_map(|(_, r)| r.last_available_count())
                                             .sum();
                                         button_cb.set_sensitive(non_skipped_available > 0);
+
+                                        let mut cfg = crate::config::load_config();
+                                        cfg.skipped_backends = borrowed
+                                            .iter()
+                                            .filter(|(_, r)| r.is_skipped())
+                                            .map(|(k, _)| k.clone())
+                                            .collect();
+                                        let _ = crate::config::save_config(&cfg);
                                     },
                                     move || {
                                         use crate::orchestrator::{

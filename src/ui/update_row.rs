@@ -32,11 +32,12 @@ pub struct UpdateRow {
 impl UpdateRow {
     pub fn new(
         backend: &dyn Backend,
+        initial_skipped: bool,
         on_skip_changed: impl Fn() + 'static,
         on_retry: impl Fn() + 'static,
     ) -> Self {
         let status_label = gtk::Label::builder()
-            .label("Ready")
+            .label(if initial_skipped { "Skipped" } else { "Ready" })
             .css_classes(vec!["dim-label"])
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .build();
@@ -48,13 +49,14 @@ impl UpdateRow {
             .accessible_role(gtk::AccessibleRole::Presentation)
             .build();
 
-        let skip_flag = Rc::new(Cell::new(false));
+        let skip_flag = Rc::new(Cell::new(initial_skipped));
         let last_available: Rc<Cell<Option<usize>>> = Rc::new(Cell::new(None));
 
         let kind_label = format!("Skip {} during Update All", backend.display_name());
         let skip_checkbox = gtk::CheckButton::builder()
             .tooltip_text(&kind_label)
             .valign(gtk::Align::Center)
+            .active(initial_skipped)
             .build();
         skip_checkbox.update_property(&[gtk::accessible::Property::Label(kind_label.as_str())]);
 

@@ -69,7 +69,7 @@ Checklist convention: `[ ]` open, `[x]` done.
   third ViewStack page, (b) call `history::append_entry()` from the
   `BackendFinished` arms in both the Update-All loop and the retry loop.
 
-- [ ] **7. Persist user preferences (skip-backend choices) across restarts**
+- [x] **7. Persist user preferences (skip-backend choices) across restarts**
   Source: FEATURES 3 (related dead code also noted in ARCH M9, BUGS M4).
   Files: `src/config.rs` (dead, zero callers), `src/ui/update_row.rs` (skip checkboxes, session-only).
   `AppConfig` with JSON load/save already exists. Needs: load config on
