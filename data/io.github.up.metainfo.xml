@@ -26,6 +26,11 @@
   <launchable type="desktop-id">io.github.up.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="2.3.0" date="2026-08-22">
+      <description translate="no">
+        <p>Add an Update History tab, per-package selective updates, a Cleanup/maintenance mode, and persisted skip-backend preferences; fix Update All getting stuck after a failed authentication prompt, the daily "up --check" background check, and privileged plugin backends running unprivileged; and remove an unused, never-connected D-Bus service to shrink the app's footprint.</p>
+      </description>
+    </release>
     <release version="2.2.0" date="2026-07-11">
       <description translate="no">
         <p>Show a package-count popover instead of an inline expanding list for updated packages, so viewing them no longer grows the page or triggers the page scrollbar, and fix the updated-items list to reflect what was actually updated.</p>
