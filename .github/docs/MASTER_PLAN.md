@@ -76,7 +76,7 @@ Checklist convention: `[ ]` open, `[x]` done.
   backend-detection completion and pre-set checkboxes; save on
   `on_skip_changed`.
 
-- [ ] **8. Wire up Cleanup / maintenance mode**
+- [x] **8. Wire up Cleanup / maintenance mode**
   Source: ARCH M11, BUGS M4, FEATURES 4.
   Files: `src/orchestrator.rs:207-274` (`CleanupOrchestrator`, dead), every backend's `run_cleanup()`/`supports_cleanup()`, `src/ui/window.rs` (no entry point).
   Every backend already implements real cleanup logic (`apt autoremove`,

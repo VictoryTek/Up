@@ -17,6 +17,7 @@ type UpdatePageResult = (
     adw::ActionRow,
     adw::ActionRow,
     Rc<Cell<bool>>,
+    Rc<dyn Fn()>,
 );
 
 pub struct UpWindow;
@@ -34,8 +35,14 @@ impl UpWindow {
         let view_stack = adw::ViewStack::new();
 
         // --- Update Page ---
-        let (update_page, run_checks, sysinfo_distro_row, sysinfo_version_row, update_in_progress) =
-            Self::build_update_page();
+        let (
+            update_page,
+            run_checks,
+            sysinfo_distro_row,
+            sysinfo_version_row,
+            update_in_progress,
+            run_cleanup,
+        ) = Self::build_update_page();
         view_stack.add_titled_with_icon(
             &update_page,
             Some("update"),
@@ -133,6 +140,7 @@ impl UpWindow {
 
         // Application overflow menu (three-dot button on the end/right slot).
         let app_menu = gio::Menu::new();
+        app_menu.append(Some("Clean Up"), Some("win.cleanup"));
         app_menu.append(Some("About Up"), Some("win.about"));
         let menu_button = gtk::MenuButton::builder()
             .icon_name("open-menu-symbolic")
@@ -169,6 +177,12 @@ impl UpWindow {
             }
         ));
         window.add_action(&about_action);
+
+        // Register the "cleanup" window action that runs maintenance for
+        // every backend that supports it.
+        let cleanup_action = gio::SimpleAction::new("cleanup", None);
+        cleanup_action.connect_activate(move |_, _| (*run_cleanup)());
+        window.add_action(&cleanup_action);
 
         window
     }
@@ -836,6 +850,42 @@ impl UpWindow {
             })
         };
 
+        // Build the cleanup-maintenance closure. Shared with the overflow menu's
+        // "Clean Up" action.
+        let run_cleanup: Rc<dyn Fn()> = {
+            let detected = detected.clone();
+            let log_panel = log_panel.clone();
+            let status_label = status_label.clone();
+            let update_button = update_button.clone();
+            let updating = updating.clone();
+            Rc::new(move || {
+                if updating.get() {
+                    return;
+                }
+                let cleanup_backends: Vec<Arc<dyn Backend>> = detected
+                    .borrow()
+                    .iter()
+                    .filter(|b| b.supports_cleanup())
+                    .cloned()
+                    .collect();
+                if cleanup_backends.is_empty() {
+                    status_label.set_label("No cleanup available for detected backends.");
+                    return;
+                }
+                updating.set(true);
+                update_button.set_sensitive(false);
+                log_panel.clear();
+                status_label.set_label("Starting cleanup\u{2026}");
+                spawn_cleanup(
+                    cleanup_backends,
+                    log_panel.clone(),
+                    status_label.clone(),
+                    update_button.clone(),
+                    updating.clone(),
+                );
+            })
+        };
+
         // Spawn backend detection off the GTK thread.
         {
             let (detect_tx, detect_rx) = async_channel::unbounded::<Vec<Arc<dyn Backend>>>();
@@ -1096,8 +1146,93 @@ impl UpWindow {
             ));
         }
 
-        (page_box, run_checks, distro_row, version_row, updating)
+        (
+            page_box,
+            run_checks,
+            distro_row,
+            version_row,
+            updating,
+            run_cleanup,
+        )
     }
+}
+
+/// Runs the cleanup/maintenance sequence for every backend that supports
+/// it, reporting progress through the log panel and status label.
+/// `update_button` is disabled and `updating` set for the duration to
+/// keep this mutually exclusive with Update All / Refresh / Retry, all of
+/// which already gate on `updating`.
+fn spawn_cleanup(
+    backends: Vec<Arc<dyn Backend>>,
+    log_panel: LogPanel,
+    status_label: gtk::Label,
+    update_button: gtk::Button,
+    updating: Rc<Cell<bool>>,
+) {
+    use crate::orchestrator::{CleanupOrchestrator, OrchestratorEvent};
+
+    let (event_tx, event_rx) = async_channel::unbounded::<OrchestratorEvent>();
+    CleanupOrchestrator::new(backends).run_all(event_tx);
+
+    glib::spawn_future_local(async move {
+        let mut has_error = false;
+        while let Ok(event) = event_rx.recv().await {
+            match event {
+                OrchestratorEvent::AuthStarted => {
+                    log_panel.append_line("Requesting administrator privileges\u{2026}");
+                }
+                OrchestratorEvent::AuthSucceeded => {
+                    status_label.set_label("Cleaning up\u{2026}");
+                }
+                OrchestratorEvent::AuthFailed(e) => {
+                    log_panel.append_line(&format!("Authentication failed: {e}"));
+                    status_label.set_label("Cleanup cancelled.");
+                    updating.set(false);
+                    update_button.set_sensitive(true);
+                    return;
+                }
+                OrchestratorEvent::BackendStarted(kind) => {
+                    log_panel.append_line(&format!(
+                        "\u{2500}\u{2500}\u{2500} Cleaning {kind} \u{2500}\u{2500}\u{2500}"
+                    ));
+                }
+                OrchestratorEvent::BackendLog(kind, line) => {
+                    log_panel.append_line(&format!("[{kind}] {line}"));
+                }
+                OrchestratorEvent::BackendFinished(kind, result) => match &result {
+                    UpdateResult::Success { updated_count, .. }
+                    | UpdateResult::SuccessWithSelfUpdate { updated_count, .. } => {
+                        log_panel.append_line(&format!(
+                            "[{kind}] Cleanup finished ({updated_count} removed)"
+                        ));
+                    }
+                    UpdateResult::Error(msg) => {
+                        log_panel.append_line(&format!("[{kind}] Cleanup failed: {msg}"));
+                        has_error = true;
+                    }
+                    UpdateResult::Skipped(msg) => {
+                        log_panel.append_line(&format!("[{kind}] Skipped: {msg}"));
+                    }
+                    UpdateResult::Cancelled => {
+                        log_panel.append_line(&format!("[{kind}] Cancelled"));
+                    }
+                    UpdateResult::CacheMiss => {
+                        log_panel.append_line(&format!(
+                            "[{kind}] Binary cache syncing, try again later"
+                        ));
+                    }
+                },
+                OrchestratorEvent::AllFinished => break,
+            }
+        }
+        status_label.set_label(if has_error {
+            "Cleanup completed with errors."
+        } else {
+            "Cleanup complete."
+        });
+        updating.set(false);
+        update_button.set_sensitive(true);
+    });
 }
 
 /// Records a finished backend's outcome to the persistent update history log.

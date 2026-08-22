@@ -251,12 +251,10 @@ where
 
 /// Drives the cleanup/maintenance sequence for a set of backends, sending
 /// progress events to the UI via an [`async_channel`].  Reuses [`OrchestratorEvent`].
-#[allow(dead_code)]
 pub struct CleanupOrchestrator {
     backends: Vec<Arc<dyn Backend>>,
 }
 
-#[allow(dead_code)]
 impl CleanupOrchestrator {
     pub fn new(backends: Vec<Arc<dyn Backend>>) -> Self {
         Self { backends }
