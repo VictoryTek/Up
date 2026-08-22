@@ -57,14 +57,6 @@
               $out/share/icons/hicolor/256x256/apps/io.github.up.png
             gtk4-update-icon-cache -qtf $out/share/icons/hicolor
 
-            # D-Bus daemon
-            mkdir -p $out/libexec
-            mv $out/bin/up-daemon $out/libexec/up-daemon
-            install -Dm644 data/io.github.up.Daemon.service \
-              $out/lib/systemd/system/io.github.up.Daemon.service
-            install -Dm644 data/io.github.up.Daemon.conf \
-              $out/share/dbus-1/system.d/io.github.up.Daemon.conf
-
             # Plugin backend descriptors
             install -Dm644 data/backends.d/apk.yaml \
               $out/share/up/backends.d/apk.yaml

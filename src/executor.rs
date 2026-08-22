@@ -32,6 +32,7 @@ pub mod test_utils {
     #[derive(Clone)]
     pub struct MockExecutor {
         responses: Arc<Mutex<VecDeque<Result<String, BackendError>>>>,
+        calls: Arc<Mutex<Vec<(String, Vec<String>)>>>,
     }
 
     impl MockExecutor {
@@ -40,7 +41,16 @@ pub mod test_utils {
         pub fn new(responses: Vec<Result<String, BackendError>>) -> Self {
             Self {
                 responses: Arc::new(Mutex::new(responses.into())),
+                calls: Arc::new(Mutex::new(Vec::new())),
             }
+        }
+
+        /// Returns the `(program, args)` of every call made so far, in order.
+        pub fn calls(&self) -> Vec<(String, Vec<String>)> {
+            self.calls
+                .lock()
+                .expect("MockExecutor mutex poisoned")
+                .clone()
         }
 
         /// Convenience: create with a single successful output string.
@@ -60,9 +70,16 @@ pub mod test_utils {
     impl CommandExecutor for MockExecutor {
         fn run<'a>(
             &'a self,
-            _program: &'a str,
-            _args: &'a [&'a str],
+            program: &'a str,
+            args: &'a [&'a str],
         ) -> Pin<Box<dyn Future<Output = Result<String, BackendError>> + Send + 'a>> {
+            self.calls
+                .lock()
+                .expect("MockExecutor mutex poisoned")
+                .push((
+                    program.to_string(),
+                    args.iter().map(|s| s.to_string()).collect(),
+                ));
             let response = self
                 .responses
                 .lock()

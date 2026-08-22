@@ -1,4 +1,5 @@
 use crate::backends::{Backend, BackendKind, UpdateResult};
+use crate::ui::history_page::HistoryPage;
 use crate::ui::log_panel::LogPanel;
 use crate::ui::update_row::UpdateRow;
 use crate::ui::upgrade_page::UpgradePage;
@@ -51,7 +52,16 @@ impl UpWindow {
             "software-update-urgent-symbolic",
         );
 
-        // ViewSwitcher lives in the header bar center slot (hidden when only one tab is visible).
+        // --- History Page ---
+        let history_page = HistoryPage::build();
+        view_stack.add_titled_with_icon(
+            &history_page,
+            Some("history"),
+            "History",
+            "document-open-recent-symbolic",
+        );
+
+        // ViewSwitcher lives in the header bar center slot.
         let view_switcher = adw::ViewSwitcher::builder()
             .stack(&view_stack)
             .policy(adw::ViewSwitcherPolicy::Wide)
@@ -76,7 +86,6 @@ impl UpWindow {
                 let _ = detect_tx.send((info, nixos_extra)).await;
             });
 
-            let view_switcher_async = view_switcher.clone();
             glib::spawn_future_local(async move {
                 if let Ok((info, nixos_extra)) = detect_rx.recv().await {
                     // 1. Populate update-page system info rows
@@ -86,9 +95,6 @@ impl UpWindow {
                     // 2. Gate upgrade tab visibility — hide for unsupported distros.
                     if !info.upgrade_supported {
                         upgrade_stack_page.set_visible(false);
-                        view_switcher_async.set_visible(false);
-                    } else {
-                        view_switcher_async.set_visible(true);
                     }
 
                     // 3. Forward to upgrade page
@@ -631,6 +637,7 @@ impl UpWindow {
                                             ),
                                         );
                                     }
+                                    record_history_entry(&kind, &result);
                                     let finished = finished_backends.get() + 1;
                                     finished_backends.set(finished);
                                     let total = total_backends.get();
@@ -1033,6 +1040,7 @@ impl UpWindow {
                                                                 ),
                                                             );
                                                         }
+                                                        record_history_entry(&k, &result);
                                                     }
                                                     OrchestratorEvent::AllFinished => {
                                                         break;
@@ -1079,6 +1087,32 @@ impl UpWindow {
 
         (page_box, run_checks, distro_row, version_row, updating)
     }
+}
+
+/// Records a finished backend's outcome to the persistent update history log.
+///
+/// Best-effort: write failures are discarded, matching the existing
+/// convention for non-critical history I/O (see `history_page.rs`'s
+/// clear-history handler).
+fn record_history_entry(kind: &BackendKind, result: &UpdateResult) {
+    let (result_str, updated_count, error) = match result {
+        UpdateResult::Success { updated_count, .. } => ("success", Some(*updated_count), None),
+        UpdateResult::SuccessWithSelfUpdate { updated_count, .. } => {
+            ("success_self_update", Some(*updated_count), None)
+        }
+        UpdateResult::Error(msg) => ("error", None, Some(msg.to_string())),
+        UpdateResult::Skipped(_) | UpdateResult::Cancelled | UpdateResult::CacheMiss => {
+            ("skipped", None, None)
+        }
+    };
+    let entry = crate::history::HistoryEntry {
+        timestamp: crate::history::now_secs(),
+        backend: kind.to_string(),
+        result: result_str.to_string(),
+        updated_count,
+        error,
+    };
+    let _ = crate::history::append_entry(&entry);
 }
 
 /// Runs a VexOS cache-bypass command (`just deploy` / `just update-all`)

@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use crate::backends;
 use crate::runtime::runtime;
 use log::{info, warn};
@@ -12,8 +11,6 @@ use std::path::{Path, PathBuf};
 ///
 /// Runs synchronously from `main()` before any GTK initialisation.
 pub fn run_check() {
-    env_logger::init();
-
     let backends = backends::detect_backends();
 
     if backends.is_empty() {

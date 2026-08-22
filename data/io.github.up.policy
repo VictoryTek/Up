@@ -19,17 +19,6 @@
     </defaults>
   </action>
 
-  <!-- Update plugin-managed backends -->
-  <action id="io.github.up.update.plugin">
-    <description>Update packages via plugin backend</description>
-    <message>Up needs administrator privileges to update packages via a plugin backend.</message>
-    <defaults>
-      <allow_any>auth_admin</allow_any>
-      <allow_inactive>auth_admin</allow_inactive>
-      <allow_active>auth_admin_keep</allow_active>
-    </defaults>
-  </action>
-
   <!-- Cleanup / maintenance operations -->
   <action id="io.github.up.cleanup.system">
     <description>Run system cleanup and maintenance</description>
@@ -41,46 +30,14 @@
     </defaults>
   </action>
 
-  <!-- Distribution upgrade -->
-  <action id="io.github.up.upgrade.system">
-    <description>Upgrade the system to a new release</description>
-    <message>Up needs administrator privileges to perform a system upgrade.</message>
-    <defaults>
-      <allow_any>auth_admin</allow_any>
-      <allow_inactive>auth_admin</allow_inactive>
-      <allow_active>auth_admin</allow_active>
-    </defaults>
-  </action>
-
-  <!-- Snapshot creation -->
-  <action id="io.github.up.snapshot.create">
-    <description>Create a system snapshot</description>
-    <message>Up needs administrator privileges to create a system snapshot.</message>
-    <defaults>
-      <allow_any>auth_admin</allow_any>
-      <allow_inactive>auth_admin</allow_inactive>
-      <allow_active>auth_admin_keep</allow_active>
-    </defaults>
-  </action>
-
-  <!-- Cancel an in-progress operation -->
-  <action id="io.github.up.cancel.operation">
-    <description>Cancel a running update operation</description>
-    <message>Up needs privileges to cancel an in-progress system operation.</message>
-    <defaults>
-      <allow_any>auth_admin</allow_any>
-      <allow_inactive>auth_admin</allow_inactive>
-      <allow_active>yes</allow_active>
-    </defaults>
-  </action>
-
   <!--
-    Legacy actions retained for backward compatibility during the transition
-    period (v1.x → v2.x). These are used by the pkexec fallback path when
-    the D-Bus daemon is not installed.
+    Actions used by the pkexec invocations in src/runner.rs and
+    src/upgrade/execute.rs. Matched by pkexec via the
+    org.freedesktop.policykit.exec.path annotation below, not by an
+    explicit action ID from the caller.
   -->
   <action id="io.github.up.pkexec.update">
-    <description>Update system packages (legacy pkexec path)</description>
+    <description>Update system packages</description>
     <message>Up needs administrator privileges to update system packages.</message>
     <defaults>
       <allow_any>auth_admin</allow_any>
@@ -92,7 +49,7 @@
   </action>
 
   <action id="io.github.up.pkexec.upgrade">
-    <description>Upgrade the system distribution (legacy pkexec path)</description>
+    <description>Upgrade the system distribution</description>
     <message>Up needs administrator privileges to upgrade the system to a new release.</message>
     <defaults>
       <allow_any>auth_admin</allow_any>

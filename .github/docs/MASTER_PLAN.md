@@ -13,14 +13,14 @@ Checklist convention: `[ ]` open, `[x]` done.
 
 ## HIGH PRIORITY
 
-- [ ] **1. `AuthFailed` event leaves `updating` flag stuck `true`, wedging the UI**
+- [x] **1. `AuthFailed` event leaves `updating` flag stuck `true`, wedging the UI**
   Source: BUGS H2.
   Files: `src/ui/window.rs:512-521`.
   The `AuthFailed` arm in the "Update All" event loop `return`s without calling
   `updating.set(false)`. Cancelling/failing the polkit prompt permanently
   disables the Refresh button and all per-row Retry buttons until restart.
 
-- [ ] **2. `up --check` is completely broken — no CLI argument handling in `main()`**
+- [x] **2. `up --check` is completely broken — no CLI argument handling in `main()`**
   Source: ARCH H2, BUGS H1, FEATURES 1.
   Files: `src/main.rs:23-28`, `src/check.rs` (whole file, dead), `data/io.github.up-check.service.in`.
   `main()` never inspects `std::env::args()`; the daily systemd timer's
@@ -30,7 +30,7 @@ Checklist convention: `[ ]` open, `[x]` done.
   `check::run_check()` also calls `env_logger::init()` a second time — must
   reconcile with `main.rs`'s existing call before wiring in.
 
-- [ ] **3. Plugin backends with `needs_root: true` authenticate but then run unprivileged**
+- [x] **3. Plugin backends with `needs_root: true` authenticate but then run unprivileged**
   Source: ARCH H3.
   Files: `src/plugins/backend.rs:53-75`, `src/runner.rs:299-307`, `src/orchestrator.rs:96-117`, `data/backends.d/apk.yaml`, `data/backends.d/xbps.yaml`.
   `CommandRunner` only routes through the elevated shell when the program
@@ -39,7 +39,7 @@ Checklist convention: `[ ]` open, `[x]` done.
   the update always fails with a permissions error after wasting an auth
   prompt.
 
-- [ ] **4. Decide the fate of the D-Bus daemon: wire it in, or remove it**
+- [x] **4. Decide the fate of the D-Bus daemon: wire it in, or remove it**
   Source: ARCH H1 & M5, BUGS M1, FEATURES 9.
   Files: `daemon/` (whole crate), `src/dbus_client.rs` (not even in the module
   tree — not compiled), `src/main.rs:1-17`, `data/io.github.up.Daemon.*`,
@@ -56,13 +56,13 @@ Checklist convention: `[ ]` open, `[x]` done.
   smaller root attack surface, one polkit prompt per session) or delete
   (daemon crate + packaging + policy, ~1 day). Blocks item 7.
 
-- [ ] **5. Remove unused dependencies `zbus`, `futures-util`, `tokio-util` from root crate**
+- [x] **5. Remove unused dependencies `zbus`, `futures-util`, `tokio-util` from root crate**
   Source: ARCH H6.
   Files: `Cargo.toml:30-32`.
   Only used by `src/dbus_client.rs`, which isn't compiled. Depends on the
   outcome of item 4 — skip/redo if the daemon gets wired in instead.
 
-- [ ] **6. Wire up the Update History page**
+- [x] **6. Wire up the Update History page**
   Source: ARCH H5, BUGS M2, FEATURES 2.
   Files: `src/history.rs`, `src/ui/history_page.rs`, `src/ui/window.rs:32-52` (ViewStack), `BackendFinished` handlers at `window.rs:442-568` and `:791-911`.
   Storage layer and UI page are both fully built and dead. Needs: (a) add a
