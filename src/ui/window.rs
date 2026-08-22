@@ -517,6 +517,7 @@ impl UpWindow {
                                     *cancel_handle.borrow_mut() = None;
                                     cancel_button.set_visible(false);
                                     cancel_button.set_sensitive(true);
+                                    updating.set(false);
                                     button.set_sensitive(true);
                                     return;
                                 }
