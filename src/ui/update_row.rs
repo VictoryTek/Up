@@ -1,5 +1,5 @@
 use adw::prelude::*;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use crate::backends::Backend;
@@ -27,6 +27,14 @@ pub struct UpdateRow {
     check_errored: Rc<Cell<bool>>,
     skip_checkbox: gtk::CheckButton,
     retry_button: gtk::Button,
+    /// Whether the backend supports updating a user-selected subset of packages.
+    supports_selection: bool,
+    /// One `(item_id, checkbox)` pair per currently-displayed package.
+    package_checks: Rc<RefCell<Vec<(String, gtk::CheckButton)>>>,
+    /// `true` when the last `set_packages()` call exceeded the display cap,
+    /// meaning the full list isn't representable in the UI and selection
+    /// can't be trusted to reflect the user's actual intent.
+    selection_capped: Rc<Cell<bool>>,
 }
 
 impl UpdateRow {
@@ -51,6 +59,10 @@ impl UpdateRow {
 
         let skip_flag = Rc::new(Cell::new(initial_skipped));
         let last_available: Rc<Cell<Option<usize>>> = Rc::new(Cell::new(None));
+        let supports_selection = backend.supports_item_selection();
+        let package_checks: Rc<RefCell<Vec<(String, gtk::CheckButton)>>> =
+            Rc::new(RefCell::new(Vec::new()));
+        let selection_capped = Rc::new(Cell::new(false));
 
         let kind_label = format!("Skip {} during Update All", backend.display_name());
         let skip_checkbox = gtk::CheckButton::builder()
@@ -161,6 +173,9 @@ impl UpdateRow {
             check_errored: Rc::new(Cell::new(false)),
             skip_checkbox,
             retry_button,
+            supports_selection,
+            package_checks,
+            selection_capped,
         }
     }
 
@@ -181,17 +196,27 @@ impl UpdateRow {
         self.check_errored.get()
     }
 
-    /// Populate the popover with a list of pending package names.
-    /// Clears any previously added rows before adding new ones.
-    /// Caps display at 50 items with a summary row for the remainder.
+    /// Populate the popover with a list of pending package names, each with
+    /// a selection checkbox. Clears any previously added rows before adding
+    /// new ones. Caps display at 50 items with a summary row for the
+    /// remainder.
+    ///
+    /// Checkboxes are only interactive when the backend supports selective
+    /// updates *and* every package fits within the display cap — if the
+    /// list is truncated, some packages have no checkbox to deselect, so
+    /// showing a partial selection as meaningful would misrepresent what
+    /// `run_selected_update` would actually receive.
     pub fn set_packages(&self, packages: &[String]) {
         // Remove previously added package rows to avoid duplicates on re-check.
         while let Some(child) = self.popover_list.first_child() {
             self.popover_list.remove(&child);
         }
+        self.package_checks.borrow_mut().clear();
+
         // Hide the pill button when there is nothing to show.
         if packages.is_empty() {
             self.menu_button.set_visible(false);
+            self.selection_capped.set(false);
             return;
         }
         self.menu_button
@@ -204,14 +229,32 @@ impl UpdateRow {
         ));
 
         const MAX_PACKAGES: usize = 50;
+        let capped = packages.len() > MAX_PACKAGES;
+        self.selection_capped.set(capped);
+        let interactive = self.supports_selection && !capped;
+
         let display_count = packages.len().min(MAX_PACKAGES);
+        let mut checks = self.package_checks.borrow_mut();
         for pkg in &packages[..display_count] {
+            let item_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            let check = gtk::CheckButton::builder()
+                .active(true)
+                .sensitive(interactive)
+                .valign(gtk::Align::Center)
+                .build();
+            check.update_property(&[gtk::accessible::Property::Label(pkg.as_str())]);
             let label = gtk::Label::builder()
                 .label(pkg.as_str())
                 .halign(gtk::Align::Start)
+                .hexpand(true)
                 .build();
-            self.popover_list.append(&label);
+            item_row.append(&check);
+            item_row.append(&label);
+            self.popover_list.append(&item_row);
+            checks.push((pkg.clone(), check));
         }
+        drop(checks);
+
         if packages.len() > MAX_PACKAGES {
             let remaining = packages.len() - MAX_PACKAGES;
             let label = gtk::Label::builder()
@@ -220,6 +263,36 @@ impl UpdateRow {
                 .css_classes(vec!["dim-label"])
                 .build();
             self.popover_list.append(&label);
+        }
+    }
+
+    /// Returns the subset of packages the user has selected for update, or
+    /// `None` when selection doesn't meaningfully apply: the backend
+    /// doesn't support it, the package list exceeds the display cap, no
+    /// list has been loaded yet, or every checkbox is checked (identical
+    /// to a full update).
+    ///
+    /// May return `Some(vec![])` if the user unchecked every package —
+    /// callers must treat that as "nothing to do for this backend", never
+    /// forward it to `run_selected_update` (which falls back to a *full*
+    /// update on an empty slice).
+    pub fn selected_items(&self) -> Option<Vec<String>> {
+        if !self.supports_selection || self.selection_capped.get() {
+            return None;
+        }
+        let checks = self.package_checks.borrow();
+        if checks.is_empty() {
+            return None;
+        }
+        let selected: Vec<String> = checks
+            .iter()
+            .filter(|(_, cb)| cb.is_active())
+            .map(|(id, _)| id.clone())
+            .collect();
+        if selected.len() == checks.len() {
+            None
+        } else {
+            Some(selected)
         }
     }
 

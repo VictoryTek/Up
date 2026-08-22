@@ -462,15 +462,23 @@ impl UpWindow {
                     let rows_borrow = rows.borrow();
                     detected_borrow
                         .iter()
-                        .filter(|b| {
-                            rows_borrow
-                                .iter()
-                                .find(|(k, _)| *k == b.kind())
-                                .map(|(_, r)| !r.is_skipped())
-                                .unwrap_or(true)
+                        .filter_map(|b| {
+                            let Some((_, row)) =
+                                rows_borrow.iter().find(|(k, _)| *k == b.kind())
+                            else {
+                                return Some((b.clone(), None));
+                            };
+                            if row.is_skipped() {
+                                return None;
+                            }
+                            match row.selected_items() {
+                                Some(items) if items.is_empty() => {
+                                    row.set_status_skipped("No packages selected");
+                                    None
+                                }
+                                selected => Some((b.clone(), selected)),
+                            }
                         })
-                        .cloned()
-                        .map(|b| (b, None))
                         .collect()
                 };
 

@@ -84,7 +84,7 @@ Checklist convention: `[ ]` open, `[x]` done.
   existing event/auth/log pipeline — there is simply no button. Add a "Clean
   Up" menu entry that drives `CleanupOrchestrator::run_all()`.
 
-- [ ] **9. Make per-package selective updates real (checkboxes in the UI)**
+- [x] **9. Make per-package selective updates real (checkboxes in the UI)**
   Source: ARCH H4, FEATURES 7.
   Files: `src/backends/mod.rs:196-223`, `src/ui/window.rs:409` (always passes `None`), `src/ui/update_row.rs:124-154`.
   Full backend + orchestrator plumbing for selecting a subset of packages
