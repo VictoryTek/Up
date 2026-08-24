@@ -9,6 +9,7 @@ mod executor;
 mod history;
 mod orchestrator;
 mod plugins;
+mod progress;
 mod reboot;
 mod runner;
 mod runtime;

@@ -559,9 +559,10 @@ impl UpWindow {
                                     let finished = finished_backends.get();
                                     let total = total_backends.get();
                                     if total > 0 {
-                                        progress_bar.set_fraction(
-                                            (finished as f64 + 0.5) / total as f64,
-                                        );
+                                        // Floor of this backend's segment; the bar
+                                        // advances from here on BackendProgress.
+                                        progress_bar
+                                            .set_fraction(finished as f64 / total as f64);
                                     }
                                 }
                                 OrchestratorEvent::BackendLog(kind, line) => {
@@ -569,6 +570,18 @@ impl UpWindow {
                                         nix_log_lines.push(line.clone());
                                     }
                                     log_panel.append_line(&format!("[{kind}] {line}"));
+                                }
+                                OrchestratorEvent::BackendProgress(fraction) => {
+                                    let total = total_backends.get();
+                                    if total > 0 {
+                                        let finished = finished_backends.get() as f64;
+                                        let target = (finished + fraction.clamp(0.0, 1.0))
+                                            / total as f64;
+                                        // Monotonic: never let a backend pull the bar back.
+                                        if target > progress_bar.fraction() {
+                                            progress_bar.set_fraction(target);
+                                        }
+                                    }
                                 }
                                 OrchestratorEvent::BackendFinished(kind, result) => {
                                     let mut show_cache_dialog = false;
@@ -1230,6 +1243,8 @@ fn spawn_cleanup(
                         ));
                     }
                 },
+                // Cleanup reports through the log panel, not a progress bar.
+                OrchestratorEvent::BackendProgress(_) => {}
                 OrchestratorEvent::AllFinished => break,
             }
         }
@@ -1345,6 +1360,8 @@ fn spawn_cache_bypass(
                         }
                     }
                 }
+                // The cache-bypass flow has no progress bar of its own.
+                OrchestratorEvent::BackendProgress(_) => {}
                 OrchestratorEvent::AllFinished => break,
             }
         }

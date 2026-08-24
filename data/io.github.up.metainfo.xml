@@ -26,6 +26,11 @@
   <launchable type="desktop-id">io.github.up.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="2.3.1" date="2026-08-24">
+      <description translate="no">
+        <p>Make the update progress bar track real package-level progress: it now advances continuously as each package, derivation, or firmware item completes, instead of stepping once per update source and jumping to the end.</p>
+      </description>
+    </release>
     <release version="2.3.0" date="2026-08-22">
       <description translate="no">
         <p>Add an Update History tab, per-package selective updates, a Cleanup/maintenance mode, and persisted skip-backend preferences; fix Update All getting stuck after a failed authentication prompt, the daily "up --check" background check, and privileged plugin backends running unprivileged; and remove an unused, never-connected D-Bus service to shrink the app's footprint.</p>

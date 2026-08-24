@@ -1,4 +1,5 @@
 use crate::backends::{Backend, BackendKind, UpdateResult};
+use crate::progress::ProgressTracker;
 use crate::runner::{BackendEvent, CommandRunner, PrivilegedShell};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -55,6 +56,12 @@ pub enum OrchestratorEvent {
     BackendStarted(BackendKind),
     /// A single line of log output produced by the named backend.
     BackendLog(BackendKind, String),
+    /// Fractional progress (0.0..=1.0) within the currently running
+    /// backend's own run, derived from its output by
+    /// [`crate::progress::ProgressTracker`]. Always follows the
+    /// [`BackendStarted`][OrchestratorEvent::BackendStarted] for the
+    /// backend it applies to, so the UI does not need the kind repeated.
+    BackendProgress(f64),
     /// The named backend has finished; carries its result.
     BackendFinished(BackendKind, UpdateResult),
     /// All backends have finished; no more events will be sent.
@@ -126,9 +133,23 @@ impl UpdateOrchestrator {
 
             let tx_fwd = tx.clone();
             let fwd_handle = tokio::spawn(async move {
+                // One tracker at a time: backends run strictly sequentially, so a
+                // change of kind marks the start of a new backend's output.
+                let mut tracker: Option<(BackendKind, ProgressTracker)> = None;
                 while let Ok(event) = be_rx.recv().await {
                     let BackendEvent::LogLine(k, line) = event;
+                    let is_new_backend = match &tracker {
+                        Some((prev, _)) => *prev != k,
+                        None => true,
+                    };
+                    if is_new_backend {
+                        tracker = Some((k.clone(), ProgressTracker::new(k.clone())));
+                    }
+                    let fraction = tracker.as_mut().and_then(|(_, t)| t.observe(&line));
                     let _ = tx_fwd.send(OrchestratorEvent::BackendLog(k, line)).await;
+                    if let Some(f) = fraction {
+                        let _ = tx_fwd.send(OrchestratorEvent::BackendProgress(f)).await;
+                    }
                 }
             });
 
