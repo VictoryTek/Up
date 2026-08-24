@@ -301,9 +301,19 @@ impl UpWindow {
 
         content_box.append(&backends_group);
 
-        // Log panel (expandable terminal output) — appended to page_box below the
-        // scroll area so it can fill remaining vertical space when expanded.
+        // Log panel (expandable terminal output). Kept inside the same
+        // scrolled content_box as Sources rather than docked below the
+        // scroll area — a sibling with its own fixed height competed with
+        // the scrolled region for the window's available height, so once
+        // the progress bar became visible on update start there wasn't
+        // enough room for both and the Sources rows were clipped behind
+        // the log panel. Living in the same scrollable column means the
+        // whole page scrolls together and nothing gets clipped.
         let log_panel = LogPanel::new();
+        log_panel.expander.set_margin_start(12);
+        log_panel.expander.set_margin_end(12);
+        log_panel.expander.set_margin_bottom(12);
+        content_box.append(&log_panel.expander);
 
         // Restart notification banner, revealed only when Up itself is updated
         // inside the Flatpak sandbox (new deployment is available on next launch).
@@ -736,12 +746,6 @@ impl UpWindow {
         page_box.append(&restart_banner);
         page_box.append(&metered_banner);
         page_box.append(&scrolled);
-
-        // Dock the log panel below the scrolled content.
-        log_panel.expander.set_margin_start(12);
-        log_panel.expander.set_margin_end(12);
-        log_panel.expander.set_margin_bottom(12);
-        page_box.append(&log_panel.expander);
 
         // Shared state for gating the Update All button on check completion.
         let pending_checks: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
