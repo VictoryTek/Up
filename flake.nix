@@ -10,6 +10,31 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
+
+        # crates.io now returns HTTP 403 for the legacy
+        # `api/v1/crates/<name>/<version>/download` endpoint that this nixpkgs
+        # pin hard-codes (User-Agent gating), which breaks every cold build.
+        # Redirect the crate fetcher at the CDN, which serves the same path
+        # shape and is not gated. `extraRegistries` overrides the built-in
+        # crates.io-index download URL via the `//` merge in
+        # import-cargo-lock.nix; the trailing sed then removes the spurious
+        # extra `[source."…crates.io-index"]` block it also emits (cargo rejects
+        # redefining its built-in `crates-io` source). Fixed-output derivations
+        # are keyed on the sha256, not the URL, so crate store paths are
+        # unchanged. Remove this once nixpkgs is bumped past the static.crates.io
+        # fetcher fix.
+        cargoDeps = (pkgs.rustPlatform.importCargoLock {
+          lockFile = ./Cargo.lock;
+          extraRegistries = {
+            "https://github.com/rust-lang/crates.io-index" =
+              "https://static.crates.io/crates";
+          };
+        }).overrideAttrs (old: {
+          buildCommand = old.buildCommand + ''
+            sed -i '\#^\[source\."https://github\.com/rust-lang/crates\.io-index"\]$#,+2 d' \
+              $out/.cargo/config.toml
+          '';
+        });
       in
       {
         packages.default = pkgs.rustPlatform.buildRustPackage {
@@ -17,9 +42,7 @@
           version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
           src = ./.;
 
-          cargoLock = {
-            lockFile = ./Cargo.lock;
-          };
+          inherit cargoDeps;
 
           cargoBuildFlags = [ "--workspace" ];
 
