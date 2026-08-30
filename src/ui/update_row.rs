@@ -22,6 +22,9 @@ pub struct UpdateRow {
     skip_flag: Rc<Cell<bool>>,
     /// Last resolved available-update count; used to restore status on un-skip.
     last_available: Rc<Cell<Option<usize>>>,
+    /// Estimated additional disk space (bytes) the pending updates need, from
+    /// the most recent check. `None` when the backend cannot estimate.
+    last_estimated_size: Rc<Cell<Option<u64>>>,
     /// Set when the most recent check returned an error; reset when a new check starts.
     /// Lets the window distinguish "0 updates confirmed" from "check failed".
     check_errored: Rc<Cell<bool>>,
@@ -170,6 +173,7 @@ impl UpdateRow {
             backend_name,
             skip_flag,
             last_available,
+            last_estimated_size: Rc::new(Cell::new(None)),
             check_errored: Rc::new(Cell::new(false)),
             skip_checkbox,
             retry_button,
@@ -188,6 +192,18 @@ impl UpdateRow {
     /// `None` if no successful check has completed yet.
     pub fn last_available_count(&self) -> Option<usize> {
         self.last_available.get()
+    }
+
+    /// Records the estimated download/disk size (bytes) for this backend's
+    /// pending updates. `None` clears it (backend can't estimate).
+    pub fn set_estimated_size(&self, bytes: Option<u64>) {
+        self.last_estimated_size.set(bytes);
+    }
+
+    /// Returns the last estimated size (bytes) for this backend's pending
+    /// updates, or `None` when unavailable.
+    pub fn last_estimated_size(&self) -> Option<u64> {
+        self.last_estimated_size.get()
     }
 
     /// Returns `true` if the most recent check produced an error.
@@ -299,6 +315,7 @@ impl UpdateRow {
     pub fn set_status_checking(&self) {
         self.retry_button.set_visible(false);
         self.last_available.set(None);
+        self.last_estimated_size.set(None);
         self.check_errored.set(false);
         self.spinner.set_visible(true);
         self.spinner.set_spinning(true);

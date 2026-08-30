@@ -7,9 +7,6 @@
 ///
 /// Runs `df -k /` synchronously with `LANG=C` and parses the
 /// "Available" column.  Returns 0 on spawn failure or parse error.
-///
-/// Unused pending MASTER_PLAN item 19 (low-disk-space warning in the update rows).
-#[allow(dead_code)]
 pub fn detect_available_space() -> u64 {
     let result = std::process::Command::new("df")
         .args(["-k", "/"])
@@ -30,9 +27,6 @@ pub fn detect_available_space() -> u64 {
 /// The "Available" column is in 1-KiB blocks; multiply by 1 024.
 /// Handles long filesystem names that cause `df` to wrap the data
 /// row onto the next line.
-///
-/// Unused pending MASTER_PLAN item 19.
-#[allow(dead_code)]
 pub(crate) fn parse_df_available(text: &str) -> Option<u64> {
     let mut lines = text.lines().filter(|l| !l.trim().is_empty());
     // Skip the header line ("Filesystem  1K-blocks  Used  Available  Use%  Mounted on").
@@ -60,9 +54,6 @@ pub(crate) fn parse_df_available(text: &str) -> Option<u64> {
 /// - < 1 MiB (1 048 576 bytes)    → `"N KB"`
 /// - < 1 GiB (1 073 741 824 bytes) → `"N MB"`
 /// - ≥ 1 GiB                       → `"N.N GB"`
-///
-/// Unused pending MASTER_PLAN item 19.
-#[allow(dead_code)]
 pub fn format_bytes(bytes: u64) -> String {
     if bytes < 1_048_576 {
         format!("{} KB", bytes / 1_024)

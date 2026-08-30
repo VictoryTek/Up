@@ -665,8 +665,15 @@ impl UpWindow {
             }
         ));
 
+        // Revealed by the availability check when the estimated update size
+        // exceeds the free space on the root filesystem.
+        let low_space_banner = adw::Banner::new("");
+        low_space_banner.set_use_markup(false);
+        low_space_banner.set_revealed(false);
+
         page_box.append(&restart_banner);
         page_box.append(&metered_banner);
+        page_box.append(&low_space_banner);
         page_box.append(&scrolled);
 
         // Shared state for gating the Update All button on check completion.
@@ -683,6 +690,7 @@ impl UpWindow {
             let total_available = total_available.clone();
             let check_epoch = check_epoch.clone();
             let status_label_checks = status_label.clone();
+            let low_space_banner = low_space_banner.clone();
             Rc::new(move || {
                 let n = detected.borrow().len();
                 if n == 0 {
@@ -690,6 +698,7 @@ impl UpWindow {
                 }
                 // Disable button and reset counters at the start of each check cycle.
                 update_button_checks.set_sensitive(false);
+                low_space_banner.set_revealed(false);
                 *pending_checks.borrow_mut() = n;
                 *total_available.borrow_mut() = 0;
                 // Increment epoch to invalidate in-flight futures from the previous check.
@@ -719,17 +728,23 @@ impl UpWindow {
                         status_label_checks,
                         #[strong]
                         check_epoch,
+                        #[weak]
+                        low_space_banner,
                         async move {
-                            type CheckPayload =
-                                (Result<usize, String>, Result<Vec<String>, String>);
+                            type CheckPayload = (
+                                Result<usize, String>,
+                                Result<Vec<String>, String>,
+                                Option<u64>,
+                            );
                             let (tx, rx) = async_channel::bounded::<CheckPayload>(1);
                             super::spawn_background_async(move || async move {
                                 let executor = crate::executor::SystemExecutor;
                                 let count = backend_clone.count_available(&executor).await;
                                 let list = backend_clone.list_available(&executor).await;
-                                let _ = tx.send((count, list)).await;
+                                let size = backend_clone.estimate_size(&executor).await;
+                                let _ = tx.send((count, list, size)).await;
                             });
-                            if let Ok((count_result, list_result)) = rx.recv().await {
+                            if let Ok((count_result, list_result, size_result)) = rx.recv().await {
                                 // Discard results from a superseded check cycle.
                                 if check_epoch.get() != my_epoch {
                                     return;
@@ -744,6 +759,7 @@ impl UpWindow {
                                 let Some(row) = row else {
                                     return;
                                 };
+                                row.set_estimated_size(size_result);
                                 match count_result {
                                     Ok(count) => {
                                         row.set_status_available(count);
@@ -778,12 +794,29 @@ impl UpWindow {
                                             .filter(|(_, r)| !r.is_skipped())
                                             .any(|(_, r)| r.has_check_error())
                                     };
+                                    // Sum the per-backend size estimates for non-skipped rows.
+                                    // `None` when no backend could estimate anything.
+                                    let estimated_size: Option<u64> = {
+                                        let borrowed = rows.borrow();
+                                        borrowed
+                                            .iter()
+                                            .filter(|(_, r)| !r.is_skipped())
+                                            .filter_map(|(_, r)| r.last_estimated_size())
+                                            .reduce(|a, b| a.saturating_add(b))
+                                    };
                                     if non_skipped_total > 0 {
                                         update_button_checks.set_sensitive(true);
+                                        let size_suffix = match estimated_size {
+                                            Some(bytes) if bytes > 0 => {
+                                                format!(" (~{})", crate::disk::format_bytes(bytes))
+                                            }
+                                            _ => String::new(),
+                                        };
                                         status_label_checks.set_label(&format!(
-                                            "{non_skipped_total} update{} available",
+                                            "{non_skipped_total} update{} available{size_suffix}",
                                             if non_skipped_total == 1 { "" } else { "s" }
                                         ));
+                                        maybe_warn_low_space(&low_space_banner, estimated_size);
                                     } else if any_check_error {
                                         status_label_checks
                                             .set_label("Could not check all sources.");
@@ -1216,6 +1249,33 @@ fn apply_backend_finished(
     }
     record_history_entry(kind, result);
     outcome
+}
+
+/// Reveal `banner` with a warning when the root filesystem has less free space
+/// than the pending updates are estimated to need. `needed` is the summed
+/// per-backend estimate (bytes); `None`/`0` is a no-op. The `df` probe runs off
+/// the GTK thread.
+fn maybe_warn_low_space(banner: &adw::Banner, needed: Option<u64>) {
+    let Some(needed) = needed.filter(|n| *n > 0) else {
+        return;
+    };
+    let banner = banner.clone();
+    let (tx, rx) = async_channel::bounded::<u64>(1);
+    super::spawn_background_async(move || async move {
+        let _ = tx.send(crate::disk::detect_available_space()).await;
+    });
+    glib::spawn_future_local(async move {
+        if let Ok(available) = rx.recv().await {
+            if available > 0 && available < needed {
+                banner.set_title(&format!(
+                    "Low disk space: {} free, updates need about {}",
+                    crate::disk::format_bytes(available),
+                    crate::disk::format_bytes(needed),
+                ));
+                banner.set_revealed(true);
+            }
+        }
+    });
 }
 
 /// Records a finished backend's outcome to the persistent update history log.

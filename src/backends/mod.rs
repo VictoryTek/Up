@@ -174,7 +174,6 @@ pub trait Backend: Send + Sync {
     ///
     /// This is called alongside `list_available()` on the background thread;
     /// failures are silent (treated as `None`).
-    #[allow(dead_code)]
     fn estimate_size<'a>(
         &'a self,
         runner: &'a dyn CommandExecutor,

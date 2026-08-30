@@ -155,10 +155,9 @@ Checklist convention: `[ ]` open, `[x]` done.
   Files: `src/disk.rs` (this pass); `src/check.rs`, `src/config.rs`,
   `src/history.rs`, `src/ui/history_page.rs` (de-suppressed by items 2/6/7);
   `src/snapshot.rs` (deleted, item 18).
-  `disk.rs` blanket suppression removed; only the three low-disk-warning
-  helpers (`detect_available_space`, `parse_df_available`, `format_bytes`)
-  keep a targeted `#[allow(dead_code)]` pending item 19. Still module-wide
-  suppressed (100% dead): `src/changelog.rs` (pending item 20).
+  `disk.rs` fully de-suppressed (its last three helpers went live with
+  item 19). Still module-wide suppressed (100% dead): `src/changelog.rs`
+  (pending item 20).
 
 - [x] **16. Orchestrator event loop duplicated in the UI with behavioral drift** *(partial)*
   Source: ARCH M7.
@@ -187,11 +186,14 @@ Checklist convention: `[ ]` open, `[x]` done.
   snapshots → folded into item 47. Also advances item 15 (6 of 7 modules
   de-suppressed).
 
-- [ ] **19. Wire up disk-size estimation in the update rows**
+- [x] **19. Wire up disk-size estimation in the update rows**
   Source: ARCH M10, BUGS M3, FEATURES 6.
-  Files: `src/backends/mod.rs:160-171` (`estimate_size`, dead), `src/disk.rs` (dead), all backend overrides.
-  `estimate_size()` is implemented for every backend but nothing calls it.
-  Would enable "12 updates available (~450 MB)" and a low-disk-space warning.
+  Files: `src/ui/window.rs`, `src/ui/update_row.rs`, `src/backends/mod.rs`, `src/disk.rs`.
+  The availability check now also calls `estimate_size()`; the status label
+  shows "N updates available (~450 MB)" and a `low_space_banner` reveals when
+  free space on `/` is below the estimated need. `estimate_size` and the
+  `disk.rs` helpers are de-suppressed (finishes item 15 — only `changelog.rs`
+  left, pending item 20).
 
 - [ ] **20. `changelog.rs` is fully implemented but has zero callers**
   Source: ARCH M12, BUGS M3, FEATURES 8.
