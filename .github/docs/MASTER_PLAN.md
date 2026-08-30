@@ -247,10 +247,15 @@ Checklist convention: `[ ]` open, `[x]` done.
   raw; pre-existing accessible `Property::Label` literals deferred to a
   separate a11y pass.
 
-- [ ] **26. Flatpak packaging**
+- [x] **26. Flatpak packaging** *(won't do — no Flathub plans, user decision 2026-08-29)*
   Source: FEATURES 15.
-  Files: sandbox plumbing already exists (`flatpak-spawn --host` routing, `is_running_in_flatpak()`, `SuccessWithSelfUpdate` restart banner) with no consumer; README says "planned for a future release."
-  This is packaging work (Flathub manifest, `--talk-name=org.freedesktop.Flatpak`), not app code.
+  The maintainer has no plans to publish on Flathub. The stale "Flatpak
+  packaging … planned for a future release" line was removed from the README
+  and replaced with a note that a local `flatpak-builder` build works but
+  there is no official distribution. The existing sandbox plumbing
+  (`flatpak-spawn --host` routing, `is_running_in_flatpak()`,
+  `SuccessWithSelfUpdate`) is kept — it is harmless and supports local
+  Flatpak builds; no Flathub manifest / `--talk-name` work will be done.
 
 ---
 

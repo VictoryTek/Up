@@ -84,7 +84,11 @@ The project uses GitHub Actions for continuous integration:
 - **Build Testing**: Runs `cargo fmt`, `cargo clippy`, `cargo build`, and `cargo test` on all pull requests and pushes to `main`
 - **Validation**: Validates the desktop file and AppStream metadata on every run
 
-Flatpak packaging and automated release assets are planned for a future release.
+Automated release assets are planned for a future release.
+
+Up is built to run correctly inside a Flatpak sandbox (host commands are routed
+via `flatpak-spawn --host`), so a local `flatpak-builder` build works, but there
+is no official Flathub distribution.
 
 ## Architecture
 
