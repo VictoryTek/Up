@@ -112,17 +112,18 @@ impl Backend for FlatpakBackend {
         })
     }
 
-    fn list_available(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+    fn list_available<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + 'a>> {
         Box::pin(async move {
             // Query --user and --system installations separately.  An unscoped call
             // fails entirely if any single remote's summary is unavailable; querying
             // each scope independently lets a broken system remote (or unreachable
             // network) avoid hiding user-app updates and vice versa.
             let (user_result, system_result) = tokio::join!(
-                flatpak_remote_ls_updates("--user"),
-                flatpak_remote_ls_updates("--system"),
+                flatpak_remote_ls_updates("--user", runner),
+                flatpak_remote_ls_updates("--system", runner),
             );
             match (user_result, system_result) {
                 (Ok(user_pkgs), Ok(sys_pkgs)) => {
@@ -156,7 +157,10 @@ impl Backend for FlatpakBackend {
         })
     }
 
-    fn estimate_size(&self) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+    fn estimate_size<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + 'a>> {
         Box::pin(async move {
             // Mirror the per-scope approach used in list_available so a failing
             // system remote doesn't suppress a valid user-scope size estimate.
@@ -168,17 +172,12 @@ impl Backend for FlatpakBackend {
                     scope,
                     "--columns=download-size",
                 ]);
-                if let Ok(out) = tokio::process::Command::new(&cmd)
-                    .args(&args)
-                    .env("LANG", "C")
-                    .env("LC_ALL", "C")
-                    .output()
-                    .await
-                {
-                    if out.status.success() {
-                        let text = String::from_utf8_lossy(&out.stdout);
-                        total += crate::disk::parse_flatpak_sizes(&text);
-                    }
+                let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                let out = runner
+                    .probe(&cmd, &args_refs, &[("LANG", "C"), ("LC_ALL", "C")])
+                    .await;
+                if out.ok() {
+                    total += crate::disk::parse_flatpak_sizes(&out.stdout);
                 }
             }
             if total == 0 {
@@ -291,21 +290,23 @@ pub(crate) fn parse_flatpak_update_items(output: &str) -> Vec<String> {
 /// Uses `--columns=name` (not `--columns=application`) so runtime updates
 /// (e.g., org.gnome.Platform) are included; the "application" column is empty
 /// for runtimes and would silently drop them.
-async fn flatpak_remote_ls_updates(scope: &str) -> Result<Vec<String>, String> {
+async fn flatpak_remote_ls_updates(
+    scope: &str,
+    runner: &dyn CommandExecutor,
+) -> Result<Vec<String>, String> {
     let (cmd, args) = build_flatpak_cmd(&["remote-ls", "--updates", scope, "--columns=name"]);
-    let out = tokio::process::Command::new(&cmd)
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
+    let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let out = runner.probe(&cmd, &args_refs, &[]).await;
+    if !out.spawned {
+        return Err(out.stderr);
+    }
+    if !out.ok() {
         return Err(format!(
-            "flatpak remote-ls --updates {scope} failed: {stderr}"
+            "flatpak remote-ls --updates {scope} failed: {}",
+            out.stderr
         ));
     }
-    let text = String::from_utf8_lossy(&out.stdout);
-    Ok(parse_flatpak_updates(&text))
+    Ok(parse_flatpak_updates(&out.stdout))
 }
 
 /// Parse full output from `flatpak remote-ls --updates --columns=name`,
@@ -465,5 +466,31 @@ mod tests {
         })]);
         let result = FlatpakBackend.run_update(&mock).await;
         assert!(matches!(result, UpdateResult::Error(_)));
+    }
+
+    #[tokio::test]
+    async fn flatpak_list_available_via_executor() {
+        // list_available probes --user then --system; give both an update list.
+        let mock = MockExecutor::new(vec![
+            Ok("Name\norg.gnome.Calculator\n".into()),
+            Ok("Name\norg.gnome.Platform\n".into()),
+        ]);
+        let result = FlatpakBackend.list_available(&mock).await.unwrap();
+        assert!(result.contains(&"org.gnome.Calculator".to_string()));
+        assert!(result.contains(&"org.gnome.Platform".to_string()));
+    }
+
+    #[tokio::test]
+    async fn flatpak_list_available_via_executor_one_scope_fails() {
+        let mock = MockExecutor::new(vec![
+            Ok("Name\norg.gnome.Calculator\n".into()),
+            Err(BackendError::Exit {
+                code: 1,
+                message: "system remote unreachable".into(),
+            }),
+        ]);
+        // User scope found an update, so the system-scope failure is tolerated.
+        let result = FlatpakBackend.list_available(&mock).await.unwrap();
+        assert_eq!(result, vec!["org.gnome.Calculator".to_string()]);
     }
 }

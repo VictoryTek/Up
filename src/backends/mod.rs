@@ -143,8 +143,11 @@ pub trait Backend: Send + Sync {
     /// Count packages available for update (read-only, no privilege required).
     /// Returns Ok(0) if up to date, Ok(N) if N updates available, Err(_) on failure.
     /// Default implementation delegates to list_available to avoid duplicating command logic.
-    fn count_available(&self) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + '_>> {
-        Box::pin(async move { self.list_available().await.map(|v| v.len()) })
+    fn count_available<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + 'a>> {
+        Box::pin(async move { self.list_available(runner).await.map(|v| v.len()) })
     }
 
     /// Return a human-readable list of package names pending update.
@@ -152,9 +155,13 @@ pub trait Backend: Send + Sync {
     /// Returns Ok(vec![]) for backends that cannot enumerate packages without
     /// performing the update (e.g., NixOS).
     /// Default implementation returns Ok(vec![]) for backward compatibility.
-    fn list_available(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+    ///
+    /// Read-only: `runner` must be used via `probe()`, never `run()`.
+    fn list_available<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + 'a>> {
+        let _ = runner;
         Box::pin(async { Ok(Vec::new()) })
     }
 
@@ -168,7 +175,11 @@ pub trait Backend: Send + Sync {
     /// This is called alongside `list_available()` on the background thread;
     /// failures are silent (treated as `None`).
     #[allow(dead_code)]
-    fn estimate_size(&self) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+    fn estimate_size<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + 'a>> {
+        let _ = runner;
         Box::pin(async { None })
     }
 

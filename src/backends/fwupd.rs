@@ -40,17 +40,19 @@ impl Backend for FwupdBackend {
         false
     }
 
-    fn list_available(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+    fn list_available<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + 'a>> {
         Box::pin(async move {
-            let out = tokio::process::Command::new("fwupdmgr")
-                .args(["get-updates", "--json"])
-                .output()
-                .await
-                .map_err(|e| format!("Failed to spawn fwupdmgr: {e}"))?;
+            let out = runner
+                .probe("fwupdmgr", &["get-updates", "--json"], &[])
+                .await;
+            if !out.spawned {
+                return Err(format!("Failed to spawn fwupdmgr: {}", out.stderr));
+            }
 
-            let code = out.status.code().unwrap_or(-1);
+            let code = out.code.unwrap_or(-1);
 
             // Exit code 2 = "no actions" = no firmware updates available.
             // This is a documented success state, not an error.
@@ -58,16 +60,15 @@ impl Backend for FwupdBackend {
                 return Ok(Vec::new());
             }
 
-            if !out.status.success() {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                warn!("fwupdmgr get-updates failed (exit {code}): {stderr}");
+            if code != 0 {
+                warn!("fwupdmgr get-updates failed (exit {code}): {}", out.stderr);
                 return Err(format!(
-                    "fwupdmgr get-updates failed (exit {code}): {stderr}"
+                    "fwupdmgr get-updates failed (exit {code}): {}",
+                    out.stderr
                 ));
             }
 
-            let text = String::from_utf8_lossy(&out.stdout);
-            Ok(parse_fwupd_updates(&text))
+            Ok(parse_fwupd_updates(&out.stdout))
         })
     }
 
@@ -97,23 +98,26 @@ impl Backend for FwupdBackend {
         })
     }
 
-    fn estimate_size(&self) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+    fn estimate_size<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + 'a>> {
         Box::pin(async move {
-            let out = tokio::process::Command::new("fwupdmgr")
-                .args(["get-updates", "--json"])
-                .output()
-                .await
-                .ok()?;
-            let code = out.status.code().unwrap_or(-1);
+            let out = runner
+                .probe("fwupdmgr", &["get-updates", "--json"], &[])
+                .await;
+            if !out.spawned {
+                return None;
+            }
+            let code = out.code.unwrap_or(-1);
             // Exit code 2 = no firmware updates available.
             if code == 2 {
                 return Some(0);
             }
-            if !out.status.success() {
+            if code != 0 {
                 return None;
             }
-            let text = String::from_utf8_lossy(&out.stdout);
-            let total = crate::disk::parse_fwupd_size(&text);
+            let total = crate::disk::parse_fwupd_size(&out.stdout);
             if total == 0 {
                 None
             } else {
@@ -310,5 +314,22 @@ mod tests {
             "Expected Success {{ updated_count: 1 }}, got {:?}",
             result
         );
+    }
+
+    #[tokio::test]
+    async fn fwupd_list_available_via_executor() {
+        let json =
+            r#"{"Devices":[{"Name":"Dock","Version":"1.0","Releases":[{"Version":"1.1"}]}]}"#;
+        let mock = MockExecutor::with_output(json);
+        let result = FwupdBackend.list_available(&mock).await.unwrap();
+        assert_eq!(result, vec!["Dock (1.1)".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn fwupd_list_available_via_executor_exit_2_is_empty() {
+        // fwupdmgr exits 2 when there are no updates — a success state, not an error.
+        let mock = MockExecutor::with_probe("", 2);
+        let result = FwupdBackend.list_available(&mock).await.unwrap();
+        assert!(result.is_empty());
     }
 }

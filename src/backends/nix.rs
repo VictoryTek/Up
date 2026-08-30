@@ -276,32 +276,38 @@ pub(crate) fn compare_lock_nodes(old: &serde_json::Value, new: &serde_json::Valu
 /// - `Ok(Some(inputs))` – success; `inputs` is the list of changed input names.
 /// - `Ok(None)`         – `--dry-run` flag is not recognised; caller should fall back.
 /// - `Err(msg)`         – a real (non-flag-support) error occurred.
-async fn nixos_flake_dry_run_check() -> Result<Option<Vec<String>>, String> {
-    let out = tokio::process::Command::new("nix")
-        .args([
-            "--extra-experimental-features",
-            "nix-command flakes",
-            "--option",
-            "eval-cache",
-            "false",
-            "--option",
-            "tarball-ttl",
-            "0",
-            "flake",
-            "update",
-            "--dry-run",
-            "/etc/nixos",
-        ])
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
+async fn nixos_flake_dry_run_check(
+    runner: &dyn CommandExecutor,
+) -> Result<Option<Vec<String>>, String> {
+    let out = runner
+        .probe(
+            "nix",
+            &[
+                "--extra-experimental-features",
+                "nix-command flakes",
+                "--option",
+                "eval-cache",
+                "false",
+                "--option",
+                "tarball-ttl",
+                "0",
+                "flake",
+                "update",
+                "--dry-run",
+                "/etc/nixos",
+            ],
+            &[],
+        )
+        .await;
 
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let combined = format!("{stdout}\n{stderr}");
+    if !out.spawned {
+        return Err(out.stderr);
+    }
+
+    let combined = format!("{}\n{}", out.stdout, out.stderr);
 
     // Detect unsupported --dry-run flag (older Nix) — signal caller to fall back.
-    if !out.status.success()
+    if !out.ok()
         && (combined.contains("unrecognised flag")
             || combined.contains("unrecognized flag")
             || combined.contains("unknown option"))
@@ -309,7 +315,7 @@ async fn nixos_flake_dry_run_check() -> Result<Option<Vec<String>>, String> {
         return Ok(None);
     }
 
-    if !out.status.success() {
+    if !out.ok() {
         return Err(format!(
             "nix flake update --dry-run failed: {}",
             combined.trim()
@@ -332,6 +338,10 @@ async fn nixos_flake_dry_run_check() -> Result<Option<Vec<String>>, String> {
 /// temporary directory, runs `nix flake update` there (no root required),
 /// and compares the resulting `flake.lock` against the original to determine
 /// which inputs changed.  The temp directory is removed after comparison.
+///
+/// Keeps a direct `tokio::process::Command`: it needs `.current_dir()` plus
+/// filesystem copies, which are outside the read-only `CommandExecutor::probe`
+/// abstraction.
 async fn nixos_flake_tempdir_check() -> Result<Vec<String>, String> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -402,8 +412,8 @@ async fn nixos_flake_tempdir_check() -> Result<Vec<String>, String> {
 ///
 /// Tries `--dry-run` first (Nix ≥ 2.19); falls back to the temp-dir method
 /// for older Nix installations that do not support that flag.
-async fn nixos_flake_changed_inputs() -> Result<Vec<String>, String> {
-    match nixos_flake_dry_run_check().await? {
+async fn nixos_flake_changed_inputs(runner: &dyn CommandExecutor) -> Result<Vec<String>, String> {
+    match nixos_flake_dry_run_check(runner).await? {
         Some(inputs) => Ok(inputs),
         None => nixos_flake_tempdir_check().await,
     }
@@ -737,31 +747,22 @@ impl Backend for NixBackend {
         })
     }
 
-    fn list_available(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+    fn list_available<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + 'a>> {
         Box::pin(async move {
             if is_nixos() && is_nixos_flake() {
-                if is_vexos() {
-                    // VexOS uses vexos-update for the actual update, but we can still
-                    // detect whether upstream flake inputs have changed before claiming an
-                    // update is available — the same nixos_flake_changed_inputs() check used
-                    // for standard NixOS flake systems works identically here.
-                    nixos_flake_changed_inputs().await
-                } else {
-                    // Standard flake NixOS: compare flake.lock to detect input changes.
-                    nixos_flake_changed_inputs().await
-                }
+                // VexOS and standard flake NixOS both detect pending upstream flake
+                // input changes the same way before claiming an update is available.
+                nixos_flake_changed_inputs(runner).await
             } else if is_determinate_nix() {
                 // Determinate Nix: check version output for upgrade availability.
-                let out = tokio::process::Command::new("determinate-nixd")
-                    .arg("version")
-                    .output()
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let text = String::from_utf8_lossy(&out.stdout);
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                let combined = format!("{text}\n{stderr}");
+                let out = runner.probe("determinate-nixd", &["version"], &[]).await;
+                if !out.spawned {
+                    return Err(out.stderr);
+                }
+                let combined = format!("{}\n{}", out.stdout, out.stderr);
                 Ok(if upgrade_available_in_output(&combined) {
                     vec!["determinate-nix".to_string()]
                 } else {
@@ -780,14 +781,13 @@ impl Backend for NixBackend {
                     }
                 };
                 if use_legacy_nix_env {
-                    let out = tokio::process::Command::new("nix-env")
-                        .args(["-u", "--dry-run"])
-                        .output()
-                        .await
-                        .map_err(|e| e.to_string())?;
+                    let out = runner.probe("nix-env", &["-u", "--dry-run"], &[]).await;
+                    if !out.spawned {
+                        return Err(out.stderr);
+                    }
                     // nix-env --dry-run emits "upgrading 'name-1.0' to 'name-2.0'" on stderr
-                    let text = String::from_utf8_lossy(&out.stderr);
-                    Ok(text
+                    Ok(out
+                        .stderr
                         .lines()
                         .filter(|l| l.contains("upgrading"))
                         .filter_map(|l| l.split('\'').nth(1).map(|s| s.to_string()))

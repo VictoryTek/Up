@@ -802,8 +802,9 @@ impl UpWindow {
                                 (Result<usize, String>, Result<Vec<String>, String>);
                             let (tx, rx) = async_channel::bounded::<CheckPayload>(1);
                             super::spawn_background_async(move || async move {
-                                let count = backend_clone.count_available().await;
-                                let list = backend_clone.list_available().await;
+                                let executor = crate::executor::SystemExecutor;
+                                let count = backend_clone.count_available(&executor).await;
+                                let list = backend_clone.list_available(&executor).await;
                                 let _ = tx.send((count, list)).await;
                             });
                             if let Ok((count_result, list_result)) = rx.recv().await {

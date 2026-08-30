@@ -44,17 +44,16 @@ impl Backend for HomebrewBackend {
         })
     }
 
-    fn list_available(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+    fn list_available<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + 'a>> {
         Box::pin(async move {
-            let out = tokio::process::Command::new("brew")
-                .args(["outdated"])
-                .output()
-                .await
-                .map_err(|e| e.to_string())?;
-            let text = String::from_utf8_lossy(&out.stdout);
-            Ok(parse_brew_outdated(&text))
+            let out = runner.probe("brew", &["outdated"], &[]).await;
+            if !out.spawned {
+                return Err(out.stderr);
+            }
+            Ok(parse_brew_outdated(&out.stdout))
         })
     }
 
@@ -227,5 +226,13 @@ mod tests {
         ]);
         let result = HomebrewBackend.run_update(&mock).await;
         assert!(matches!(result, UpdateResult::Error(_)));
+    }
+
+    #[tokio::test]
+    async fn homebrew_list_available_via_executor() {
+        let mock = MockExecutor::with_output("htop (3.2.2) < 3.3.0\nwget (1.21) < 1.24\n");
+        let result = HomebrewBackend.list_available(&mock).await.unwrap();
+        assert_eq!(result, vec!["htop".to_string(), "wget".to_string()]);
+        assert_eq!(mock.calls()[0].0, "brew");
     }
 }

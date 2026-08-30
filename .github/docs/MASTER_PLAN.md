@@ -109,13 +109,17 @@ Checklist convention: `[ ]` open, `[x]` done.
   was deliberately descoped (user decision, 2026-08-29) and remains open as
   future cleanup if desired.
 
-- [ ] **11. Read-only backend operations bypass the `CommandExecutor` abstraction**
+- [x] **11. Read-only backend operations bypass the `CommandExecutor` abstraction** *(partial)*
   Source: ARCH M2.
-  Files: `src/backends/flatpak.rs`, `fwupd.rs`, `homebrew.rs`, `os_package_manager.rs`, `nix.rs`, `src/plugins/backend.rs` (many direct `Command` call sites listed in ANALYSIS_ARCH.md §1 M2).
-  `list_available`, `estimate_size`, and detection probes spawn processes
-  directly instead of through `CommandExecutor`, making them untestable with
-  `MockExecutor` and invisible in the log panel. The `nix profile upgrade`
-  branch also produces zero streamed log output during an actual update.
+  Files: `src/executor.rs`, `src/runner.rs`, `src/backends/mod.rs`, `flatpak.rs`, `fwupd.rs`, `homebrew.rs`, `os_package_manager.rs`, `nix.rs`, `src/plugins/backend.rs`, `src/check.rs`, `src/ui/window.rs`.
+  Added `CommandExecutor::probe()` + `ProbeOutput` + a non-streaming
+  `SystemExecutor`; `list_available` / `estimate_size` / `count_available` now
+  take a `runner` and route every read-only spawn through it (except
+  `nixos_flake_tempdir_check`, which needs `current_dir` + fs copies —
+  documented). These paths are now `MockExecutor`-testable (13 new tests).
+  Still open (descoped, user decision 2026-08-29): sync detection probes
+  (`is_nixos`/`os_package_manager::detect`/… — need a sync `SystemProber`),
+  and the `nix profile upgrade` / `nix-env` streaming-during-update gap (M2c).
 
 - [ ] **12. Unify the two privileged-execution stacks (update vs. upgrade)**
   Source: ARCH M3.

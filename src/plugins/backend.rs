@@ -98,44 +98,52 @@ impl Backend for PluginBackend {
         })
     }
 
-    fn list_available(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+    fn list_available<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + 'a>> {
         Box::pin(async move {
             let Some(cmd) = &self.descriptor.commands.list_available else {
                 return Ok(Vec::new());
             };
 
             let args: Vec<&str> = cmd.args.iter().map(|s| s.as_str()).collect();
+            let env: Vec<(&str, &str)> = cmd
+                .environment
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
 
-            // list_available is always unprivileged — spawn directly
-            let output = tokio::process::Command::new(&cmd.program)
-                .args(&args)
-                .envs(&cmd.environment)
-                .output()
-                .await
-                .map_err(|e| format!("Failed to run {}: {}", cmd.program, e))?;
+            // list_available is always unprivileged.
+            let output = runner.probe(&cmd.program, &args, &env).await;
+            if !output.spawned {
+                return Err(format!("Failed to run {}: {}", cmd.program, output.stderr));
+            }
 
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let packages = parser::apply_parser_list(&cmd.parser, &stdout);
+            let packages = parser::apply_parser_list(&cmd.parser, &output.stdout);
             Ok(packages)
         })
     }
 
-    fn estimate_size(&self) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+    fn estimate_size<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + 'a>> {
         Box::pin(async move {
             let cmd = self.descriptor.commands.estimate_size.as_ref()?;
 
             let args: Vec<&str> = cmd.args.iter().map(|s| s.as_str()).collect();
-            let output = tokio::process::Command::new(&cmd.program)
-                .args(&args)
-                .envs(&cmd.environment)
-                .output()
-                .await
-                .ok()?;
+            let env: Vec<(&str, &str)> = cmd
+                .environment
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            let output = runner.probe(&cmd.program, &args, &env).await;
+            if !output.spawned {
+                return None;
+            }
 
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            parser::apply_parser_size(&cmd.parser, &stdout)
+            parser::apply_parser_size(&cmd.parser, &output.stdout)
         })
     }
 
@@ -261,5 +269,28 @@ mod tests {
         let (program, args) = &calls[0];
         assert_eq!(program, "testprog");
         assert_eq!(args, &vec!["upgrade".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn list_available_runs_through_executor() {
+        let mut desc = test_descriptor(false, HashMap::new());
+        desc.commands.list_available = Some(CommandDef {
+            program: "testprog".into(),
+            args: vec!["list".into()],
+            environment: HashMap::new(),
+            parser: ParserDef::LineField {
+                field_index: 0,
+                separator: " ".into(),
+                skip_lines: 0,
+            },
+        });
+        let backend = PluginBackend::new(desc);
+        let mock = MockExecutor::with_output("htop 1.0\ncurl 2.0\n");
+
+        let result = backend.list_available(&mock).await.unwrap();
+
+        assert_eq!(result, vec!["htop".to_string(), "curl".to_string()]);
+        assert_eq!(mock.calls()[0].0, "testprog");
+        assert_eq!(mock.calls()[0].1, vec!["list".to_string()]);
     }
 }

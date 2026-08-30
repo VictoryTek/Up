@@ -417,6 +417,28 @@ impl CommandExecutor for CommandRunner {
             this.run(&program, &args_refs).await
         })
     }
+
+    fn probe<'a>(
+        &'a self,
+        program: &'a str,
+        args: &'a [&'a str],
+        env: &'a [(&'a str, &'a str)],
+    ) -> Pin<Box<dyn Future<Output = crate::executor::ProbeOutput> + Send + 'a>> {
+        // Read-only probes are not streamed to the log panel; behaviour is
+        // identical to `SystemExecutor::probe`.
+        let program = program.to_owned();
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let env: Vec<(String, String)> = env
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        Box::pin(async move {
+            let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            let env_refs: Vec<(&str, &str)> =
+                env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+            crate::executor::spawn_probe(&program, &args_refs, &env_refs).await
+        })
+    }
 }
 
 /// Spawns `program` with `args`, drains stdout and stderr concurrently on

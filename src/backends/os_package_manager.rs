@@ -69,35 +69,37 @@ impl Backend for AptBackend {
         })
     }
 
-    fn list_available(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+    fn list_available<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + 'a>> {
         Box::pin(async move {
-            let out = tokio::process::Command::new("apt")
-                .args(["list", "--upgradable"])
-                .output()
-                .await
-                .map_err(|e| e.to_string())?;
-            let text = String::from_utf8_lossy(&out.stdout);
-            Ok(parse_apt_list_upgradable(&text))
+            let out = runner.probe("apt", &["list", "--upgradable"], &[]).await;
+            if !out.spawned {
+                return Err(out.stderr);
+            }
+            Ok(parse_apt_list_upgradable(&out.stdout))
         })
     }
 
-    fn estimate_size(&self) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+    fn estimate_size<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + 'a>> {
         Box::pin(async move {
-            let out = tokio::process::Command::new("apt-get")
-                .args(["-s", "upgrade"])
-                .env("LANG", "C")
-                .env("LC_ALL", "C")
-                .env("DEBIAN_FRONTEND", "noninteractive")
-                .output()
-                .await
-                .ok()?;
-            if !out.status.success() {
+            // `apt-get -s upgrade` only simulates, so it never prompts; LANG/LC_ALL
+            // keep the summary line parseable across locales.
+            let out = runner
+                .probe(
+                    "apt-get",
+                    &["-s", "upgrade"],
+                    &[("LANG", "C"), ("LC_ALL", "C")],
+                )
+                .await;
+            if !out.ok() {
                 return None;
             }
-            let text = String::from_utf8_lossy(&out.stdout);
-            crate::disk::parse_apt_size(&text)
+            crate::disk::parse_apt_size(&out.stdout)
         })
     }
 
@@ -241,37 +243,40 @@ impl Backend for DnfBackend {
         })
     }
 
-    fn list_available(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+    fn list_available<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + 'a>> {
         Box::pin(async move {
-            let out = tokio::process::Command::new("dnf")
-                .args(["check-update"])
-                .output()
-                .await
-                .map_err(|e| e.to_string())?;
+            let out = runner.probe("dnf", &["check-update"], &[]).await;
+            if !out.spawned {
+                return Err(out.stderr);
+            }
             // Exit code 1 = error; 0 = up to date; 100 = updates available
-            if out.status.code() == Some(1) {
+            if out.code == Some(1) {
                 return Err("dnf check-update failed".to_string());
             }
-            let text = String::from_utf8_lossy(&out.stdout);
-            Ok(parse_dnf_list_upgrades(&text))
+            Ok(parse_dnf_list_upgrades(&out.stdout))
         })
     }
 
-    fn estimate_size(&self) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+    fn estimate_size<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + 'a>> {
         Box::pin(async move {
-            let out = tokio::process::Command::new("dnf")
-                .args(["upgrade", "--assumeno"])
-                .env("LANG", "C")
-                .env("LC_ALL", "C")
-                .output()
-                .await
-                .ok()?;
             // DNF exits non-zero when packages are available; stdout still has the summary.
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let combined = format!("{stdout}\n{stderr}");
+            let out = runner
+                .probe(
+                    "dnf",
+                    &["upgrade", "--assumeno"],
+                    &[("LANG", "C"), ("LC_ALL", "C")],
+                )
+                .await;
+            if !out.spawned {
+                return None;
+            }
+            let combined = format!("{}\n{}", out.stdout, out.stderr);
             crate::disk::parse_dnf_size(&combined)
         })
     }
@@ -406,17 +411,16 @@ impl Backend for PacmanBackend {
         })
     }
 
-    fn list_available(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+    fn list_available<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + 'a>> {
         Box::pin(async move {
-            let out = tokio::process::Command::new("pacman")
-                .args(["-Qu"])
-                .output()
-                .await
-                .map_err(|e| e.to_string())?;
-            let text = String::from_utf8_lossy(&out.stdout);
-            Ok(parse_checkupdates(&text))
+            let out = runner.probe("pacman", &["-Qu"], &[]).await;
+            if !out.spawned {
+                return Err(out.stderr);
+            }
+            Ok(parse_checkupdates(&out.stdout))
         })
     }
 
@@ -521,31 +525,35 @@ impl Backend for ZypperBackend {
         })
     }
 
-    fn list_available(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
+    fn list_available<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + 'a>> {
         Box::pin(async move {
-            let out = tokio::process::Command::new("zypper")
-                .args(["list-updates"])
-                .output()
-                .await
-                .map_err(|e| e.to_string())?;
-            let text = String::from_utf8_lossy(&out.stdout);
-            Ok(parse_zypper_list_updates(&text))
+            let out = runner.probe("zypper", &["list-updates"], &[]).await;
+            if !out.spawned {
+                return Err(out.stderr);
+            }
+            Ok(parse_zypper_list_updates(&out.stdout))
         })
     }
 
-    fn estimate_size(&self) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+    fn estimate_size<'a>(
+        &'a self,
+        runner: &'a dyn CommandExecutor,
+    ) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + 'a>> {
         Box::pin(async move {
-            let out = tokio::process::Command::new("zypper")
-                .args(["--non-interactive", "--no-color", "update", "--dry-run"])
-                .env("LANG", "C")
-                .env("LC_ALL", "C")
-                .output()
-                .await
-                .ok()?;
-            let text = String::from_utf8_lossy(&out.stdout);
-            crate::disk::parse_zypper_size(&text)
+            let out = runner
+                .probe(
+                    "zypper",
+                    &["--non-interactive", "--no-color", "update", "--dry-run"],
+                    &[("LANG", "C"), ("LC_ALL", "C")],
+                )
+                .await;
+            if !out.spawned {
+                return None;
+            }
+            crate::disk::parse_zypper_size(&out.stdout)
         })
     }
 
@@ -953,5 +961,68 @@ mod tests {
         let mock = MockExecutor::with_error(1, "zypper update failed");
         let result = ZypperBackend.run_update(&mock).await;
         assert!(matches!(result, UpdateResult::Error(_)));
+    }
+
+    // --- read-only probe path tests (list_available / estimate_size via MockExecutor) ---
+
+    #[tokio::test]
+    async fn apt_list_available_via_executor() {
+        let mock = MockExecutor::with_output(
+            "Listing... Done\nhtop/noble 3.3.0-1 amd64 [upgradable from: 3.2.2-1]\n",
+        );
+        let result = AptBackend.list_available(&mock).await.unwrap();
+        assert_eq!(result, vec!["htop".to_string()]);
+        assert_eq!(mock.calls()[0].0, "apt");
+    }
+
+    #[tokio::test]
+    async fn apt_estimate_size_via_executor() {
+        // parse_apt_size reads the "After this operation" line.
+        let mock = MockExecutor::with_output(
+            "Inst htop\nConf htop\nAfter this operation, 1024 kB of additional disk space will be used.\n",
+        );
+        let size = AptBackend.estimate_size(&mock).await;
+        assert!(size.is_some(), "expected a size estimate, got None");
+    }
+
+    #[tokio::test]
+    async fn dnf_list_available_via_executor_exit_100() {
+        // dnf check-update exits 100 when updates are available; stdout still parses.
+        let mock = MockExecutor::with_probe(
+            "Last metadata expiration check: 0:01:23 ago.\nhtop.x86_64  3.3.0-2.fc40  updates\n",
+            100,
+        );
+        let result = DnfBackend.list_available(&mock).await.unwrap();
+        assert_eq!(result, vec!["htop.x86_64".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn dnf_list_available_via_executor_exit_1_is_error() {
+        let mock = MockExecutor::with_probe("", 1);
+        assert!(DnfBackend.list_available(&mock).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn pacman_list_available_via_executor() {
+        let mock = MockExecutor::with_output("htop 3.2.2-1 -> 3.3.0-1\ncurl 8.4.0-1 -> 8.5.0-1\n");
+        let result = PacmanBackend.list_available(&mock).await.unwrap();
+        assert_eq!(result, vec!["htop".to_string(), "curl".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn zypper_list_available_via_executor() {
+        let mock = MockExecutor::with_output(
+            "v | openSUSE-updates | htop | 3.2.2-1.1 | 3.3.0-1.1 | x86_64\n",
+        );
+        let result = ZypperBackend.list_available(&mock).await.unwrap();
+        assert_eq!(result, vec!["htop".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn count_available_delegates_to_list_available() {
+        let mock = MockExecutor::with_output(
+            "Listing... Done\nhtop/noble 3.3.0-1 amd64 [upgradable from: 3.2.2-1]\ncurl/noble 8.5.0-1 amd64 [upgradable from: 8.4.0-1]\n",
+        );
+        assert_eq!(AptBackend.count_available(&mock).await.unwrap(), 2);
     }
 }

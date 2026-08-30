@@ -18,10 +18,11 @@ pub fn run_check() {
         return;
     }
 
+    let executor = crate::executor::SystemExecutor;
     let total: usize = runtime().block_on(async {
         let mut sum = 0usize;
         for backend in &backends {
-            match backend.count_available().await {
+            match backend.count_available(&executor).await {
                 Ok(n) => {
                     info!(
                         "up --check: {} reports {} update(s)",
