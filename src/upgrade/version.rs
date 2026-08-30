@@ -17,14 +17,45 @@ pub enum UbuntuUpgradeInfo {
     CheckFailed(String),
 }
 
+/// Outcome of an upgrade-availability check for the running distro.
+///
+/// Replaces the former stringly-typed return value: the UI gates the
+/// "Start Upgrade" action on [`UpgradeAvailability::is_available`] instead of
+/// pattern-matching a human-readable message prefix.
+#[derive(Debug, Clone)]
+pub enum UpgradeAvailability {
+    /// A newer release is available and the upgrade path is open.
+    Available(String),
+    /// No upgrade is offered (none released, released-but-not-promoted, …).
+    NotAvailable(String),
+    /// Upgrades are administratively disabled (Ubuntu `Prompt=never`).
+    Disabled(String),
+    /// The check could not be completed (network/parse error, unsupported distro).
+    Unknown(String),
+}
+
+impl UpgradeAvailability {
+    /// True only when a distro upgrade is available to start now.
+    pub fn is_available(&self) -> bool {
+        matches!(self, Self::Available(_))
+    }
+
+    /// The human-readable message to show the user.
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Available(m) | Self::NotAvailable(m) | Self::Disabled(m) | Self::Unknown(m) => m,
+        }
+    }
+}
+
 /// Check if a distribution upgrade is available.
-pub fn check_upgrade_available(distro: &DistroInfo) -> String {
+pub fn check_upgrade_available(distro: &DistroInfo) -> UpgradeAvailability {
     match distro.id.as_str() {
         "ubuntu" => check_ubuntu_upgrade(&distro.version_id),
         "fedora" => check_fedora_upgrade(&distro.version_id),
         "opensuse-leap" => check_opensuse_upgrade(&distro.version_id),
         "nixos" => check_nixos_upgrade(&distro.version_id),
-        _ => "Not supported for this distribution".to_string(),
+        _ => UpgradeAvailability::Unknown("Not supported for this distribution".to_string()),
     }
 }
 
@@ -137,7 +168,7 @@ fn parse_meta_release_for_upgrade(content: &str, current_version_id: &str) -> Ub
 
 /// Fallback upgrade check using do-release-upgrade -c when curl is unavailable.
 /// Returns Some(message) if the tool is available, None otherwise.
-fn check_ubuntu_upgrade_via_tool() -> Option<String> {
+fn check_ubuntu_upgrade_via_tool() -> Option<UpgradeAvailability> {
     let output = Command::new("do-release-upgrade")
         .args(["-c", "-f", "DistUpgradeViewNonInteractive"])
         .output()
@@ -151,47 +182,54 @@ fn check_ubuntu_upgrade_via_tool() -> Option<String> {
             .lines()
             .find(|l| l.contains("New release") || l.contains("new release"))
             .unwrap_or("New release available");
-        Some(format!("Yes \u{2014} {}", line.trim()))
+        Some(UpgradeAvailability::Available(line.trim().to_string()))
     } else if combined.contains("No new release") {
-        Some("No \u{2014} No newer Ubuntu release available".to_string())
+        Some(UpgradeAvailability::NotAvailable(
+            "No newer Ubuntu release available".to_string(),
+        ))
     } else {
-        Some("No \u{2014} No upgrade available".to_string())
+        Some(UpgradeAvailability::NotAvailable(
+            "No upgrade available".to_string(),
+        ))
     }
 }
 
-fn check_ubuntu_upgrade(version_id: &str) -> String {
+fn check_ubuntu_upgrade(version_id: &str) -> UpgradeAvailability {
     let policy = read_upgrade_prompt_policy();
 
     if policy == "never" {
-        return "Upgrades are disabled in /etc/update-manager/release-upgrades".to_string();
+        return UpgradeAvailability::Disabled(
+            "Upgrades are disabled in /etc/update-manager/release-upgrades".to_string(),
+        );
     }
 
     match fetch_ubuntu_meta_release(&policy) {
-        Err(e) => check_ubuntu_upgrade_via_tool()
-            .unwrap_or_else(|| format!("Could not check for upgrades: {e}")),
+        Err(e) => check_ubuntu_upgrade_via_tool().unwrap_or_else(|| {
+            UpgradeAvailability::Unknown(format!("Could not check for upgrades: {e}"))
+        }),
         Ok(content) => match parse_meta_release_for_upgrade(&content, version_id) {
             UbuntuUpgradeInfo::Available { name, version } => {
-                format!("Yes \u{2014} {} {} is available", name, version)
+                UpgradeAvailability::Available(format!("{} {} is available", name, version))
             }
             UbuntuUpgradeInfo::ReleasedNotPromoted { name, version } => {
-                format!(
-                    "No \u{2014} {} {} is released but the upgrade is not yet available. \
+                UpgradeAvailability::NotAvailable(format!(
+                    "{} {} is released but the upgrade is not yet available. \
                      Canonical typically opens the LTS upgrade path 4\u{2013}8 weeks \
                      after release.",
                     name, version
-                )
+                ))
             }
             UbuntuUpgradeInfo::NotAvailable => {
-                "No \u{2014} No newer Ubuntu release available".to_string()
+                UpgradeAvailability::NotAvailable("No newer Ubuntu release available".to_string())
             }
             UbuntuUpgradeInfo::CheckFailed(reason) => {
-                format!("Could not check for upgrades: {}", reason)
+                UpgradeAvailability::Unknown(format!("Could not check for upgrades: {}", reason))
             }
         },
     }
 }
 
-fn check_fedora_upgrade(current_version_id: &str) -> String {
+fn check_fedora_upgrade(current_version_id: &str) -> UpgradeAvailability {
     let current: u32 = current_version_id.parse().unwrap_or(0);
     let next = current + 1;
     let url = format!(
@@ -200,11 +238,13 @@ fn check_fedora_upgrade(current_version_id: &str) -> String {
     );
     let agent = http_agent();
     match agent.get(&url).call() {
-        Ok(_) => format!("Yes — Fedora {} is available", next),
-        Err(ureq::Error::StatusCode(_)) => format!("No — Fedora {} not yet released", next),
+        Ok(_) => UpgradeAvailability::Available(format!("Fedora {} is available", next)),
+        Err(ureq::Error::StatusCode(_)) => {
+            UpgradeAvailability::NotAvailable(format!("Fedora {} not yet released", next))
+        }
         Err(e) => {
             log::warn!("Could not check Fedora upgrade availability: {e}");
-            format!("Could not check for Fedora upgrade: {e}")
+            UpgradeAvailability::Unknown(format!("Could not check for Fedora upgrade: {e}"))
         }
     }
 }
@@ -224,9 +264,11 @@ pub(crate) fn next_opensuse_leap_version(version_id: &str) -> Option<String> {
     Some(format!("{}.{}", major, minor + 1))
 }
 
-fn check_opensuse_upgrade(version_id: &str) -> String {
+fn check_opensuse_upgrade(version_id: &str) -> UpgradeAvailability {
     let Some(next_version) = next_opensuse_leap_version(version_id) else {
-        return "Could not parse current openSUSE Leap version".to_string();
+        return UpgradeAvailability::Unknown(
+            "Could not parse current openSUSE Leap version".to_string(),
+        );
     };
     let url = format!(
         "https://download.opensuse.org/distribution/leap/{}/repo/oss/",
@@ -234,14 +276,16 @@ fn check_opensuse_upgrade(version_id: &str) -> String {
     );
     let agent = http_agent();
     match agent.get(&url).call() {
-        Ok(_) => format!("Yes \u{2014} openSUSE Leap {} is available", next_version),
-        Err(ureq::Error::StatusCode(_)) => format!(
-            "No \u{2014} openSUSE Leap {} not yet released",
+        Ok(_) => {
+            UpgradeAvailability::Available(format!("openSUSE Leap {} is available", next_version))
+        }
+        Err(ureq::Error::StatusCode(_)) => UpgradeAvailability::NotAvailable(format!(
+            "openSUSE Leap {} not yet released",
             next_version
-        ),
+        )),
         Err(e) => {
             log::warn!("Could not check openSUSE upgrade availability: {e}");
-            format!("Could not check for openSUSE Leap upgrade: {e}")
+            UpgradeAvailability::Unknown(format!("Could not check for openSUSE Leap upgrade: {e}"))
         }
     }
 }
@@ -295,28 +339,70 @@ fn validate_hostname(hostname: &str) -> Result<&str, String> {
     Ok(hostname)
 }
 
-fn check_nixos_upgrade(current_version_id: &str) -> String {
+fn check_nixos_upgrade(current_version_id: &str) -> UpgradeAvailability {
     let Some(next_channel) = next_nixos_channel(current_version_id) else {
-        return "Could not parse current NixOS version".to_string();
+        return UpgradeAvailability::Unknown("Could not parse current NixOS version".to_string());
     };
     let version_label = next_channel.trim_start_matches("nixos-");
     let url = format!("https://channels.nixos.org/{}", next_channel);
     let agent = http_agent();
     match agent.get(&url).call() {
-        Ok(_) => format!("Yes — NixOS {} is available", version_label),
+        Ok(_) => UpgradeAvailability::Available(format!("NixOS {} is available", version_label)),
         Err(ureq::Error::StatusCode(_)) => {
-            format!("No — NixOS {} not yet available", version_label)
+            UpgradeAvailability::NotAvailable(format!("NixOS {} not yet available", version_label))
         }
         Err(e) => {
             log::warn!("Could not check NixOS upgrade availability: {e}");
-            format!("Could not check for NixOS upgrade: {e}")
+            UpgradeAvailability::Unknown(format!("Could not check for NixOS upgrade: {e}"))
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{next_nixos_channel, next_opensuse_leap_version, validate_hostname};
+    use super::{
+        check_upgrade_available, next_nixos_channel, next_opensuse_leap_version, validate_hostname,
+        UpgradeAvailability,
+    };
+    use crate::upgrade::detect::DistroInfo;
+
+    fn distro(id: &str, version_id: &str) -> DistroInfo {
+        DistroInfo {
+            id: id.to_string(),
+            name: id.to_string(),
+            version: version_id.to_string(),
+            version_id: version_id.to_string(),
+            upgrade_supported: true,
+        }
+    }
+
+    #[test]
+    fn check_upgrade_unsupported_distro_is_unknown() {
+        let result = check_upgrade_available(&distro("arch", "2026"));
+        assert!(matches!(result, UpgradeAvailability::Unknown(_)));
+        assert!(!result.is_available());
+    }
+
+    #[test]
+    fn check_upgrade_unparseable_version_is_unknown() {
+        // These early-return before any network I/O.
+        assert!(matches!(
+            check_upgrade_available(&distro("opensuse-leap", "garbage")),
+            UpgradeAvailability::Unknown(_)
+        ));
+        assert!(matches!(
+            check_upgrade_available(&distro("nixos", "not-a-version")),
+            UpgradeAvailability::Unknown(_)
+        ));
+    }
+
+    #[test]
+    fn upgrade_availability_message_and_gate() {
+        assert!(UpgradeAvailability::Available("x".into()).is_available());
+        assert!(!UpgradeAvailability::NotAvailable("x".into()).is_available());
+        assert!(!UpgradeAvailability::Disabled("x".into()).is_available());
+        assert_eq!(UpgradeAvailability::Unknown("why".into()).message(), "why");
+    }
 
     #[test]
     fn next_nixos_channel_from_may_gives_november() {

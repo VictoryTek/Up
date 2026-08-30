@@ -9,4 +9,4 @@ pub use detect::{
     UpgradePageInit,
 };
 pub use execute::run_upgrade;
-pub use version::{check_upgrade_available, next_nixos_channel};
+pub use version::{check_upgrade_available, next_nixos_channel, UpgradeAvailability};

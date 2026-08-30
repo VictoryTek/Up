@@ -131,11 +131,15 @@ Checklist convention: `[ ]` open, `[x]` done.
   paths still lack integration tests — manual verification on real distros
   advised before shipping.
 
-- [ ] **13. Replace stringly-typed contracts between layers**
+- [x] **13. Replace stringly-typed contracts between layers** *(partial — part A)*
   Source: ARCH M4.
-  Files: `src/ui/upgrade_page.rs:482` (`result_msg.starts_with("Yes")`), `src/backends/mod.rs:42-69` (`BackendError::from_string` re-parses error prose), `src/runner.rs:50, 116-121`, `src/history.rs:9-15`.
-  A wording change or gettext translation of these strings would silently
-  break upgrade-availability gating.
+  Files: `src/upgrade/version.rs`, `src/upgrade/mod.rs`, `src/ui/upgrade_page.rs`.
+  `check_upgrade_available` now returns an `UpgradeAvailability` enum; the UI
+  gates on `is_available()` instead of `result_msg.starts_with("Yes")`.
+  Still open (descoped, user decision 2026-08-29): part B — typed
+  `PrivilegedShell` / `BackendError` (kill `BackendError::from_string` prose
+  parsing in `src/backends/mod.rs:42-69`, `src/runner.rs`); part C —
+  `history.rs` `result: String` → enum.
 
 - [ ] **14. Daemon allowlist diverged from GUI commands / `RunUpgrade` can never succeed**
   Source: ARCH M5 (also see item 4 — resolve together).

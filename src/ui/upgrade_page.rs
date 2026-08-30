@@ -468,17 +468,17 @@ impl UpgradePage {
                                 #[strong]
                                 recompute_state,
                                 async move {
-                                    let (tx, rx) = async_channel::unbounded::<String>();
+                                    let (tx, rx) =
+                                        async_channel::unbounded::<upgrade::UpgradeAvailability>();
                                     std::thread::spawn(move || {
                                         let result =
                                             upgrade::check_upgrade_available(&distro_check);
                                         let _ = tx.send_blocking(result);
                                         drop(tx);
                                     });
-                                    if let Ok(result_msg) = rx.recv().await {
-                                        let is_available = result_msg.starts_with("Yes");
-                                        *upgrade_available.borrow_mut() = is_available;
-                                        upgrade_available_row.set_subtitle(&result_msg);
+                                    if let Ok(result) = rx.recv().await {
+                                        *upgrade_available.borrow_mut() = result.is_available();
+                                        upgrade_available_row.set_subtitle(result.message());
                                         (*recompute_state)();
                                     } else {
                                         upgrade_available_row.set_subtitle(&gettext(
