@@ -161,13 +161,15 @@ Checklist convention: `[ ]` open, `[x]` done.
   suppressed (100% dead, pending wiring): `src/changelog.rs` (item 20),
   `src/snapshot.rs` (item 18).
 
-- [ ] **16. Orchestrator event loop duplicated in the UI with behavioral drift**
+- [x] **16. Orchestrator event loop duplicated in the UI with behavioral drift** *(partial)*
   Source: ARCH M7.
-  Files: `src/ui/window.rs:442-568` (Update All) vs `:791-911` (retry).
-  The retry path drops the `CancelHandle` (retried backend can't be
-  cancelled), ignores the self-update banner, and never touches the progress
-  bar. Every new `UpdateResult` variant must currently be handled in both
-  places. Consider extracting a shared `apply_event()` function.
+  Files: `src/ui/window.rs`.
+  Extracted `apply_backend_finished()` — the row-status / VexOS cache-dialog /
+  history handling for a `BackendFinished` event, shared by the "Update All"
+  loop and the retry loop (a new `UpdateResult` variant now needs handling in
+  one place). Fixed the retry self-update-banner drift. Still open: the retry
+  path still has no progress bar and drops the `CancelHandle` (deliberate —
+  single-backend quick action, adding a cancel button is a UX decision).
 
 - [ ] **17. `upgrade_supported` and `execute_upgrade` disagree about supported distros**
   Source: ARCH M8.

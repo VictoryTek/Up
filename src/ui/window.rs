@@ -594,95 +594,17 @@ impl UpWindow {
                                     }
                                 }
                                 OrchestratorEvent::BackendFinished(kind, result) => {
-                                    let mut show_cache_dialog = false;
-                                    {
-                                        let rows_borrowed = rows.borrow();
-                                        if let Some((_, row)) =
-                                            rows_borrowed.iter().find(|(k, _)| *k == kind)
-                                        {
-                                            match &result {
-                                                UpdateResult::Success {
-                                                    updated_count,
-                                                    updated_items,
-                                                } => {
-                                                    row.set_packages(updated_items);
-                                                    row.set_status_success(*updated_count);
-                                                }
-                                                UpdateResult::SuccessWithSelfUpdate {
-                                                    updated_count,
-                                                    updated_items,
-                                                } => {
-                                                    row.set_packages(updated_items);
-                                                    row.set_status_success(*updated_count);
-                                                    self_updated = true;
-                                                }
-                                                UpdateResult::Error(msg) => {
-                                                    row.set_status_error(&msg.to_string());
-                                                    has_error = true;
-                                                }
-                                                UpdateResult::Skipped(msg) => {
-                                                    row.set_status_skipped(msg);
-                                                }
-                                                UpdateResult::Cancelled => {
-                                                    row.set_status_skipped("Cancelled");
-                                                }
-                                                UpdateResult::CacheMiss => {
-                                                    row.set_status_skipped(
-                                                        "Binary cache syncing, try again later",
-                                                    );
-                                                    show_cache_dialog = true;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if show_cache_dialog {
-                                        let details =
-                                            crate::backends::nix::extract_cache_block_message(
-                                                &nix_log_lines,
-                                            )
-                                            .unwrap_or_else(|| {
-                                                "No further detail was provided.".to_string()
-                                            });
-                                        crate::ui::cache_block_dialog::show_cache_block_dialog(
-                                            &button,
-                                            &details,
-                                            glib::clone!(
-                                                #[strong]
-                                                rows,
-                                                #[strong]
-                                                log_panel,
-                                                #[weak]
-                                                status_label,
-                                                #[weak]
-                                                button,
-                                                move || spawn_cache_bypass(
-                                                    crate::backends::nix::CacheBypassMode::Deploy,
-                                                    rows.clone(),
-                                                    log_panel.clone(),
-                                                    status_label.clone(),
-                                                    button.clone(),
-                                                )
-                                            ),
-                                            glib::clone!(
-                                                #[strong]
-                                                rows,
-                                                #[strong]
-                                                log_panel,
-                                                #[weak]
-                                                status_label,
-                                                #[weak]
-                                                button,
-                                                move || spawn_cache_bypass(
-                                                    crate::backends::nix::CacheBypassMode::UpdateAll,
-                                                    rows.clone(),
-                                                    log_panel.clone(),
-                                                    status_label.clone(),
-                                                    button.clone(),
-                                                )
-                                            ),
-                                        );
-                                    }
-                                    record_history_entry(&kind, &result);
+                                    let outcome = apply_backend_finished(
+                                        &kind,
+                                        &result,
+                                        &rows,
+                                        &log_panel,
+                                        &status_label,
+                                        &button,
+                                        &nix_log_lines,
+                                    );
+                                    has_error |= outcome.is_error;
+                                    self_updated |= outcome.is_self_update;
                                     let finished = finished_backends.get() + 1;
                                     finished_backends.set(finished);
                                     let total = total_backends.get();
@@ -938,6 +860,8 @@ impl UpWindow {
                 log_panel,
                 #[weak]
                 status_label,
+                #[weak]
+                restart_banner,
                 async move {
                     if let Ok(new_backends) = detect_rx.recv().await {
                         // Remove placeholder
@@ -959,6 +883,7 @@ impl UpWindow {
                                 let detected_retry = detected.clone();
                                 let updating_retry = updating.clone();
                                 let update_button_retry = update_button.clone();
+                                let restart_banner_retry = restart_banner.clone();
                                 let row = UpdateRow::new(
                                     backend.as_ref(),
                                     initial_skipped,
@@ -1012,6 +937,7 @@ impl UpWindow {
                                         let updating_spawn = updating_retry.clone();
                                         let update_button_spawn = update_button_retry.clone();
                                         let status_label_spawn = status_label_retry.clone();
+                                        let restart_banner_spawn = restart_banner_retry.clone();
                                         glib::spawn_future_local(async move {
                                             let mut nix_log_lines: Vec<String> = Vec::new();
                                             while let Ok(event) = event_rx.recv().await {
@@ -1041,93 +967,18 @@ impl UpWindow {
                                                         k,
                                                         result,
                                                     ) => {
-                                                        let mut show_cache_dialog = false;
-                                                        {
-                                                            let rows_borrowed = rows_spawn.borrow();
-                                                            if let Some((_, row)) = rows_borrowed
-                                                                .iter()
-                                                                .find(|(rk, _)| *rk == k)
-                                                            {
-                                                                match &result {
-                                                                    UpdateResult::Success {
-                                                                        updated_count,
-                                                                        updated_items,
-                                                                    } => {
-                                                                        row.set_packages(
-                                                                            updated_items,
-                                                                        );
-                                                                        row.set_status_success(
-                                                                            *updated_count,
-                                                                        );
-                                                                    }
-                                                                    UpdateResult::SuccessWithSelfUpdate {
-                                                                        updated_count,
-                                                                        updated_items,
-                                                                    } => {
-                                                                        row.set_packages(
-                                                                            updated_items,
-                                                                        );
-                                                                        row.set_status_success(
-                                                                            *updated_count,
-                                                                        );
-                                                                    }
-                                                                    UpdateResult::Error(msg) => {
-                                                                        row.set_status_error(
-                                                                            &msg.to_string(),
-                                                                        );
-                                                                    }
-                                                                    UpdateResult::Skipped(msg) => {
-                                                                        row.set_status_skipped(msg);
-                                                                    }
-                                                                    UpdateResult::Cancelled => {
-                                                                        row.set_status_skipped(
-                                                                            "Cancelled",
-                                                                        );
-                                                                    }
-                                                                    UpdateResult::CacheMiss => {
-                                                                        row.set_status_skipped(
-                                                                            "Binary cache syncing, try again later",
-                                                                        );
-                                                                        show_cache_dialog = true;
-                                                                    }
-                                                                }
-                                                            }
+                                                        let outcome = apply_backend_finished(
+                                                            &k,
+                                                            &result,
+                                                            &rows_spawn,
+                                                            &log_panel_spawn,
+                                                            &status_label_spawn,
+                                                            &update_button_spawn,
+                                                            &nix_log_lines,
+                                                        );
+                                                        if outcome.is_self_update {
+                                                            restart_banner_spawn.set_revealed(true);
                                                         }
-                                                        if show_cache_dialog {
-                                                            let details = crate::backends::nix::extract_cache_block_message(&nix_log_lines)
-                                                                .unwrap_or_else(|| "No further detail was provided.".to_string());
-                                                            crate::ui::cache_block_dialog::show_cache_block_dialog(
-                                                                &update_button_spawn,
-                                                                &details,
-                                                                glib::clone!(
-                                                                    #[strong] rows_spawn,
-                                                                    #[strong] log_panel_spawn,
-                                                                    #[strong] status_label_spawn,
-                                                                    #[strong] update_button_spawn,
-                                                                    move || spawn_cache_bypass(
-                                                                        crate::backends::nix::CacheBypassMode::Deploy,
-                                                                        rows_spawn.clone(),
-                                                                        log_panel_spawn.clone(),
-                                                                        status_label_spawn.clone(),
-                                                                        update_button_spawn.clone(),
-                                                                    )
-                                                                ),
-                                                                glib::clone!(
-                                                                    #[strong] rows_spawn,
-                                                                    #[strong] log_panel_spawn,
-                                                                    #[strong] status_label_spawn,
-                                                                    #[strong] update_button_spawn,
-                                                                    move || spawn_cache_bypass(
-                                                                        crate::backends::nix::CacheBypassMode::UpdateAll,
-                                                                        rows_spawn.clone(),
-                                                                        log_panel_spawn.clone(),
-                                                                        status_label_spawn.clone(),
-                                                                        update_button_spawn.clone(),
-                                                                    )
-                                                                ),
-                                                            );
-                                                        }
-                                                        record_history_entry(&k, &result);
                                                     }
                                                     OrchestratorEvent::AllFinished => {
                                                         break;
@@ -1261,6 +1112,110 @@ fn spawn_cleanup(
         updating.set(false);
         update_button.set_sensitive(true);
     });
+}
+
+/// Flags folded back into a caller's own loop state by [`apply_backend_finished`].
+#[derive(Default)]
+struct BackendFinishedOutcome {
+    is_error: bool,
+    is_self_update: bool,
+}
+
+/// Apply a `BackendFinished` result to its update row, surface the VexOS
+/// cache-block dialog when the update is on hold, and record the outcome to
+/// the history log.
+///
+/// Shared by the "Update All" event loop and the per-row retry loop so that a
+/// new [`UpdateResult`] variant only needs handling in one place. The caller
+/// folds the returned flags into its own state (progress bar, restart banner,
+/// final status label).
+fn apply_backend_finished(
+    kind: &BackendKind,
+    result: &UpdateResult,
+    rows: &Rc<RefCell<Vec<(BackendKind, UpdateRow)>>>,
+    log_panel: &LogPanel,
+    status_label: &gtk::Label,
+    dialog_anchor: &gtk::Button,
+    nix_log_lines: &[String],
+) -> BackendFinishedOutcome {
+    let mut outcome = BackendFinishedOutcome::default();
+    let mut show_cache_dialog = false;
+    {
+        let rows_borrowed = rows.borrow();
+        if let Some((_, row)) = rows_borrowed.iter().find(|(k, _)| k == kind) {
+            match result {
+                UpdateResult::Success {
+                    updated_count,
+                    updated_items,
+                } => {
+                    row.set_packages(updated_items);
+                    row.set_status_success(*updated_count);
+                }
+                UpdateResult::SuccessWithSelfUpdate {
+                    updated_count,
+                    updated_items,
+                } => {
+                    row.set_packages(updated_items);
+                    row.set_status_success(*updated_count);
+                    outcome.is_self_update = true;
+                }
+                UpdateResult::Error(msg) => {
+                    row.set_status_error(&msg.to_string());
+                    outcome.is_error = true;
+                }
+                UpdateResult::Skipped(msg) => row.set_status_skipped(msg),
+                UpdateResult::Cancelled => row.set_status_skipped("Cancelled"),
+                UpdateResult::CacheMiss => {
+                    row.set_status_skipped("Binary cache syncing, try again later");
+                    show_cache_dialog = true;
+                }
+            }
+        }
+    }
+    if show_cache_dialog {
+        let details = crate::backends::nix::extract_cache_block_message(nix_log_lines)
+            .unwrap_or_else(|| "No further detail was provided.".to_string());
+        crate::ui::cache_block_dialog::show_cache_block_dialog(
+            dialog_anchor,
+            &details,
+            glib::clone!(
+                #[strong]
+                rows,
+                #[strong]
+                log_panel,
+                #[strong]
+                status_label,
+                #[strong]
+                dialog_anchor,
+                move || spawn_cache_bypass(
+                    crate::backends::nix::CacheBypassMode::Deploy,
+                    rows.clone(),
+                    log_panel.clone(),
+                    status_label.clone(),
+                    dialog_anchor.clone(),
+                )
+            ),
+            glib::clone!(
+                #[strong]
+                rows,
+                #[strong]
+                log_panel,
+                #[strong]
+                status_label,
+                #[strong]
+                dialog_anchor,
+                move || spawn_cache_bypass(
+                    crate::backends::nix::CacheBypassMode::UpdateAll,
+                    rows.clone(),
+                    log_panel.clone(),
+                    status_label.clone(),
+                    dialog_anchor.clone(),
+                )
+            ),
+        );
+    }
+    record_history_entry(kind, result);
+    outcome
 }
 
 /// Records a finished backend's outcome to the persistent update history log.
