@@ -196,7 +196,13 @@ impl PrivilegedShell {
                         if code == 0 {
                             return Ok(output);
                         }
-                        return Err(format!("Command exited with code {code}"));
+                        // Keep the captured output tail so the UI can show full
+                        // context on demand instead of just the exit code.
+                        return Err(if output.trim().is_empty() {
+                            format!("Command exited with code {code}")
+                        } else {
+                            format!("Command exited with code {code}\n{output}")
+                        });
                     }
                 }
                 let content = line.trim_end_matches('\n').to_string();
@@ -384,10 +390,14 @@ impl CommandRunner {
         } else {
             let code = status.code().unwrap_or(-1);
             warn!("{program} exited with code {code}");
-            Err(BackendError::Exit {
-                code,
-                message: format!("{program} exited with code {code}"),
-            })
+            // Include the retained output tail so the UI can surface full
+            // context on demand rather than only the exit code.
+            let message = if full_output.trim().is_empty() {
+                format!("{program} exited with code {code}")
+            } else {
+                format!("{program} exited with code {code}\n{full_output}")
+            };
+            Err(BackendError::Exit { code, message })
         }
     }
 

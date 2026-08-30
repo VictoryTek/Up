@@ -42,11 +42,16 @@ impl BackendError {
     /// Convert a raw error string into the most specific BackendError variant.
     /// Used as a bridge during migration from String-based errors.
     pub fn from_string(s: String) -> Self {
-        let lower = s.to_ascii_lowercase();
+        // Only the first line carries the classification signal (the error
+        // prefix we generate); anything after a newline is appended command
+        // output — see runner.rs — and must not sway the heuristics. The full
+        // text is still preserved in `message`.
+        let head = s.split('\n').next().unwrap_or(&s);
+        let lower = head.to_ascii_lowercase();
         if lower.contains("authentication was cancelled")
             || lower.contains("not authorised")
-            || s.contains("exit code 126")
-            || s.contains("exit code 127")
+            || head.contains("exit code 126")
+            || head.contains("exit code 127")
         {
             return BackendError::AuthCancelled;
         }
@@ -54,7 +59,7 @@ impl BackendError {
             return BackendError::Spawn(s);
         }
         if lower.contains("exited with code") {
-            let code = s
+            let code = head
                 .split("code ")
                 .nth(1)
                 .and_then(|rest| rest.split_whitespace().next())
@@ -317,4 +322,38 @@ pub fn detect_backends(disabled_plugins: &[String]) -> Vec<Arc<dyn Backend>> {
     }
 
     backends
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BackendError;
+
+    #[test]
+    fn from_string_classifies_on_first_line_only() {
+        // The retained output tail must not sway classification — a command
+        // whose output mentions "No such file or directory" is still an Exit,
+        // not a Spawn failure.
+        let e = BackendError::from_string(
+            "apt exited with code 100\nE: dpkg: No such file or directory\n...".to_string(),
+        );
+        match e {
+            BackendError::Exit { code, message } => {
+                assert_eq!(code, 100);
+                assert!(message.contains("No such file or directory"));
+            }
+            other => panic!("expected Exit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn from_string_still_detects_auth_cancel_and_spawn() {
+        assert!(matches!(
+            BackendError::from_string("pkexec: authentication was cancelled".to_string()),
+            BackendError::AuthCancelled
+        ));
+        assert!(matches!(
+            BackendError::from_string("Failed to start apt: No such file or directory".to_string()),
+            BackendError::Spawn(_)
+        ));
+    }
 }

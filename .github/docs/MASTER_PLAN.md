@@ -228,11 +228,14 @@ Checklist convention: `[ ]` open, `[x]` done.
   `AppConfig::disabled_plugins` persists the choice and `detect_backends()`
   skips disabled ids on next launch. Examples (`eopkg`/`swupd`) stay examples.
 
-- [ ] **24. Show error tail on click instead of a truncated one-line label**
+- [x] **24. Show error tail on click instead of a truncated one-line label**
   Source: FEATURES 11.
-  Files: `src/runner.rs` (`tail_str` already retained, discarded on error path), `src/ui/update_row.rs` (`set_status_error`).
-  Include the retained 100-line output tail in `BackendError::Exit::message`
-  and make the error label open a dialog with full context.
+  Files: `src/runner.rs`, `src/backends/mod.rs`, `src/ui/update_row.rs`.
+  The non-zero-exit error message now carries the retained output tail;
+  `set_status_error` shows a one-line label plus a details button that opens
+  a scrollable dialog with the full text. `BackendError::from_string` now
+  classifies on the first line only so the appended tail can't cause an
+  `Exit`→`Spawn` misclassification (partial nibble at item 13B).
 
 - [ ] **25. Finish localization: initialize gettext and wrap remaining UI strings**
   Source: ARCH L4, FEATURES 14.

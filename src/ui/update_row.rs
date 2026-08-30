@@ -38,6 +38,10 @@ pub struct UpdateRow {
     check_errored: Rc<Cell<bool>>,
     skip_checkbox: gtk::CheckButton,
     retry_button: gtk::Button,
+    /// Opens a dialog with the full error output; shown only after a failure.
+    error_button: gtk::Button,
+    /// Full failure message (first line + retained output tail) for the dialog.
+    error_details: Rc<RefCell<String>>,
     /// Whether the backend supports updating a user-selected subset of packages.
     supports_selection: bool,
     /// One `(item_id, checkbox)` pair per currently-displayed package.
@@ -95,6 +99,20 @@ impl UpdateRow {
         retry_button.set_tooltip_text(Some("Retry"));
         retry_button.set_visible(false);
         retry_button.connect_clicked(move |_| on_retry());
+
+        let error_details: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+        let error_button = gtk::Button::from_icon_name("dialog-information-symbolic");
+        error_button.set_tooltip_text(Some("Show error details"));
+        error_button.set_valign(gtk::Align::Center);
+        error_button.add_css_class("flat");
+        error_button.set_visible(false);
+        {
+            let error_details = error_details.clone();
+            let row_for_dialog = row.clone();
+            error_button.connect_clicked(move |_| {
+                show_error_details_dialog(&row_for_dialog, &error_details.borrow());
+            });
+        }
 
         let packages: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
 
@@ -155,6 +173,7 @@ impl UpdateRow {
         row.add_suffix(&status_label);
         row.add_suffix(&spinner);
         row.add_suffix(&changelog_button);
+        row.add_suffix(&error_button);
         row.add_suffix(&retry_button);
         row.add_suffix(&skip_checkbox);
 
@@ -213,6 +232,8 @@ impl UpdateRow {
             check_errored: Rc::new(Cell::new(false)),
             skip_checkbox,
             retry_button,
+            error_button,
+            error_details,
             supports_selection,
             package_checks,
             selection_capped,
@@ -351,6 +372,7 @@ impl UpdateRow {
 
     pub fn set_status_checking(&self) {
         self.retry_button.set_visible(false);
+        self.hide_error_button();
         self.changelog_button.set_visible(false);
         self.last_available.set(None);
         self.last_estimated_size.set(None);
@@ -363,6 +385,7 @@ impl UpdateRow {
 
     pub fn set_status_available(&self, count: usize) {
         self.retry_button.set_visible(false);
+        self.hide_error_button();
         self.last_available.set(Some(count));
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
@@ -380,6 +403,7 @@ impl UpdateRow {
 
     pub fn set_status_running(&self) {
         self.retry_button.set_visible(false);
+        self.hide_error_button();
         self.changelog_button.set_visible(false);
         self.skip_checkbox.set_sensitive(false);
         self.spinner.set_visible(true);
@@ -390,6 +414,7 @@ impl UpdateRow {
 
     pub fn set_status_success(&self, count: usize) {
         self.retry_button.set_visible(false);
+        self.hide_error_button();
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
@@ -407,12 +432,22 @@ impl UpdateRow {
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
-        self.status_label.set_label(&format!("Error: {}", msg));
+        // The label shows only the first line; the full message (including the
+        // retained command-output tail) is available via the details button.
+        let summary = msg.lines().next().unwrap_or(msg);
+        self.status_label.set_label(&format!("Error: {summary}"));
         self.status_label.set_css_classes(&["error"]);
+        *self.error_details.borrow_mut() = msg.to_string();
+        self.error_button.set_visible(msg.lines().count() > 1);
+    }
+
+    fn hide_error_button(&self) {
+        self.error_button.set_visible(false);
     }
 
     pub fn set_status_skipped(&self, msg: &str) {
         self.retry_button.set_visible(false);
+        self.hide_error_button();
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
@@ -424,6 +459,7 @@ impl UpdateRow {
     /// Sets `check_errored` so the window can avoid a false "Everything is up to date."
     pub fn set_status_unknown(&self, msg: &str) {
         self.retry_button.set_visible(false);
+        self.hide_error_button();
         self.changelog_button.set_visible(false);
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
@@ -432,6 +468,37 @@ impl UpdateRow {
         self.status_label.set_label(msg);
         self.status_label.set_css_classes(&["dim-label"]);
     }
+}
+
+/// Present the full failure output for a backend in a scrollable dialog.
+fn show_error_details_dialog(parent: &impl gtk::prelude::IsA<gtk::Widget>, message: &str) {
+    let text_view = gtk::TextView::builder()
+        .editable(false)
+        .cursor_visible(false)
+        .monospace(true)
+        .wrap_mode(gtk::WrapMode::WordChar)
+        .left_margin(8)
+        .right_margin(8)
+        .top_margin(8)
+        .bottom_margin(8)
+        .build();
+    text_view.buffer().set_text(message);
+
+    let scroller = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .min_content_height(320)
+        .min_content_width(480)
+        .child(&text_view)
+        .build();
+
+    let dialog = adw::AlertDialog::builder()
+        .heading("Update Failed")
+        .extra_child(&scroller)
+        .build();
+    dialog.add_response("close", "Close");
+    dialog.set_default_response(Some("close"));
+    dialog.set_close_response("close");
+    dialog.present(Some(parent));
 }
 
 /// Present a "What's new" dialog anchored at `parent` and asynchronously fill
