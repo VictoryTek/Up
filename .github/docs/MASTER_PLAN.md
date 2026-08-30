@@ -150,16 +150,15 @@ Checklist convention: `[ ]` open, `[x]` done.
   Verified 2026-08-29: `daemon/` does not exist; `Cargo.toml` workspace
   `members = ["."]`. This also moots items 34, 37, 41, 44 (all daemon-only).
 
-- [x] **15. Remove blanket `#![allow(dead_code)]` from the 7 abandoned-subsystem modules** *(partial — 5 of 7)*
+- [x] **15. Remove blanket `#![allow(dead_code)]` from the 7 abandoned-subsystem modules** *(partial — 6 of 7)*
   Source: ARCH M6.
   Files: `src/disk.rs` (this pass); `src/check.rs`, `src/config.rs`,
-  `src/history.rs`, `src/ui/history_page.rs` (already de-suppressed by items
-  2/6/7).
+  `src/history.rs`, `src/ui/history_page.rs` (de-suppressed by items 2/6/7);
+  `src/snapshot.rs` (deleted, item 18).
   `disk.rs` blanket suppression removed; only the three low-disk-warning
   helpers (`detect_available_space`, `parse_df_available`, `format_bytes`)
   keep a targeted `#[allow(dead_code)]` pending item 19. Still module-wide
-  suppressed (100% dead, pending wiring): `src/changelog.rs` (item 20),
-  `src/snapshot.rs` (item 18).
+  suppressed (100% dead): `src/changelog.rs` (pending item 20).
 
 - [x] **16. Orchestrator event loop duplicated in the UI with behavioral drift** *(partial)*
   Source: ARCH M7.
@@ -180,12 +179,13 @@ Checklist convention: `[ ]` open, `[x]` done.
   (debian, mint, pop, elementary, zorin, rhel, centos, ID_LIKE matches) are
   no longer falsely reported as supported.
 
-- [ ] **18. Wire up or delete the snapshot subsystem (Timeshift/Snapper/btrfs)**
+- [x] **18. Wire up or delete the snapshot subsystem (Timeshift/Snapper/btrfs)** *(deleted — user decision 2026-08-29)*
   Source: ARCH M9, BUGS M4, FEATURES 5.
-  Files: `src/snapshot.rs` (dead), `src/config.rs::SnapshotPreference` (dead), `daemon/src/allowlist.rs` + `interface.rs` (third, also-dead implementation).
-  Detection and `pkexec`-based creation for all three tools already exist.
-  Biggest trust feature for an app that runs unattended system upgrades —
-  worth prioritizing if picked up. Depends on item 4 if using the daemon path.
+  Removed `src/snapshot.rs`, `src/config.rs::SnapshotPreference` + the
+  `AppConfig::snapshot_preference` field, and `mod snapshot;`. The daemon copy
+  was already gone with item 4. Metainfo release note still mentions
+  snapshots → folded into item 47. Also advances item 15 (6 of 7 modules
+  de-suppressed).
 
 - [ ] **19. Wire up disk-size estimation in the update rows**
   Source: ARCH M10, BUGS M3, FEATURES 6.
@@ -301,7 +301,8 @@ Checklist convention: `[ ]` open, `[x]` done.
   Source: FEATURES 13. Files: `UpdateResult::CacheMiss` handling in `window.rs`.
 
 - [ ] **47. Update README feature matrix (fwupd, plugins, Homebrew cleanup, VexOS; fix stale `upgrade.rs` reference)**
-  Source: FEATURES 16. Files: `README.md`.
+  Source: FEATURES 16. Files: `README.md`, `data/io.github.up.metainfo.xml`
+  (2.x release note still advertises "pre-update snapshots" — removed in item 18).
 
 ---
 
