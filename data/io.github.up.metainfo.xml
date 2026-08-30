@@ -26,6 +26,11 @@
   <launchable type="desktop-id">io.github.up.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="2.3.2" date="2026-08-29">
+      <description translate="no">
+        <p>Add a per-row "What's new" changelog viewer, an estimated download size with a low-disk-space warning, a Preferences dialog with a plugin manager, and a details view for the full output of a failed update. Fix distro upgrades prompting for the admin password up to four times (now once), an already-current Fedora system being wrongly blocked from upgrading, unsupported distributions being offered a non-functional "Start Upgrade", and plain flake-based NixOS needing a VexOS-specific file. Localisation is now wired up, and the plugin descriptor parser was moved to a maintained library.</p>
+      </description>
+    </release>
     <release version="2.3.1" date="2026-08-24">
       <description translate="no">
         <p>Make the update progress bar track real package-level progress: it now advances continuously as each package, derivation, or firmware item completes, instead of stepping once per update source and jumping to the end.</p>
