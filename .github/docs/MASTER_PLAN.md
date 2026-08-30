@@ -98,13 +98,16 @@ Checklist convention: `[ ]` open, `[x]` done.
 
 ## MEDIUM PRIORITY
 
-- [ ] **10. VexOS vendor coupling hard-wired into the generic Nix backend**
+- [x] **10. VexOS vendor coupling hard-wired into the generic Nix backend** *(partial)*
   Source: ARCH M1.
-  Files: `src/backends/nix.rs:54-63, 96-115, 468-490, 618-626`, `src/backends/mod.rs:118-121`.
-  `/etc/nixos/vexos-variant` is the *only* way to resolve the flake attribute;
-  plain flake-based NixOS users get an error telling them to create a
-  VexOS-specific file. `UpdateResult::CacheMiss` is also a VexOS-only concept
-  baked into the shared result enum.
+  Files: `src/backends/nix.rs`.
+  Flake-attr resolution now falls back to auto-detecting the
+  `nixosConfigurations` attribute (single config, or hostname match) via
+  `nix eval` when `/etc/nixos/vexos-variant` is absent — plain flake NixOS
+  users no longer hit the VexOS-only error. `UpdateResult::CacheMiss` is
+  genuinely VexOS-specific and threaded through the whole UI; decoupling it
+  was deliberately descoped (user decision, 2026-08-29) and remains open as
+  future cleanup if desired.
 
 - [ ] **11. Read-only backend operations bypass the `CommandExecutor` abstraction**
   Source: ARCH M2.

@@ -83,34 +83,107 @@ fn validate_flake_attr(name: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
+/// Parse the JSON string array produced by
+/// `nix eval ... nixosConfigurations --apply builtins.attrNames --json`
+/// into a list of configuration attribute names.
+pub(crate) fn parse_configuration_names(json: &str) -> Result<Vec<String>, String> {
+    let value: serde_json::Value = serde_json::from_str(json.trim())
+        .map_err(|e| format!("Failed to parse nix eval output: {e}"))?;
+    let arr = value
+        .as_array()
+        .ok_or_else(|| "nix eval output was not a JSON array".to_string())?;
+    let mut names = Vec::with_capacity(arr.len());
+    for item in arr {
+        let name = item
+            .as_str()
+            .ok_or_else(|| "nix eval output contained a non-string entry".to_string())?;
+        names.push(name.to_string());
+    }
+    Ok(names)
+}
+
+/// Return the attribute names under the flake's `nixosConfigurations` output.
+///
+/// Read-only and unprivileged. Routed through `flatpak-spawn --host` when
+/// running inside the Flatpak sandbox, matching the `is_*` helpers above.
+fn nixos_configuration_names() -> Result<Vec<String>, String> {
+    let nix_args = [
+        "--extra-experimental-features",
+        "nix-command flakes",
+        "eval",
+        "/etc/nixos#nixosConfigurations",
+        "--apply",
+        "builtins.attrNames",
+        "--json",
+    ];
+
+    let output = if crate::backends::flatpak::is_running_in_flatpak() {
+        let mut cmd = std::process::Command::new("flatpak-spawn");
+        cmd.arg("--host").arg("nix").args(nix_args);
+        cmd.output()
+    } else {
+        std::process::Command::new("nix").args(nix_args).output()
+    }
+    .map_err(|e| format!("Failed to run `nix eval` to detect NixOS configurations: {e}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "`nix eval` failed to read nixosConfigurations from /etc/nixos: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    parse_configuration_names(&String::from_utf8_lossy(&output.stdout))
+}
+
 /// Determine the NixOS configuration attribute name to use for flake rebuilds.
 ///
 /// Resolution order:
 ///
-/// 1. `/etc/nixos/vexos-variant` — a user-maintained file containing exactly
-///    the flake attribute name (e.g. "vexos-nvidia"). Created by the VexOS
-///    NixOS configuration to track which variant is installed on the system.
-///    Example: `sudo sh -c 'echo vexos-nvidia > /etc/nixos/vexos-variant'`
+/// 1. `/etc/nixos/vexos-variant` — an optional user-maintained file containing
+///    exactly the flake attribute name (e.g. "vexos-nvidia"). Created by the
+///    VexOS NixOS configuration to record the installed variant; also usable on
+///    any system to pin an explicit attribute.
+///    Example: `sudo sh -c 'echo my-host > /etc/nixos/vexos-variant'`
 ///
-/// 2. Return an error with instructions for creating the file.
+/// 2. Auto-detect from the flake's `nixosConfigurations` output:
+///    - exactly one configuration  → use it.
+///    - several configurations      → use the one whose name matches the
+///      system hostname; otherwise return an error listing the candidates.
 pub(crate) fn resolve_nixos_flake_attr() -> Result<String, String> {
     const VARIANT_FILE: &str = "/etc/nixos/vexos-variant";
 
-    // Step 1: Read the variant file (mandatory, primary source of truth).
-    match std::fs::read_to_string(VARIANT_FILE) {
-        Ok(content) => {
-            let variant = content.trim().to_string();
-            if variant.is_empty() {
-                return Err("Variant file /etc/nixos/vexos-variant is empty".to_string());
-            }
-            // Validate and return the variant name
-            validate_flake_attr(&variant)
+    // Step 1: explicit override / VexOS variant file.
+    if let Ok(content) = std::fs::read_to_string(VARIANT_FILE) {
+        let variant = content.trim().to_string();
+        if !variant.is_empty() {
+            return validate_flake_attr(&variant);
         }
-        Err(e) => Err(format!(
-            "Cannot read {}: {}. This file must exist and contain the flake attribute name. \
-             If this is a VexOS system, ensure the variant file was created during system configuration.",
-            VARIANT_FILE, e
-        )),
+    }
+
+    // Step 2: auto-detect from the flake.
+    let names = nixos_configuration_names()?;
+    match names.len() {
+        0 => Err(
+            "No nixosConfigurations found in the /etc/nixos flake. Create \
+             /etc/nixos/vexos-variant containing the flake attribute name to use."
+                .to_string(),
+        ),
+        1 => validate_flake_attr(&names[0]),
+        _ => {
+            let hostname = crate::upgrade::detect_hostname();
+            if names.iter().any(|n| n == &hostname) {
+                validate_flake_attr(&hostname)
+            } else {
+                Err(format!(
+                    "Multiple nixosConfigurations found ({}) and none matches the system \
+                     hostname ({}). Create /etc/nixos/vexos-variant containing the flake \
+                     attribute name to use.",
+                    names.join(", "),
+                    hostname
+                ))
+            }
+        }
     }
 }
 
@@ -895,8 +968,8 @@ pub(crate) fn count_nix_freed_paths(output: &str) -> usize {
 mod tests {
     use super::{
         compare_lock_nodes, count_determinate_upgraded, count_nix_store_operations,
-        extract_cache_block_message, is_determinate_nix, is_nixos, parse_nix_build_items,
-        upgrade_available_in_output, validate_flake_attr, NixBackend,
+        extract_cache_block_message, is_determinate_nix, is_nixos, parse_configuration_names,
+        parse_nix_build_items, upgrade_available_in_output, validate_flake_attr, NixBackend,
     };
     use crate::backends::{Backend, UpdateResult};
     use crate::executor::test_utils::MockExecutor;
@@ -1043,6 +1116,47 @@ mod tests {
     fn validate_flake_attr_rejects_too_long() {
         let long = "a".repeat(254);
         assert!(validate_flake_attr(&long).is_err());
+    }
+
+    // parse_configuration_names tests (pure function, no system access)
+
+    #[test]
+    fn parse_configuration_names_single() {
+        assert_eq!(
+            parse_configuration_names("[\"my-host\"]").unwrap(),
+            vec!["my-host".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_configuration_names_multiple() {
+        assert_eq!(
+            parse_configuration_names(" [\"vexos-nvidia\", \"vexos-intel\"] \n").unwrap(),
+            vec!["vexos-nvidia".to_string(), "vexos-intel".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_configuration_names_empty_array() {
+        assert_eq!(
+            parse_configuration_names("[]").unwrap(),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn parse_configuration_names_rejects_malformed_json() {
+        assert!(parse_configuration_names("not json").is_err());
+    }
+
+    #[test]
+    fn parse_configuration_names_rejects_non_array() {
+        assert!(parse_configuration_names("{\"a\":1}").is_err());
+    }
+
+    #[test]
+    fn parse_configuration_names_rejects_non_string_element() {
+        assert!(parse_configuration_names("[\"ok\", 42]").is_err());
     }
 
     // run_update pipeline tests — legacy nix-env branch.
