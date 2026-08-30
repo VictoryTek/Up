@@ -202,12 +202,13 @@ Checklist convention: `[ ]` open, `[x]` done.
   `supports_changelog()` gates visibility. Completes item 15 (last
   `#![allow(dead_code)]` module).
 
-- [ ] **21. Replace `serde_yml 0.0.12` with a maintained YAML parser**
+- [x] **21. Replace `serde_yml 0.0.12` with a maintained YAML parser**
   Source: ARCH M13.
-  Files: `Cargo.toml:23`, `src/plugins/discovery.rs:89`.
-  `serde_yml` is an unmaintained fork with soundness concerns, used to parse
-  plugin descriptor YAML the project itself treats as semi-trusted input.
-  Consider `serde_yaml_ng` or `saphyr`.
+  Files: `Cargo.toml`, `Cargo.lock`, `src/plugins/discovery.rs`, `src/plugins/descriptor.rs`.
+  Replaced with `yaml_serde 0.10` — the YAML-Organization continuation of
+  `serde_yaml` (actively released, `from_str`-compatible). Drop-in; new
+  `shipped_descriptors_parse` test covers the real descriptor format.
+  (`serde_yaml_ng`'s last release was ~2 yrs old; `yaml_serde` is current.)
 
 - [ ] **22. Fix package-count miscounting for APT selective updates and DNF/generic prerequisite checks**
   Source: BUGS M5 & M6 (also ARCH L7 — same DNF issue reported twice).

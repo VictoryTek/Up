@@ -1,7 +1,7 @@
 //! YAML descriptor types for the backend plugin system.
 //!
 //! These types correspond to the plugin YAML schema (version 1).
-//! Plugins are loaded from XDG data directories and parsed with `serde_yml`.
+//! Plugins are loaded from XDG data directories and parsed with `yaml_serde`.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

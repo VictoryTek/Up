@@ -86,7 +86,7 @@ pub fn discover_plugins() -> Vec<PluginDescriptor> {
 fn load_descriptor(path: &std::path::Path) -> Result<PluginDescriptor, String> {
     let content = std::fs::read_to_string(path).map_err(|e| format!("Cannot read file: {}", e))?;
     let descriptor: PluginDescriptor =
-        serde_yml::from_str(&content).map_err(|e| format!("YAML parse error: {}", e))?;
+        yaml_serde::from_str(&content).map_err(|e| format!("YAML parse error: {}", e))?;
     Ok(descriptor)
 }
 
@@ -127,4 +127,28 @@ fn plugin_search_dirs() -> Vec<PathBuf> {
     dirs.push(PathBuf::from("/etc/up/backends.d"));
 
     dirs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PluginDescriptor;
+
+    /// The shipped descriptors must deserialize with the YAML backend in use.
+    /// Guards against a parser swap (serde_yml -> yaml_serde) breaking the format.
+    #[test]
+    fn shipped_descriptors_parse() {
+        for src in [
+            include_str!("../../data/backends.d/apk.yaml"),
+            include_str!("../../data/backends.d/xbps.yaml"),
+            include_str!("../../examples/plugins/eopkg.yaml"),
+            include_str!("../../examples/plugins/swupd.yaml"),
+        ] {
+            let parsed: Result<PluginDescriptor, _> = yaml_serde::from_str(src);
+            assert!(
+                parsed.is_ok(),
+                "descriptor failed to parse: {:?}",
+                parsed.err()
+            );
+        }
+    }
 }
