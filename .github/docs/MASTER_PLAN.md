@@ -150,14 +150,13 @@ Checklist convention: `[ ]` open, `[x]` done.
   Verified 2026-08-29: `daemon/` does not exist; `Cargo.toml` workspace
   `members = ["."]`. This also moots items 34, 37, 41, 44 (all daemon-only).
 
-- [x] **15. Remove blanket `#![allow(dead_code)]` from the 7 abandoned-subsystem modules** *(partial — 6 of 7)*
+- [x] **15. Remove blanket `#![allow(dead_code)]` from the 7 abandoned-subsystem modules**
   Source: ARCH M6.
-  Files: `src/disk.rs` (this pass); `src/check.rs`, `src/config.rs`,
-  `src/history.rs`, `src/ui/history_page.rs` (de-suppressed by items 2/6/7);
-  `src/snapshot.rs` (deleted, item 18).
-  `disk.rs` fully de-suppressed (its last three helpers went live with
-  item 19). Still module-wide suppressed (100% dead): `src/changelog.rs`
-  (pending item 20).
+  All 7 resolved: `check.rs`/`config.rs`/`history.rs`/`ui/history_page.rs`
+  (items 2/6/7), `disk.rs` (items 11/19 — now fully live),
+  `snapshot.rs` (deleted, item 18), `changelog.rs` (wired up, item 20). No
+  module-wide `#![allow(dead_code)]` remains anywhere; only a few targeted
+  per-symbol allows persist (e.g. unused `BackendError` variants).
 
 - [x] **16. Orchestrator event loop duplicated in the UI with behavioral drift** *(partial)*
   Source: ARCH M7.
@@ -195,11 +194,13 @@ Checklist convention: `[ ]` open, `[x]` done.
   `disk.rs` helpers are de-suppressed (finishes item 15 — only `changelog.rs`
   left, pending item 20).
 
-- [ ] **20. `changelog.rs` is fully implemented but has zero callers**
+- [x] **20. `changelog.rs` is fully implemented but has zero callers**
   Source: ARCH M12, BUGS M3, FEATURES 8.
-  Files: `src/changelog.rs` (249 lines, dead).
-  Per-backend changelog fetchers with timeout handling exist; add a
-  "What's new" button/dialog per row to surface it.
+  Files: `src/changelog.rs`, `src/ui/update_row.rs`.
+  Added a per-row "What's new" button (apt/dnf/pacman/zypper/flatpak/homebrew/
+  fwupd) that fetches `fetch_changelog()` off-thread into a scrollable dialog;
+  `supports_changelog()` gates visibility. Completes item 15 (last
+  `#![allow(dead_code)]` module).
 
 - [ ] **21. Replace `serde_yml 0.0.12` with a maintained YAML parser**
   Source: ARCH M13.

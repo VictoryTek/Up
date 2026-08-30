@@ -2,13 +2,21 @@ use adw::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use crate::backends::Backend;
+use crate::backends::{Backend, BackendKind};
 
 #[derive(Clone)]
 pub struct UpdateRow {
     pub row: adw::ActionRow,
     status_label: gtk::Label,
     spinner: gtk::Spinner,
+    /// This backend's kind, for changelog fetching.
+    kind: BackendKind,
+    /// "What's new" button; shown only when updates are pending and the
+    /// backend supports changelog fetching.
+    changelog_button: gtk::Button,
+    /// Package names from the most recent `set_packages()` call, passed to the
+    /// changelog fetcher.
+    packages: Rc<RefCell<Vec<String>>>,
     /// Opens the popover listing this backend's pending/updated packages.
     menu_button: gtk::MenuButton,
     /// Heading inside the popover, e.g. "NixOS — 42 packages".
@@ -76,6 +84,7 @@ impl UpdateRow {
         skip_checkbox.update_property(&[gtk::accessible::Property::Label(kind_label.as_str())]);
 
         let backend_name = backend.display_name().to_string();
+        let kind = backend.kind();
 
         let row = adw::ActionRow::builder()
             .title(backend.display_name())
@@ -86,6 +95,22 @@ impl UpdateRow {
         retry_button.set_tooltip_text(Some("Retry"));
         retry_button.set_visible(false);
         retry_button.connect_clicked(move |_| on_retry());
+
+        let packages: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+
+        let changelog_button = gtk::Button::from_icon_name("document-properties-symbolic");
+        changelog_button.set_tooltip_text(Some("What's new"));
+        changelog_button.set_valign(gtk::Align::Center);
+        changelog_button.add_css_class("flat");
+        changelog_button.set_visible(false);
+        {
+            let kind = kind.clone();
+            let packages = packages.clone();
+            let row = row.clone();
+            changelog_button.connect_clicked(move |_| {
+                show_changelog_dialog(&row, kind.clone(), packages.borrow().clone());
+            });
+        }
 
         let popover_heading = gtk::Label::builder()
             .css_classes(vec!["heading"])
@@ -129,6 +154,7 @@ impl UpdateRow {
         row.add_suffix(&menu_button);
         row.add_suffix(&status_label);
         row.add_suffix(&spinner);
+        row.add_suffix(&changelog_button);
         row.add_suffix(&retry_button);
         row.add_suffix(&skip_checkbox);
 
@@ -136,13 +162,20 @@ impl UpdateRow {
             let skip_flag = skip_flag.clone();
             let last_available = last_available.clone();
             let status_label = status_label.clone();
+            let changelog_button = changelog_button.clone();
+            let kind = kind.clone();
             skip_checkbox.connect_toggled(move |cb| {
                 let skipped = cb.is_active();
                 skip_flag.set(skipped);
                 if skipped {
                     status_label.set_label("Skipped");
                     status_label.set_css_classes(&["dim-label"]);
+                    changelog_button.set_visible(false);
                 } else {
+                    changelog_button.set_visible(
+                        matches!(last_available.get(), Some(c) if c > 0)
+                            && crate::changelog::supports_changelog(&kind),
+                    );
                     match last_available.get() {
                         Some(count) => {
                             if count == 0 {
@@ -167,6 +200,9 @@ impl UpdateRow {
             row,
             status_label,
             spinner,
+            kind,
+            changelog_button,
+            packages,
             menu_button,
             popover_heading,
             popover_list,
@@ -223,6 +259,7 @@ impl UpdateRow {
     /// showing a partial selection as meaningful would misrepresent what
     /// `run_selected_update` would actually receive.
     pub fn set_packages(&self, packages: &[String]) {
+        *self.packages.borrow_mut() = packages.to_vec();
         // Remove previously added package rows to avoid duplicates on re-check.
         while let Some(child) = self.popover_list.first_child() {
             self.popover_list.remove(&child);
@@ -314,6 +351,7 @@ impl UpdateRow {
 
     pub fn set_status_checking(&self) {
         self.retry_button.set_visible(false);
+        self.changelog_button.set_visible(false);
         self.last_available.set(None);
         self.last_estimated_size.set(None);
         self.check_errored.set(false);
@@ -336,10 +374,13 @@ impl UpdateRow {
             self.status_label.set_label(&format!("{count} available"));
             self.status_label.set_css_classes(&["accent"]);
         }
+        self.changelog_button
+            .set_visible(count > 0 && crate::changelog::supports_changelog(&self.kind));
     }
 
     pub fn set_status_running(&self) {
         self.retry_button.set_visible(false);
+        self.changelog_button.set_visible(false);
         self.skip_checkbox.set_sensitive(false);
         self.spinner.set_visible(true);
         self.spinner.set_spinning(true);
@@ -383,6 +424,7 @@ impl UpdateRow {
     /// Sets `check_errored` so the window can avoid a false "Everything is up to date."
     pub fn set_status_unknown(&self, msg: &str) {
         self.retry_button.set_visible(false);
+        self.changelog_button.set_visible(false);
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
@@ -390,4 +432,57 @@ impl UpdateRow {
         self.status_label.set_label(msg);
         self.status_label.set_css_classes(&["dim-label"]);
     }
+}
+
+/// Present a "What's new" dialog anchored at `parent` and asynchronously fill
+/// it with `fetch_changelog` output for the given backend and pending packages.
+fn show_changelog_dialog(
+    parent: &impl gtk::prelude::IsA<gtk::Widget>,
+    kind: crate::backends::BackendKind,
+    packages: Vec<String>,
+) {
+    let text_view = gtk::TextView::builder()
+        .editable(false)
+        .cursor_visible(false)
+        .monospace(true)
+        .wrap_mode(gtk::WrapMode::WordChar)
+        .left_margin(8)
+        .right_margin(8)
+        .top_margin(8)
+        .bottom_margin(8)
+        .build();
+    text_view.buffer().set_text("Fetching changelog\u{2026}");
+
+    let scroller = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .min_content_height(320)
+        .min_content_width(480)
+        .child(&text_view)
+        .build();
+
+    let dialog = adw::AlertDialog::builder()
+        .heading("What's New")
+        .extra_child(&scroller)
+        .build();
+    dialog.add_response("close", "Close");
+    dialog.set_default_response(Some("close"));
+    dialog.set_close_response("close");
+    dialog.present(Some(parent));
+
+    let (tx, rx) = async_channel::bounded::<Result<String, String>>(1);
+    super::spawn_background_async(move || async move {
+        let result = crate::changelog::fetch_changelog(kind, &packages)
+            .await
+            .map_err(|e| e.to_string());
+        let _ = tx.send(result).await;
+    });
+    glib::spawn_future_local(async move {
+        let text = match rx.recv().await {
+            Ok(Ok(s)) if s.trim().is_empty() => "No changelog information available.".to_string(),
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => format!("Could not fetch changelog:\n{e}"),
+            Err(_) => "Could not fetch changelog.".to_string(),
+        };
+        text_view.buffer().set_text(&text);
+    });
 }

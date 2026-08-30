@@ -1,6 +1,12 @@
-#![allow(dead_code)]
 use crate::backends::BackendKind;
 use tokio::time::{timeout, Duration};
+
+/// Whether [`fetch_changelog`] can return anything for this backend.
+///
+/// Nix (no per-package changelog concept) and plugin backends are unsupported.
+pub fn supports_changelog(kind: &BackendKind) -> bool {
+    !matches!(kind, BackendKind::Nix | BackendKind::Plugin(_))
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ChangelogError {
