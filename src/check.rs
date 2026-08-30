@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Runs synchronously from `main()` before any GTK initialisation.
 pub fn run_check() {
-    let backends = backends::detect_backends();
+    let backends = backends::detect_backends(&crate::config::load_config().disabled_plugins);
 
     if backends.is_empty() {
         info!("up --check: no backends detected, exiting");

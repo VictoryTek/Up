@@ -6,4 +6,5 @@ src/ui/update_row.rs
 src/ui/upgrade_page.rs
 src/ui/log_panel.rs
 src/ui/history_page.rs
+src/ui/preferences_dialog.rs
 src/ui/reboot_dialog.rs

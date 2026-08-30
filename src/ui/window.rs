@@ -141,6 +141,7 @@ impl UpWindow {
         // Application overflow menu (three-dot button on the end/right slot).
         let app_menu = gio::Menu::new();
         app_menu.append(Some("Clean Up"), Some("win.cleanup"));
+        app_menu.append(Some("Preferences"), Some("win.preferences"));
         app_menu.append(Some("About Up"), Some("win.about"));
         let menu_button = gtk::MenuButton::builder()
             .icon_name("open-menu-symbolic")
@@ -183,6 +184,19 @@ impl UpWindow {
         let cleanup_action = gio::SimpleAction::new("cleanup", None);
         cleanup_action.connect_activate(move |_, _| (*run_cleanup)());
         window.add_action(&cleanup_action);
+
+        // Register the "preferences" window action.
+        let preferences_action = gio::SimpleAction::new("preferences", None);
+        preferences_action.connect_activate(glib::clone!(
+            #[weak]
+            window,
+            #[upgrade_or]
+            return,
+            move |_, _| {
+                crate::ui::preferences_dialog::show_preferences_dialog(&window);
+            }
+        ));
+        window.add_action(&preferences_action);
 
         window
     }
@@ -872,7 +886,8 @@ impl UpWindow {
             let (detect_tx, detect_rx) = async_channel::unbounded::<Vec<Arc<dyn Backend>>>();
 
             super::spawn_background_async(move || async move {
-                let backends = crate::backends::detect_backends();
+                let disabled = crate::config::load_config().disabled_plugins;
+                let backends = crate::backends::detect_backends(&disabled);
                 let _ = detect_tx.send(backends).await;
             });
 

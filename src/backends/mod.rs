@@ -241,7 +241,10 @@ pub trait Backend: Send + Sync {
 }
 
 /// Detect all available backends on the current system.
-pub fn detect_backends() -> Vec<Arc<dyn Backend>> {
+///
+/// `disabled_plugins` holds plugin descriptor ids the user has turned off in
+/// the Plugin manager; matching descriptors are discovered but not registered.
+pub fn detect_backends(disabled_plugins: &[String]) -> Vec<Arc<dyn Backend>> {
     let mut backends: Vec<Arc<dyn Backend>> = Vec::new();
 
     // Detect OS package manager
@@ -275,6 +278,11 @@ pub fn detect_backends() -> Vec<Arc<dyn Backend>> {
     // Plugin backends — discovered from YAML descriptors in XDG data dirs
     let plugins = crate::plugins::discovery::discover_plugins();
     for descriptor in plugins {
+        // Skip plugins the user has disabled in the Plugin manager.
+        if disabled_plugins.iter().any(|id| id == &descriptor.id) {
+            info!("Plugin backend disabled by user: {}", descriptor.id);
+            continue;
+        }
         // Skip plugins whose detection binary is not available
         if which::which(&descriptor.detection.binary).is_err() {
             continue;

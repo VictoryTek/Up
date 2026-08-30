@@ -7,6 +7,10 @@ use std::path::PathBuf;
 pub struct AppConfig {
     #[serde(default)]
     pub skipped_backends: Vec<BackendKind>,
+    /// Plugin descriptor ids the user has disabled in the Plugin manager.
+    /// Discovered-but-disabled plugins are not registered as backends.
+    #[serde(default)]
+    pub disabled_plugins: Vec<String>,
 }
 
 /// Returns the path to the config JSON file, honoring XDG_CONFIG_HOME.
@@ -71,11 +75,13 @@ mod tests {
 
         let config = AppConfig {
             skipped_backends: vec![BackendKind::Apt, BackendKind::Plugin("xbps".into())],
+            disabled_plugins: vec!["eopkg".into(), "swupd".into()],
         };
         save_config(&config).expect("save_config should succeed");
 
         let loaded = load_config();
         assert_eq!(loaded.skipped_backends, config.skipped_backends);
+        assert_eq!(loaded.disabled_plugins, config.disabled_plugins);
 
         let _ = std::fs::remove_dir_all(&tmp);
         // SAFETY: same single-threaded context as the set_var above.

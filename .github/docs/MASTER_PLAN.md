@@ -219,12 +219,14 @@ Checklist convention: `[ ]` open, `[x]` done.
   under `LC_ALL=C`; `count_apt_upgraded` uses a strict summary match with a
   dpkg "Setting up" fallback for the "0 upgraded" case.
 
-- [ ] **23. Ship the existing plugin descriptors + add a Plugin manager UI**
+- [x] **23. Ship the existing plugin descriptors + add a Plugin manager UI**
   Source: FEATURES 10.
-  Files: `data/backends.d/apk.yaml`, `xbps.yaml`, `examples/plugins/eopkg.yaml`, `swupd.yaml`.
-  Install the shipped descriptors via meson so Alpine/Void users get support
-  out of the box; add a preferences-dialog section listing/toggling
-  discovered plugins.
+  Files: `src/ui/preferences_dialog.rs` (new), `src/ui/window.rs`, `src/backends/mod.rs`, `src/config.rs`, `src/check.rs`, `po/POTFILES.in`.
+  Part 1 was already done (`meson.build` installs `apk.yaml`/`xbps.yaml`).
+  Part 2: new `adw::PreferencesDialog` (from the overflow menu) with a Plugins
+  group listing discovered descriptors with enable switches;
+  `AppConfig::disabled_plugins` persists the choice and `detect_backends()`
+  skips disabled ids on next launch. Examples (`eopkg`/`swupd`) stay examples.
 
 - [ ] **24. Show error tail on click instead of a truncated one-line label**
   Source: FEATURES 11.
