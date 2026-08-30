@@ -2,7 +2,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use super::detect::{detect_nixos_config_type, DistroInfo, NixOsConfigType};
+use super::detect::{detect_nixos_config_type, DistroInfo, NixOsConfigType, UpgradeStrategy};
 use super::version::next_nixos_channel;
 use crate::backends::BackendKind;
 use crate::executor::CommandExecutor;
@@ -11,11 +11,11 @@ use crate::runner::{BackendEvent, CommandRunner, PrivilegedShell};
 /// Map a distro id to the `BackendKind` used to tag upgrade log events.
 /// Purely cosmetic — no new `BackendKind` variant is introduced for upgrades.
 fn upgrade_kind(distro_id: &str) -> BackendKind {
-    match distro_id {
-        "fedora" => BackendKind::Dnf,
-        "opensuse-leap" => BackendKind::Zypper,
-        "nixos" => BackendKind::Nix,
-        _ => BackendKind::Apt,
+    match UpgradeStrategy::for_distro(distro_id) {
+        Some(UpgradeStrategy::Fedora) => BackendKind::Dnf,
+        Some(UpgradeStrategy::OpenSuseLeap) => BackendKind::Zypper,
+        Some(UpgradeStrategy::NixOs) => BackendKind::Nix,
+        Some(UpgradeStrategy::Ubuntu) | None => BackendKind::Apt,
     }
 }
 
@@ -67,12 +67,12 @@ pub(crate) async fn execute_upgrade(
         ))
         .await;
 
-    match distro.id.as_str() {
-        "ubuntu" => upgrade_ubuntu(tx, runner).await,
-        "fedora" => upgrade_fedora(tx, runner).await,
-        "opensuse-leap" => upgrade_opensuse(tx, runner).await,
-        "nixos" => upgrade_nixos(distro, tx, runner).await,
-        _ => {
+    match UpgradeStrategy::for_distro(&distro.id) {
+        Some(UpgradeStrategy::Ubuntu) => upgrade_ubuntu(tx, runner).await,
+        Some(UpgradeStrategy::Fedora) => upgrade_fedora(tx, runner).await,
+        Some(UpgradeStrategy::OpenSuseLeap) => upgrade_opensuse(tx, runner).await,
+        Some(UpgradeStrategy::NixOs) => upgrade_nixos(distro, tx, runner).await,
+        None => {
             let msg = format!(
                 "Upgrade is not yet supported for '{}'. Supported: Ubuntu, Fedora, openSUSE Leap, NixOS.",
                 distro.name

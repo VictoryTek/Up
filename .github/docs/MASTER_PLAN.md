@@ -171,12 +171,14 @@ Checklist convention: `[ ]` open, `[x]` done.
   path still has no progress bar and drops the `CancelHandle` (deliberate —
   single-backend quick action, adding a cancel button is a UX decision).
 
-- [ ] **17. `upgrade_supported` and `execute_upgrade` disagree about supported distros**
+- [x] **17. `upgrade_supported` and `execute_upgrade` disagree about supported distros**
   Source: ARCH M8.
-  Files: `src/upgrade/detect.rs:67-77` vs `src/upgrade/execute.rs:19-32` vs `src/upgrade/version.rs:22-27` (a third, different list).
-  A Mint/Debian user can pass all prerequisite checks and press "Start
-  Upgrade" only to be told it was never implemented. Derive all three lists
-  from one table.
+  Files: `src/upgrade/detect.rs`, `src/upgrade/execute.rs`, `src/upgrade/version.rs`, `src/upgrade/mod.rs`.
+  New `UpgradeStrategy::for_distro()` in `detect.rs` is the single source of
+  truth; `upgrade_supported`, `execute_upgrade`, `check_upgrade_available`,
+  and `upgrade_kind` all derive from it. Distros with no implemented path
+  (debian, mint, pop, elementary, zorin, rhel, centos, ID_LIKE matches) are
+  no longer falsely reported as supported.
 
 - [ ] **18. Wire up or delete the snapshot subsystem (Timeshift/Snapper/btrfs)**
   Source: ARCH M9, BUGS M4, FEATURES 5.

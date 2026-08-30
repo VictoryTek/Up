@@ -17,6 +17,34 @@ pub enum NixOsConfigType {
     LegacyChannel,
 }
 
+/// The distro-upgrade implementation to use for a given `/etc/os-release` `ID`.
+///
+/// Single source of truth for "which distros can Up actually upgrade" — the
+/// `upgrade_supported` flag, `execute::execute_upgrade`, and
+/// `version::check_upgrade_available` all derive their dispatch from
+/// [`UpgradeStrategy::for_distro`], so they can no longer disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpgradeStrategy {
+    Ubuntu,
+    Fedora,
+    OpenSuseLeap,
+    NixOs,
+}
+
+impl UpgradeStrategy {
+    /// Returns the upgrade strategy for a distro `ID`, or `None` when Up has no
+    /// implemented upgrade path for it.
+    pub fn for_distro(id: &str) -> Option<Self> {
+        match id {
+            "ubuntu" => Some(Self::Ubuntu),
+            "fedora" => Some(Self::Fedora),
+            "opensuse-leap" => Some(Self::OpenSuseLeap),
+            "nixos" => Some(Self::NixOs),
+            _ => None,
+        }
+    }
+}
+
 /// Carries all detection results the upgrade page needs to initialise.
 /// Sent once from UpWindow::build() over a bounded channel after detection.
 #[derive(Debug, Clone)]
@@ -62,19 +90,10 @@ pub fn detect_distro() -> DistroInfo {
         .cloned()
         .unwrap_or_else(|| "0".into());
 
-    let id_like = fields.get("ID_LIKE").cloned().unwrap_or_default();
-
-    let upgrade_supported = match id.as_str() {
-        "ubuntu" | "linuxmint" | "pop" | "elementary" | "zorin" => true,
-        "fedora" => true,
-        "opensuse-leap" => true,
-        "debian" => true,
-        "nixos" => true,
-        "rhel" | "centos" => true,
-        _ if id_like.split_whitespace().any(|s| s == "ubuntu") => true,
-        _ if id_like.split_whitespace().any(|s| s == "debian") => true,
-        _ => false,
-    };
+    // Single source of truth — see `UpgradeStrategy::for_distro`. A distro is
+    // "supported" only when an actual upgrade path is implemented for it;
+    // otherwise the UI would let the user reach a "not implemented" dead end.
+    let upgrade_supported = UpgradeStrategy::for_distro(&id).is_some();
 
     DistroInfo {
         id,
@@ -82,6 +101,46 @@ pub fn detect_distro() -> DistroInfo {
         version,
         version_id,
         upgrade_supported,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{detect_distro, UpgradeStrategy};
+
+    #[test]
+    fn upgrade_strategy_covers_exactly_the_implemented_distros() {
+        assert_eq!(
+            UpgradeStrategy::for_distro("ubuntu"),
+            Some(UpgradeStrategy::Ubuntu)
+        );
+        assert_eq!(
+            UpgradeStrategy::for_distro("fedora"),
+            Some(UpgradeStrategy::Fedora)
+        );
+        assert_eq!(
+            UpgradeStrategy::for_distro("opensuse-leap"),
+            Some(UpgradeStrategy::OpenSuseLeap)
+        );
+        assert_eq!(
+            UpgradeStrategy::for_distro("nixos"),
+            Some(UpgradeStrategy::NixOs)
+        );
+        // Previously claimed "supported" but never implemented — now honest.
+        assert_eq!(UpgradeStrategy::for_distro("debian"), None);
+        assert_eq!(UpgradeStrategy::for_distro("linuxmint"), None);
+        assert_eq!(UpgradeStrategy::for_distro("centos"), None);
+        assert_eq!(UpgradeStrategy::for_distro("arch"), None);
+    }
+
+    #[test]
+    fn detect_distro_upgrade_supported_matches_strategy() {
+        // Whatever this host is, the flag must agree with the strategy table.
+        let info = detect_distro();
+        assert_eq!(
+            info.upgrade_supported,
+            UpgradeStrategy::for_distro(&info.id).is_some()
+        );
     }
 }
 

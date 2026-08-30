@@ -1,4 +1,4 @@
-use super::detect::DistroInfo;
+use super::detect::{DistroInfo, UpgradeStrategy};
 use std::process::Command;
 use std::time::Duration;
 
@@ -50,12 +50,12 @@ impl UpgradeAvailability {
 
 /// Check if a distribution upgrade is available.
 pub fn check_upgrade_available(distro: &DistroInfo) -> UpgradeAvailability {
-    match distro.id.as_str() {
-        "ubuntu" => check_ubuntu_upgrade(&distro.version_id),
-        "fedora" => check_fedora_upgrade(&distro.version_id),
-        "opensuse-leap" => check_opensuse_upgrade(&distro.version_id),
-        "nixos" => check_nixos_upgrade(&distro.version_id),
-        _ => UpgradeAvailability::Unknown("Not supported for this distribution".to_string()),
+    match UpgradeStrategy::for_distro(&distro.id) {
+        Some(UpgradeStrategy::Ubuntu) => check_ubuntu_upgrade(&distro.version_id),
+        Some(UpgradeStrategy::Fedora) => check_fedora_upgrade(&distro.version_id),
+        Some(UpgradeStrategy::OpenSuseLeap) => check_opensuse_upgrade(&distro.version_id),
+        Some(UpgradeStrategy::NixOs) => check_nixos_upgrade(&distro.version_id),
+        None => UpgradeAvailability::Unknown("Not supported for this distribution".to_string()),
     }
 }
 
