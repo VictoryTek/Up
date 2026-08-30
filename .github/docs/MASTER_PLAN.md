@@ -210,11 +210,14 @@ Checklist convention: `[ ]` open, `[x]` done.
   `shipped_descriptors_parse` test covers the real descriptor format.
   (`serde_yaml_ng`'s last release was ~2 yrs old; `yaml_serde` is current.)
 
-- [ ] **22. Fix package-count miscounting for APT selective updates and DNF/generic prerequisite checks**
+- [x] **22. Fix package-count miscounting for APT selective updates and DNF/generic prerequisite checks**
   Source: BUGS M5 & M6 (also ARCH L7 — same DNF issue reported twice).
-  Files: `src/backends/os_package_manager.rs:138-176, 189-201` (APT `count_apt_upgraded` returns 0 when already-current), `src/upgrade/check.rs:44-103` (`check_packages_up_to_date` counts DNF's metadata-expiration header line as a pending package, can block upgrade on a clean Fedora system).
-  Both should reuse the already-tested `parse_*`/`count_available()` logic in
-  `src/backends/` instead of ad-hoc line counting.
+  Files: `src/backends/os_package_manager.rs`, `src/upgrade/check.rs`.
+  M6: `check_packages_up_to_date` now counts via the backend parsers
+  (`parse_dnf_list_upgrades` etc.), so a clean Fedora's metadata header no
+  longer blocks the upgrade. M5: APT update/selective-update commands run
+  under `LC_ALL=C`; `count_apt_upgraded` uses a strict summary match with a
+  dpkg "Setting up" fallback for the "0 upgraded" case.
 
 - [ ] **23. Ship the existing plugin descriptors + add a Plugin manager UI**
   Source: FEATURES 10.

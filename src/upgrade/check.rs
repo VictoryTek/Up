@@ -42,10 +42,24 @@ pub fn run_prerequisite_checks(
 }
 
 fn check_packages_up_to_date(distro: &DistroInfo) -> CheckResult {
-    let (cmd, args): (&str, &[&str]) = match distro.id.as_str() {
-        "ubuntu" => ("apt", &["list", "--upgradable"]),
-        "fedora" => ("dnf", &["check-update"]),
-        "opensuse-leap" => ("zypper", &["list-updates"]),
+    use crate::backends::os_package_manager::{
+        parse_apt_list_upgradable, parse_dnf_list_upgrades, parse_zypper_list_updates,
+    };
+
+    // Reuse the backend parsers instead of a raw line count: `dnf check-update`
+    // emits a "Last metadata expiration check" header and blank-separated
+    // sections that a naive count mistakes for pending packages, which would
+    // block the upgrade on an already-current Fedora system.
+    let (cmd, args, count_pending): (&str, &[&str], fn(&str) -> usize) = match distro.id.as_str() {
+        "ubuntu" => ("apt", &["list", "--upgradable"], |s| {
+            parse_apt_list_upgradable(s).len()
+        }),
+        "fedora" => ("dnf", &["check-update"], |s| {
+            parse_dnf_list_upgrades(s).len()
+        }),
+        "opensuse-leap" => ("zypper", &["list-updates"], |s| {
+            parse_zypper_list_updates(s).len()
+        }),
         "nixos" => {
             return CheckResult {
                 name: "All packages up to date".into(),
@@ -70,10 +84,7 @@ fn check_packages_up_to_date(distro: &DistroInfo) -> CheckResult {
     {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            let upgradable = stdout
-                .lines()
-                .filter(|l| !l.is_empty() && !l.starts_with("Listing"))
-                .count();
+            let upgradable = count_pending(&stdout);
 
             // `apt list --upgradable` always exits with code 0 regardless of
             // whether updates are pending; `output.status.success()` is therefore
@@ -176,6 +187,23 @@ fn check_nixos_rebuild_available() -> CheckResult {
 #[cfg(test)]
 mod tests {
     use super::parse_df_avail_bytes;
+    use crate::backends::os_package_manager::parse_dnf_list_upgrades;
+
+    #[test]
+    fn dnf_metadata_only_output_counts_as_zero_pending() {
+        // Regression for BUGS M6: the "Last metadata expiration check" header
+        // and section labels must not be counted as pending packages.
+        let stdout = "Last metadata expiration check: 0:12:03 ago on Tue.\n\nObsoleting Packages\n";
+        assert_eq!(parse_dnf_list_upgrades(stdout).len(), 0);
+    }
+
+    #[test]
+    fn dnf_real_updates_are_counted() {
+        let stdout = "Last metadata expiration check: 0:00:10 ago.\n\
+             bash.x86_64   5.2.26-1.fc40   updates\n\
+             curl.x86_64   8.6.0-8.fc40    updates\n";
+        assert_eq!(parse_dnf_list_upgrades(stdout).len(), 2);
+    }
 
     #[test]
     fn parse_df_avail_bytes_normal() {

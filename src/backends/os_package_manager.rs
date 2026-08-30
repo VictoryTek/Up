@@ -51,8 +51,10 @@ impl Backend for AptBackend {
                     &[
                         "sh",
                         "-c",
-                        "DEBIAN_FRONTEND=noninteractive apt update && \
-                         DEBIAN_FRONTEND=noninteractive apt upgrade -y",
+                        // LC_ALL=C keeps the "N upgraded, ..." summary line in
+                        // English so count_apt_upgraded can parse it.
+                        "LC_ALL=C DEBIAN_FRONTEND=noninteractive apt update && \
+                         LC_ALL=C DEBIAN_FRONTEND=noninteractive apt upgrade -y",
                     ],
                 )
                 .await
@@ -167,7 +169,7 @@ impl Backend for AptBackend {
             // DEBIAN_FRONTEND must be set in the shell environment; sh -c is required here
             let pkg_list = items.join(" ");
             let cmd = format!(
-                "DEBIAN_FRONTEND=noninteractive apt-get install --only-upgrade -y {}",
+                "LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get install --only-upgrade -y {}",
                 pkg_list
             );
             match runner.run("pkexec", &["sh", "-c", &cmd]).await {
@@ -192,17 +194,36 @@ pub(crate) fn parse_apt_list_upgradable(output: &str) -> Vec<String> {
 }
 
 pub(crate) fn count_apt_upgraded(output: &str) -> usize {
-    // apt upgrade output: "N upgraded, ..."
+    // Primary: the English summary line "N upgraded, M newly installed, ...".
+    // Require the "upgraded" token to immediately follow the number so a
+    // localised or reworded line does not match a bare leading integer.
     for line in output.lines() {
-        if line.contains("upgraded") {
-            if let Some(n) = line.split_whitespace().next() {
+        let mut tokens = line.split_whitespace();
+        if let (Some(n), Some(word)) = (tokens.next(), tokens.next()) {
+            if word.trim_end_matches(',') == "upgraded" {
                 if let Ok(count) = n.parse::<usize>() {
-                    return count;
+                    // A genuine "0 upgraded" summary is trusted only when no
+                    // package was actually configured (see fallback below).
+                    if count > 0 {
+                        return count;
+                    }
                 }
             }
         }
     }
-    0
+
+    // Fallback: count distinct packages dpkg reported configuring. Covers a
+    // missing / localised summary line and the "0 upgraded" summary emitted
+    // when apt-get install --only-upgrade still unpacked newer versions.
+    let mut configured = std::collections::HashSet::new();
+    for line in output.lines() {
+        if let Some(rest) = line.trim().strip_prefix("Setting up ") {
+            if let Some(name) = rest.split_whitespace().next() {
+                configured.insert(name.to_string());
+            }
+        }
+    }
+    configured.len()
 }
 
 // --- DNF ---
@@ -753,6 +774,32 @@ mod tests {
     fn test_count_apt_upgraded_no_match() {
         let output = "Reading package lists...\nBuilding dependency tree...";
         assert_eq!(count_apt_upgraded(output), 0);
+    }
+
+    #[test]
+    fn count_apt_upgraded_falls_back_to_setting_up_lines() {
+        // BUGS M5: summary says "0 upgraded" but dpkg configured newer versions
+        // (seen with `apt-get install --only-upgrade`).
+        let output = "Preparing to unpack .../htop_3.3.0_amd64.deb ...\n\
+             Setting up htop (3.3.0) ...\n\
+             Setting up libfoo1:amd64 (1.2-3) ...\n\
+             0 upgraded, 0 newly installed, 0 to remove and 4 not upgraded.\n";
+        assert_eq!(count_apt_upgraded(output), 2);
+    }
+
+    #[test]
+    fn count_apt_upgraded_ignores_bare_leading_integer() {
+        // A reworded/localised line beginning with a number must not be parsed
+        // as the upgrade count.
+        let output = "5 packages can be upgraded. Run 'apt list --upgradable' to see them.\n";
+        assert_eq!(count_apt_upgraded(output), 0);
+    }
+
+    #[test]
+    fn count_apt_upgraded_prefers_nonzero_summary() {
+        let output = "Setting up a (1) ...\nSetting up b (1) ...\n\
+             7 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n";
+        assert_eq!(count_apt_upgraded(output), 7);
     }
 
     #[test]
