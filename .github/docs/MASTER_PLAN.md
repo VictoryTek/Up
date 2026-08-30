@@ -141,19 +141,25 @@ Checklist convention: `[ ]` open, `[x]` done.
   parsing in `src/backends/mod.rs:42-69`, `src/runner.rs`); part C —
   `history.rs` `result: String` → enum.
 
-- [ ] **14. Daemon allowlist diverged from GUI commands / `RunUpgrade` can never succeed**
+- [x] **14. Daemon allowlist diverged from GUI commands / `RunUpgrade` can never succeed** *(moot — daemon removed)*
   Source: ARCH M5 (also see item 4 — resolve together).
-  Files: `daemon/src/allowlist.rs`.
-  Nix, pacman-cleanup, and snapshot commands differ from what the GUI
-  actually runs; `upgrade_commands` is never populated so `RunUpgrade` always
-  returns `InvalidArgs`. Moot if the daemon is removed per item 4.
+  Files: ~~`daemon/src/allowlist.rs`~~ (deleted).
+  Resolved by item 4: the `daemon/` crate, its D-Bus/systemd data files, and
+  `src/dbus_client.rs` were removed; `data/io.github.up.policy` now contains
+  only the pkexec actions the GUI actually uses. Nothing to reconcile.
+  Verified 2026-08-29: `daemon/` does not exist; `Cargo.toml` workspace
+  `members = ["."]`. This also moots items 34, 37, 41, 44 (all daemon-only).
 
-- [ ] **15. Remove blanket `#![allow(dead_code)]` from the 7 abandoned-subsystem modules**
+- [x] **15. Remove blanket `#![allow(dead_code)]` from the 7 abandoned-subsystem modules** *(partial — 5 of 7)*
   Source: ARCH M6.
-  Files: `src/check.rs`, `src/config.rs`, `src/history.rs`, `src/ui/history_page.rs`, `src/snapshot.rs`, `src/changelog.rs`, `src/disk.rs`.
-  Do this incrementally as each subsystem gets wired up (items 2, 6, 7, 16,
-  19) or deliberately deleted — module-wide suppression currently hides real
-  dead-code warnings.
+  Files: `src/disk.rs` (this pass); `src/check.rs`, `src/config.rs`,
+  `src/history.rs`, `src/ui/history_page.rs` (already de-suppressed by items
+  2/6/7).
+  `disk.rs` blanket suppression removed; only the three low-disk-warning
+  helpers (`detect_available_space`, `parse_df_available`, `format_bytes`)
+  keep a targeted `#[allow(dead_code)]` pending item 19. Still module-wide
+  suppressed (100% dead, pending wiring): `src/changelog.rs` (item 20),
+  `src/snapshot.rs` (item 18).
 
 - [ ] **16. Orchestrator event loop duplicated in the UI with behavioral drift**
   Source: ARCH M7.
@@ -251,8 +257,8 @@ Checklist convention: `[ ]` open, `[x]` done.
 - [ ] **33. Three inconsistent log-channel/stderr-prefix conventions**
   Source: ARCH L9. Files: `src/runner.rs:468` (`"stderr: "`), `src/upgrade/execute.rs:192` (`"[stderr] "`), `CommandRunner` (no marker at all).
 
-- [ ] **34. Daemon operation-cleanup poll loop copy-pasted four times; idle timeout hardcoded twice**
-  Source: ARCH L10. Files: `daemon/src/interface.rs:96-113, 171-188, 239-256, 304-321`; `daemon/src/main.rs:21-23` vs `interface.rs:408-411`.
+- [x] **34. Daemon operation-cleanup poll loop copy-pasted four times; idle timeout hardcoded twice** *(moot — daemon removed per item 4)*
+  Source: ARCH L10. Files: ~~`daemon/`~~ (deleted).
 
 - [ ] **35. Misc vestiges: dead flags, decorative `min_up_version` check, inverted "legacy" polkit comment**
   Source: ARCH L11. Files: `src/backends/flatpak.rs:100`, `src/orchestrator.rs:12,18`, `src/plugins/validate.rs:97-101`, `daemon/src/allowlist.rs:166-181`, `data/io.github.up.policy`.
@@ -260,11 +266,11 @@ Checklist convention: `[ ]` open, `[x]` done.
 - [ ] **36. Minor dependency cleanups: duplicate `glib`/`gio` sourcing, per-call regex recompilation, `ureq` as the lone blocking-HTTP island**
   Source: ARCH L12. Files: `Cargo.toml:17-18`, `src/plugins/parser.rs`, `src/upgrade/version.rs`.
 
-- [ ] **37. Daemon concurrency limit not enforced for upgrade/snapshot; TOCTOU on the check**
-  Source: BUGS L1. Files: `daemon/src/interface.rs:194-324`. Moot until item 4 resolves the daemon's fate.
+- [x] **37. Daemon concurrency limit not enforced for upgrade/snapshot; TOCTOU on the check** *(moot — daemon removed per item 4)*
+  Source: BUGS L1. Files: ~~`daemon/`~~ (deleted).
 
-- [ ] **38. `OperationHandle::cancel` is `async` but awaits nothing; `is_cancellable` ignores completion**
-  Source: BUGS L2. Files: `daemon/src/cancel.rs:15-26`.
+- [x] **38. `OperationHandle::cancel` is `async` but awaits nothing; `is_cancellable` ignores completion** *(moot — daemon removed per item 4)*
+  Source: BUGS L2. Files: ~~`daemon/src/cancel.rs`~~ (deleted).
 
 - [ ] **39. `count_zypper_upgraded` counts any line containing the substring "done"**
   Source: BUGS L3. Files: `src/backends/os_package_manager.rs:657-659`.
@@ -272,8 +278,8 @@ Checklist convention: `[ ]` open, `[x]` done.
 - [ ] **40. fwupd "updated" count shows 0 for reboot-staged firmware**
   Source: BUGS L4. Files: `src/backends/fwupd.rs:178-186`.
 
-- [ ] **41. Daemon idle-tracker doesn't refresh during long-running operations**
-  Source: BUGS L5. Files: `daemon/src/lifecycle.rs:44-57`, `daemon/src/interface.rs:80`. Latent bug, moot until item 4.
+- [x] **41. Daemon idle-tracker doesn't refresh during long-running operations** *(moot — daemon removed per item 4)*
+  Source: BUGS L5. Files: ~~`daemon/`~~ (deleted).
 
 - [ ] **42. Privileged-shell sentinel token has weak entropy**
   Source: BUGS L6. Files: `src/runner.rs:63-68` (PID + sub-second nanoseconds only).
@@ -281,8 +287,8 @@ Checklist convention: `[ ]` open, `[x]` done.
 - [ ] **43. Silent error swallowing across several UI async paths**
   Source: BUGS L7. Files: `src/ui/window.rs:726-728`, `src/ui/upgrade_page.rs:486-490`, `src/history.rs:59-63`.
 
-- [ ] **44. Daemon shutdown race: no handling for new operations arriving during idle-poll window; no SIGTERM re-arm**
-  Source: BUGS L8. Files: `daemon/src/main.rs:41-48`. Related to item 41.
+- [x] **44. Daemon shutdown race: no handling for new operations arriving during idle-poll window; no SIGTERM re-arm** *(moot — daemon removed per item 4)*
+  Source: BUGS L8. Files: ~~`daemon/src/main.rs`~~ (deleted).
 
 - [ ] **45. Configurable battery/metered gates**
   Source: FEATURES 12. Files: `src/battery.rs` (hardcoded `capacity < 40`), depends on item 7 (config) landing first.
