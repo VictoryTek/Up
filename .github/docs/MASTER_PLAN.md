@@ -121,11 +121,15 @@ Checklist convention: `[ ]` open, `[x]` done.
   (`is_nixos`/`os_package_manager::detect`/… — need a sync `SystemProber`),
   and the `nix profile upgrade` / `nix-env` streaming-during-update gap (M2c).
 
-- [ ] **12. Unify the two privileged-execution stacks (update vs. upgrade)**
+- [x] **12. Unify the two privileged-execution stacks (update vs. upgrade)**
   Source: ARCH M3.
-  Files: `src/runner.rs:34-420` (async, one auth prompt) vs `src/runner.rs:434-507` + `src/upgrade/execute.rs` (sync, `pkexec` per command — up to 4 prompts for Fedora upgrade).
-  The upgrade path re-implements process spawning/pipe draining that
-  `PrivilegedShell` already solved.
+  Files: `src/upgrade/execute.rs`, `src/runner.rs`, `src/upgrade/mod.rs`, `src/ui/upgrade_page.rs`.
+  `execute_upgrade` is now async and runs every step through a shared
+  `PrivilegedShell`-backed `CommandRunner` (new `run_upgrade()` entry point).
+  One polkit prompt per upgrade (Fedora: 4→1, NixOS: 2→1). `run_command_sync`
+  (the blocking re-implementation of `CommandRunner::run`) deleted. Upgrade
+  paths still lack integration tests — manual verification on real distros
+  advised before shipping.
 
 - [ ] **13. Replace stringly-typed contracts between layers**
   Source: ARCH M4.

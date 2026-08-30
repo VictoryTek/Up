@@ -4,41 +4,105 @@ use std::sync::Arc;
 
 use super::detect::{detect_nixos_config_type, DistroInfo, NixOsConfigType};
 use super::version::next_nixos_channel;
+use crate::backends::BackendKind;
+use crate::executor::CommandExecutor;
+use crate::runner::{BackendEvent, CommandRunner, PrivilegedShell};
 
-/// Execute the actual distro upgrade.
+/// Map a distro id to the `BackendKind` used to tag upgrade log events.
+/// Purely cosmetic — no new `BackendKind` variant is introduced for upgrades.
+fn upgrade_kind(distro_id: &str) -> BackendKind {
+    match distro_id {
+        "fedora" => BackendKind::Dnf,
+        "opensuse-leap" => BackendKind::Zypper,
+        "nixos" => BackendKind::Nix,
+        _ => BackendKind::Apt,
+    }
+}
+
+/// Entry point for the distro upgrade workflow.
+///
+/// Authenticates **once** via [`PrivilegedShell`], then runs every upgrade step
+/// through a shared [`CommandRunner`] (one polkit prompt for the whole
+/// upgrade). Command output and narrative lines are streamed to `log_tx` in
+/// order. Returns `Ok(())` when all steps complete, `Err(reason)` otherwise.
+pub async fn run_upgrade(
+    distro: &DistroInfo,
+    log_tx: &async_channel::Sender<String>,
+) -> Result<(), String> {
+    let shell = match PrivilegedShell::new().await {
+        Ok(s) => Arc::new(tokio::sync::Mutex::new(s)),
+        Err(e) => return Err(format!("Authentication failed: {e}")),
+    };
+
+    // Relay the runner's streamed command output into the same log channel.
+    let (be_tx, be_rx) = async_channel::unbounded::<BackendEvent>();
+    let log_tx_fwd = log_tx.clone();
+    let fwd_handle = tokio::spawn(async move {
+        while let Ok(BackendEvent::LogLine(_, line)) = be_rx.recv().await {
+            let _ = log_tx_fwd.send(line).await;
+        }
+    });
+
+    let runner = CommandRunner::new(be_tx.clone(), upgrade_kind(&distro.id), Some(shell.clone()));
+    let result = execute_upgrade(distro, log_tx, &runner).await;
+
+    drop(be_tx);
+    let _ = fwd_handle.await;
+    shell.lock().await.close().await;
+
+    result
+}
+
+/// Execute the actual distro upgrade steps through `runner`.
 /// Returns `Ok(())` if all upgrade steps completed successfully, or `Err(reason)` otherwise.
-pub fn execute_upgrade(
+pub(crate) async fn execute_upgrade(
     distro: &DistroInfo,
     tx: &async_channel::Sender<String>,
+    runner: &dyn CommandExecutor,
 ) -> Result<(), String> {
-    let _ = tx.send_blocking(format!(
-        "Starting upgrade for {} {}...",
-        distro.name, distro.version
-    ));
+    let _ = tx
+        .send(format!(
+            "Starting upgrade for {} {}...",
+            distro.name, distro.version
+        ))
+        .await;
 
     match distro.id.as_str() {
-        "ubuntu" => upgrade_ubuntu(tx),
-        "fedora" => upgrade_fedora(tx),
-        "opensuse-leap" => upgrade_opensuse(tx),
-        "nixos" => upgrade_nixos(distro, tx),
+        "ubuntu" => upgrade_ubuntu(tx, runner).await,
+        "fedora" => upgrade_fedora(tx, runner).await,
+        "opensuse-leap" => upgrade_opensuse(tx, runner).await,
+        "nixos" => upgrade_nixos(distro, tx, runner).await,
         _ => {
             let msg = format!(
                 "Upgrade is not yet supported for '{}'. Supported: Ubuntu, Fedora, openSUSE Leap, NixOS.",
                 distro.name
             );
-            let _ = tx.send_blocking(msg.clone());
+            let _ = tx.send(msg.clone()).await;
             Err(msg)
         }
     }
 }
 
-fn upgrade_ubuntu(tx: &async_channel::Sender<String>) -> Result<(), String> {
-    let _ = tx.send_blocking("Preparing Ubuntu distribution upgrade...".into());
-    let _ = tx.send_blocking(
-        "This operation downloads and installs many packages. It may take 30\u{2013}60 \
-         minutes. Do not power off the system."
-            .into(),
-    );
+/// Run one privileged upgrade step. Output is streamed by `runner`; the return
+/// value is `true` on exit code 0.
+async fn run_step(runner: &dyn CommandExecutor, args: &[&str]) -> bool {
+    runner.run("pkexec", args).await.is_ok()
+}
+
+async fn upgrade_ubuntu(
+    tx: &async_channel::Sender<String>,
+    runner: &dyn CommandExecutor,
+) -> Result<(), String> {
+    let _ = tx
+        .send("Preparing Ubuntu distribution upgrade...".into())
+        .await;
+    let _ = tx
+        .send(
+            "This operation downloads and installs many packages. It may take 30\u{2013}60 \
+             minutes. Do not power off the system."
+                .into(),
+        )
+        .await;
 
     let log_path = "/var/log/dist-upgrade/main.log";
     let tx_tail = tx.clone();
@@ -73,8 +137,8 @@ fn upgrade_ubuntu(tx: &async_channel::Sender<String>) -> Result<(), String> {
         }
     });
 
-    let result = if !crate::runner::run_command_sync(
-        "pkexec",
+    let result = if !run_step(
+        runner,
         &[
             "do-release-upgrade",
             "-f",
@@ -82,8 +146,9 @@ fn upgrade_ubuntu(tx: &async_channel::Sender<String>) -> Result<(), String> {
             "-e",
             "DEBIAN_FRONTEND=noninteractive",
         ],
-        tx,
-    ) {
+    )
+    .await
+    {
         Err("Ubuntu distribution upgrade failed (see log for details)".to_string())
     } else {
         Ok(())
@@ -96,46 +161,54 @@ fn upgrade_ubuntu(tx: &async_channel::Sender<String>) -> Result<(), String> {
     result
 }
 
-fn upgrade_fedora(tx: &async_channel::Sender<String>) -> Result<(), String> {
+async fn upgrade_fedora(
+    tx: &async_channel::Sender<String>,
+    runner: &dyn CommandExecutor,
+) -> Result<(), String> {
     // Step 1: Ensure the system-upgrade plugin is present (best-effort; it is
     // usually pre-installed on Fedora 41+ as part of dnf5-plugins).
-    let _ = tx.send_blocking("Ensuring system-upgrade plugin is installed...".into());
+    let _ = tx
+        .send("Ensuring system-upgrade plugin is installed...".into())
+        .await;
     // Try the DNF5 plugin name first (Fedora 41+), then the DNF4 name as fallback.
     // Failure is non-fatal because the plugin ships pre-installed on most systems.
-    if !crate::runner::run_command_sync(
-        "pkexec",
+    if !run_step(
+        runner,
         &["dnf", "install", "-y", "dnf5-plugin-system-upgrade"],
-        tx,
-    ) {
-        let _ = tx.send_blocking(
-            "dnf5-plugin-system-upgrade not found; trying dnf-plugin-system-upgrade...".into(),
-        );
+    )
+    .await
+    {
+        let _ = tx
+            .send(
+                "dnf5-plugin-system-upgrade not found; trying dnf-plugin-system-upgrade...".into(),
+            )
+            .await;
         // Ignore failure — the plugin is typically already present.
-        let _ = crate::runner::run_command_sync(
-            "pkexec",
+        let _ = run_step(
+            runner,
             &["dnf", "install", "-y", "dnf-plugin-system-upgrade"],
-            tx,
-        );
+        )
+        .await;
     }
 
     // Step 2: Download upgrade packages (next version)
-    let _ = tx.send_blocking("Downloading upgrade packages...".into());
+    let _ = tx.send("Downloading upgrade packages...".into()).await;
 
     // Detect next version
     let next_version = match detect_next_fedora_version() {
         Some(v) => v,
         None => {
-            let _ = tx.send_blocking(
-                "Error: Could not detect current Fedora version. Aborting upgrade.".into(),
-            );
+            let _ = tx
+                .send("Error: Could not detect current Fedora version. Aborting upgrade.".into())
+                .await;
             return Err(
                 "Could not detect current Fedora version to determine upgrade target".to_string(),
             );
         }
     };
     let ver_str = next_version.to_string();
-    if !crate::runner::run_command_sync(
-        "pkexec",
+    if !run_step(
+        runner,
         &[
             "dnf",
             "system-upgrade",
@@ -145,8 +218,9 @@ fn upgrade_fedora(tx: &async_channel::Sender<String>) -> Result<(), String> {
             "--allow-downgrade",
             "-y",
         ],
-        tx,
-    ) {
+    )
+    .await
+    {
         return Err(format!(
             "Failed to download Fedora {} upgrade packages (see log for details)",
             next_version
@@ -155,54 +229,30 @@ fn upgrade_fedora(tx: &async_channel::Sender<String>) -> Result<(), String> {
 
     // Step 3: Trigger the offline upgrade reboot.
     // `dnf system-upgrade reboot` prepares the offline transaction and immediately
-    // calls `systemctl reboot`. We spawn it without waiting because:
-    //   • If the reboot succeeds, systemd will kill our process via SIGTERM before
-    //     the child exits, so `run_command_sync` would return false (a spurious error).
-    //   • Spawning fire-and-forget lets the OS shut us down naturally while the
-    //     reboot dialog gives the user a visible confirmation.
-    let _ = tx.send_blocking("Download complete. Scheduling upgrade for next reboot...".into());
-    use std::process::Stdio;
-    let mut child = match std::process::Command::new("pkexec")
-        .args(["dnf", "system-upgrade", "reboot"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(e) => return Err(format!("Failed to start upgrade reboot: {e}")),
-    };
+    // calls `systemctl reboot`, so systemd SIGTERMs this process (and the privileged
+    // shell) before the command returns. A non-Ok result here is therefore expected
+    // and not treated as a failure.
+    let _ = tx
+        .send("Download complete. Scheduling upgrade for next reboot...".into())
+        .await;
+    let _ = runner
+        .run("pkexec", &["dnf", "system-upgrade", "reboot"])
+        .await;
 
-    // Forward stdout to the log channel in a background thread.
-    // This thread is naturally killed when the process is rebooted by systemd.
-    if let Some(stdout) = child.stdout.take() {
-        let tx_out = tx.clone();
-        std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader};
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                let _ = tx_out.send_blocking(line);
-            }
-        });
-    }
-    if let Some(stderr) = child.stderr.take() {
-        let tx_err = tx.clone();
-        std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader};
-            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                let _ = tx_err.send_blocking(format!("[stderr] {line}"));
-            }
-        });
-    }
-
-    let _ = tx.send_blocking(
-        "Upgrade reboot triggered. The system will restart to apply the upgrade.".into(),
-    );
+    let _ = tx
+        .send("Upgrade reboot triggered. The system will restart to apply the upgrade.".into())
+        .await;
     Ok(())
 }
 
-fn upgrade_opensuse(tx: &async_channel::Sender<String>) -> Result<(), String> {
-    let _ = tx.send_blocking("Running zypper distribution upgrade...".into());
-    if !crate::runner::run_command_sync("pkexec", &["zypper", "dup", "-y"], tx) {
+async fn upgrade_opensuse(
+    tx: &async_channel::Sender<String>,
+    runner: &dyn CommandExecutor,
+) -> Result<(), String> {
+    let _ = tx
+        .send("Running zypper distribution upgrade...".into())
+        .await;
+    if !run_step(runner, &["zypper", "dup", "-y"]).await {
         return Err(
             "openSUSE distribution upgrade command failed (see log for details)".to_string(),
         );
@@ -210,7 +260,11 @@ fn upgrade_opensuse(tx: &async_channel::Sender<String>) -> Result<(), String> {
     Ok(())
 }
 
-fn upgrade_nixos(distro: &DistroInfo, tx: &async_channel::Sender<String>) -> Result<(), String> {
+async fn upgrade_nixos(
+    distro: &DistroInfo,
+    tx: &async_channel::Sender<String>,
+    runner: &dyn CommandExecutor,
+) -> Result<(), String> {
     /// Colon-separated PATH prepended for NixOS tool access under pkexec.
     ///
     /// pkexec resets PATH to a minimal set, excluding NixOS-specific tool paths.
@@ -220,7 +274,9 @@ fn upgrade_nixos(distro: &DistroInfo, tx: &async_channel::Sender<String>) -> Res
     let config_type = detect_nixos_config_type();
     match config_type {
         NixOsConfigType::LegacyChannel => {
-            let _ = tx.send_blocking("Detected: legacy channel-based NixOS config".into());
+            let _ = tx
+                .send("Detected: legacy channel-based NixOS config".into())
+                .await;
 
             // Determine the target channel
             let next_channel = match next_nixos_channel(&distro.version_id) {
@@ -230,19 +286,21 @@ fn upgrade_nixos(distro: &DistroInfo, tx: &async_channel::Sender<String>) -> Res
                         "Cannot determine next NixOS channel from version '{}'",
                         distro.version_id
                     );
-                    let _ = tx.send_blocking(msg.clone());
+                    let _ = tx.send(msg.clone()).await;
                     return Err(msg);
                 }
             };
             let channel_url = format!("https://nixos.org/channels/{}", next_channel);
 
             // Step 1: Register the new channel
-            let _ = tx.send_blocking(format!("Switching channel to {}...", next_channel));
+            let _ = tx
+                .send(format!("Switching channel to {}...", next_channel))
+                .await;
             // Pass channel_url as a positional argument; no sh -c needed.
             // /usr/bin/env sets PATH without requiring a shell.
             let path_arg = format!("PATH={}", NIX_PATH);
-            if !crate::runner::run_command_sync(
-                "pkexec",
+            if !run_step(
+                runner,
                 &[
                     "/usr/bin/env",
                     &path_arg,
@@ -251,8 +309,9 @@ fn upgrade_nixos(distro: &DistroInfo, tx: &async_channel::Sender<String>) -> Res
                     &channel_url,
                     "nixos",
                 ],
-                tx,
-            ) {
+            )
+            .await
+            {
                 return Err(format!(
                     "Failed to register NixOS channel {} (see log for details)",
                     next_channel
@@ -260,15 +319,13 @@ fn upgrade_nixos(distro: &DistroInfo, tx: &async_channel::Sender<String>) -> Res
             }
 
             // Step 2: Rebuild with --upgrade to apply the new channel
-            let _ = tx.send_blocking(format!(
-                "Rebuilding NixOS with {} (nixos-rebuild switch --upgrade)...",
-                next_channel
-            ));
-            if !crate::runner::run_command_sync(
-                "pkexec",
-                &["nixos-rebuild", "switch", "--upgrade"],
-                tx,
-            ) {
+            let _ = tx
+                .send(format!(
+                    "Rebuilding NixOS with {} (nixos-rebuild switch --upgrade)...",
+                    next_channel
+                ))
+                .await;
+            if !run_step(runner, &["nixos-rebuild", "switch", "--upgrade"]).await {
                 return Err(
                     "Failed to rebuild NixOS with --upgrade (see log for details)".to_string(),
                 );
@@ -276,11 +333,13 @@ fn upgrade_nixos(distro: &DistroInfo, tx: &async_channel::Sender<String>) -> Res
             Ok(())
         }
         NixOsConfigType::Flake => {
-            let _ = tx.send_blocking("Detected: flake-based NixOS config".into());
-            let _ = tx.send_blocking("Updating flake inputs in /etc/nixos...".into());
+            let _ = tx.send("Detected: flake-based NixOS config".into()).await;
+            let _ = tx
+                .send("Updating flake inputs in /etc/nixos...".into())
+                .await;
             let path_arg = format!("PATH={}", NIX_PATH);
-            if !crate::runner::run_command_sync(
-                "pkexec",
+            if !run_step(
+                runner,
                 &[
                     "/usr/bin/env",
                     &path_arg,
@@ -290,31 +349,34 @@ fn upgrade_nixos(distro: &DistroInfo, tx: &async_channel::Sender<String>) -> Res
                     "--flake",
                     "/etc/nixos",
                 ],
-                tx,
-            ) {
+            )
+            .await
+            {
                 return Err(
                     "Failed to update flake inputs in /etc/nixos (see log for details)".to_string(),
                 );
             }
             // Resolve the flake attribute name using the same mechanism as
-            // NixBackend::run_update() — reads /etc/nixos/vexos-variant and
-            // validates with validate_flake_attr(). This ensures both upgrade
-            // paths use the same configuration attribute name.
+            // NixBackend::run_update() — reads /etc/nixos/vexos-variant or
+            // auto-detects from the flake, validated with validate_flake_attr().
             let config_attr = match crate::backends::nix::resolve_nixos_flake_attr() {
                 Ok(attr) => attr,
                 Err(e) => {
                     let msg = format!("Upgrade aborted: {e}");
-                    let _ = tx.send_blocking(msg.clone());
+                    let _ = tx.send(msg.clone()).await;
                     return Err(msg);
                 }
             };
             let flake_target = format!("/etc/nixos#{}", config_attr);
-            let _ = tx.send_blocking(format!("Rebuilding NixOS configuration: {flake_target}"));
-            if !crate::runner::run_command_sync(
-                "pkexec",
+            let _ = tx
+                .send(format!("Rebuilding NixOS configuration: {flake_target}"))
+                .await;
+            if !run_step(
+                runner,
                 &["nixos-rebuild", "switch", "--flake", &flake_target],
-                tx,
-            ) {
+            )
+            .await
+            {
                 return Err(format!(
                     "Failed to rebuild NixOS flake configuration '{}' (see log for details)",
                     flake_target
@@ -353,11 +415,13 @@ fn detect_next_fedora_version() -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::execute_upgrade;
+    use super::{execute_upgrade, upgrade_kind};
+    use crate::backends::BackendKind;
+    use crate::executor::test_utils::MockExecutor;
     use crate::upgrade::detect::DistroInfo;
 
-    #[test]
-    fn execute_upgrade_unsupported_distro_returns_err() {
+    #[tokio::test]
+    async fn execute_upgrade_unsupported_distro_returns_err() {
         let distro = DistroInfo {
             id: "arch".to_string(),
             name: "Arch Linux".to_string(),
@@ -366,12 +430,24 @@ mod tests {
             upgrade_supported: false,
         };
         let (tx, _rx) = async_channel::unbounded::<String>();
-        let result = execute_upgrade(&distro, &tx);
+        // No responses queued: the unsupported-distro path must not touch the runner.
+        let runner = MockExecutor::new(vec![]);
+        let result = execute_upgrade(&distro, &tx, &runner).await;
         assert!(result.is_err());
         let msg = result.unwrap_err();
         assert!(
             msg.contains("not yet supported"),
             "unexpected message: {msg}"
         );
+        assert!(runner.calls().is_empty());
+    }
+
+    #[test]
+    fn upgrade_kind_maps_known_distros() {
+        assert_eq!(upgrade_kind("fedora"), BackendKind::Dnf);
+        assert_eq!(upgrade_kind("opensuse-leap"), BackendKind::Zypper);
+        assert_eq!(upgrade_kind("nixos"), BackendKind::Nix);
+        assert_eq!(upgrade_kind("ubuntu"), BackendKind::Apt);
+        assert_eq!(upgrade_kind("linuxmint"), BackendKind::Apt);
     }
 }

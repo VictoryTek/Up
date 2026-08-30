@@ -336,19 +336,16 @@ impl UpgradePage {
                                     #[weak]
                                     button,
                                     async move {
-                                        let (tx, rx) = async_channel::unbounded::<String>();
-                                        let tx_clone = tx.clone();
+                                        let (log_tx, rx) = async_channel::unbounded::<String>();
                                         let (result_tx, result_rx) =
                                             async_channel::bounded::<Result<(), String>>(1);
 
-                                        std::thread::spawn(move || {
+                                        crate::ui::spawn_background_async(move || async move {
                                             let outcome =
-                                                upgrade::execute_upgrade(&distro2, &tx_clone);
-                                            drop(tx_clone);
-                                            let _ = result_tx.send_blocking(outcome);
+                                                upgrade::run_upgrade(&distro2, &log_tx).await;
+                                            drop(log_tx);
+                                            let _ = result_tx.send(outcome).await;
                                         });
-
-                                        drop(tx);
 
                                         while let Ok(line) = rx.recv().await {
                                             log_panel.append_line(&line);
