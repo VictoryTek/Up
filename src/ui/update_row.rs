@@ -1,4 +1,5 @@
 use adw::prelude::*;
+use gettextrs::gettext;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -60,7 +61,11 @@ impl UpdateRow {
         on_retry: impl Fn() + 'static,
     ) -> Self {
         let status_label = gtk::Label::builder()
-            .label(if initial_skipped { "Skipped" } else { "Ready" })
+            .label(if initial_skipped {
+                gettext("Skipped")
+            } else {
+                gettext("Ready")
+            })
             .css_classes(vec!["dim-label"])
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .build();
@@ -79,7 +84,7 @@ impl UpdateRow {
             Rc::new(RefCell::new(Vec::new()));
         let selection_capped = Rc::new(Cell::new(false));
 
-        let kind_label = format!("Skip {} during Update All", backend.display_name());
+        let kind_label = gettext("Skip {} during Update All").replace("{}", backend.display_name());
         let skip_checkbox = gtk::CheckButton::builder()
             .tooltip_text(&kind_label)
             .valign(gtk::Align::Center)
@@ -96,13 +101,13 @@ impl UpdateRow {
             .build();
 
         let retry_button = gtk::Button::from_icon_name("view-refresh-symbolic");
-        retry_button.set_tooltip_text(Some("Retry"));
+        retry_button.set_tooltip_text(Some(&gettext("Retry")));
         retry_button.set_visible(false);
         retry_button.connect_clicked(move |_| on_retry());
 
         let error_details: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
         let error_button = gtk::Button::from_icon_name("dialog-information-symbolic");
-        error_button.set_tooltip_text(Some("Show error details"));
+        error_button.set_tooltip_text(Some(&gettext("Show error details")));
         error_button.set_valign(gtk::Align::Center);
         error_button.add_css_class("flat");
         error_button.set_visible(false);
@@ -117,7 +122,7 @@ impl UpdateRow {
         let packages: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
 
         let changelog_button = gtk::Button::from_icon_name("document-properties-symbolic");
-        changelog_button.set_tooltip_text(Some("What's new"));
+        changelog_button.set_tooltip_text(Some(&gettext("What's new")));
         changelog_button.set_valign(gtk::Align::Center);
         changelog_button.add_css_class("flat");
         changelog_button.set_visible(false);
@@ -187,7 +192,7 @@ impl UpdateRow {
                 let skipped = cb.is_active();
                 skip_flag.set(skipped);
                 if skipped {
-                    status_label.set_label("Skipped");
+                    status_label.set_label(&gettext("Skipped"));
                     status_label.set_css_classes(&["dim-label"]);
                     changelog_button.set_visible(false);
                 } else {
@@ -198,15 +203,17 @@ impl UpdateRow {
                     match last_available.get() {
                         Some(count) => {
                             if count == 0 {
-                                status_label.set_label("Up to date");
+                                status_label.set_label(&gettext("Up to date"));
                                 status_label.set_css_classes(&["success"]);
                             } else {
-                                status_label.set_label(&format!("{count} available"));
+                                status_label.set_label(
+                                    &gettext("{} available").replace("{}", &count.to_string()),
+                                );
                                 status_label.set_css_classes(&["accent"]);
                             }
                         }
                         None => {
-                            status_label.set_label("Ready");
+                            status_label.set_label(&gettext("Ready"));
                             status_label.set_css_classes(&["dim-label"]);
                         }
                     }
@@ -294,13 +301,13 @@ impl UpdateRow {
             return;
         }
         self.menu_button
-            .set_label(&format!("{} pkgs", packages.len()));
+            .set_label(&gettext("{} pkgs").replace("{}", &packages.len().to_string()));
         self.menu_button.set_visible(true);
-        self.popover_heading.set_label(&format!(
-            "{} \u{2014} {} packages",
-            self.backend_name,
-            packages.len()
-        ));
+        self.popover_heading.set_label(
+            &gettext("{backend} \u{2014} {count} packages")
+                .replace("{backend}", &self.backend_name)
+                .replace("{count}", &packages.len().to_string()),
+        );
 
         const MAX_PACKAGES: usize = 50;
         let capped = packages.len() > MAX_PACKAGES;
@@ -332,7 +339,7 @@ impl UpdateRow {
         if packages.len() > MAX_PACKAGES {
             let remaining = packages.len() - MAX_PACKAGES;
             let label = gtk::Label::builder()
-                .label(format!("\u{2026} and {remaining} more"))
+                .label(gettext("\u{2026} and {} more").replace("{}", &remaining.to_string()))
                 .halign(gtk::Align::Start)
                 .css_classes(vec!["dim-label"])
                 .build();
@@ -379,7 +386,7 @@ impl UpdateRow {
         self.check_errored.set(false);
         self.spinner.set_visible(true);
         self.spinner.set_spinning(true);
-        self.status_label.set_label("Checking...");
+        self.status_label.set_label(&gettext("Checking\u{2026}"));
         self.status_label.set_css_classes(&["dim-label"]);
     }
 
@@ -391,10 +398,11 @@ impl UpdateRow {
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
         if count == 0 {
-            self.status_label.set_label("Up to date");
+            self.status_label.set_label(&gettext("Up to date"));
             self.status_label.set_css_classes(&["success"]);
         } else {
-            self.status_label.set_label(&format!("{count} available"));
+            self.status_label
+                .set_label(&gettext("{} available").replace("{}", &count.to_string()));
             self.status_label.set_css_classes(&["accent"]);
         }
         self.changelog_button
@@ -408,7 +416,7 @@ impl UpdateRow {
         self.skip_checkbox.set_sensitive(false);
         self.spinner.set_visible(true);
         self.spinner.set_spinning(true);
-        self.status_label.set_label("Updating...");
+        self.status_label.set_label(&gettext("Updating\u{2026}"));
         self.status_label.set_css_classes(&["accent"]);
     }
 
@@ -419,9 +427,9 @@ impl UpdateRow {
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
         let msg = if count == 0 {
-            "Up to date".to_string()
+            gettext("Up to date")
         } else {
-            format!("{count} updated")
+            gettext("{} updated").replace("{}", &count.to_string())
         };
         self.status_label.set_label(&msg);
         self.status_label.set_css_classes(&["success"]);
@@ -435,7 +443,8 @@ impl UpdateRow {
         // The label shows only the first line; the full message (including the
         // retained command-output tail) is available via the details button.
         let summary = msg.lines().next().unwrap_or(msg);
-        self.status_label.set_label(&format!("Error: {summary}"));
+        self.status_label
+            .set_label(&gettext("Error: {}").replace("{}", summary));
         self.status_label.set_css_classes(&["error"]);
         *self.error_details.borrow_mut() = msg.to_string();
         self.error_button.set_visible(msg.lines().count() > 1);
@@ -492,10 +501,10 @@ fn show_error_details_dialog(parent: &impl gtk::prelude::IsA<gtk::Widget>, messa
         .build();
 
     let dialog = adw::AlertDialog::builder()
-        .heading("Update Failed")
+        .heading(gettext("Update Failed"))
         .extra_child(&scroller)
         .build();
-    dialog.add_response("close", "Close");
+    dialog.add_response("close", &gettext("Close"));
     dialog.set_default_response(Some("close"));
     dialog.set_close_response("close");
     dialog.present(Some(parent));
@@ -518,7 +527,9 @@ fn show_changelog_dialog(
         .top_margin(8)
         .bottom_margin(8)
         .build();
-    text_view.buffer().set_text("Fetching changelog\u{2026}");
+    text_view
+        .buffer()
+        .set_text(&gettext("Fetching changelog\u{2026}"));
 
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -528,10 +539,10 @@ fn show_changelog_dialog(
         .build();
 
     let dialog = adw::AlertDialog::builder()
-        .heading("What's New")
+        .heading(gettext("What's New"))
         .extra_child(&scroller)
         .build();
-    dialog.add_response("close", "Close");
+    dialog.add_response("close", &gettext("Close"));
     dialog.set_default_response(Some("close"));
     dialog.set_close_response("close");
     dialog.present(Some(parent));
@@ -545,10 +556,10 @@ fn show_changelog_dialog(
     });
     glib::spawn_future_local(async move {
         let text = match rx.recv().await {
-            Ok(Ok(s)) if s.trim().is_empty() => "No changelog information available.".to_string(),
+            Ok(Ok(s)) if s.trim().is_empty() => gettext("No changelog information available."),
             Ok(Ok(s)) => s,
-            Ok(Err(e)) => format!("Could not fetch changelog:\n{e}"),
-            Err(_) => "Could not fetch changelog.".to_string(),
+            Ok(Err(e)) => gettext("Could not fetch changelog:\n{}").replace("{}", &e),
+            Err(_) => gettext("Could not fetch changelog."),
         };
         text_view.buffer().set_text(&text);
     });

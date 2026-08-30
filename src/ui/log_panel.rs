@@ -1,4 +1,5 @@
 use adw::prelude::*;
+use gettextrs::gettext;
 use gtk::glib;
 use std::cell::Cell;
 use std::rc::Rc;
@@ -42,18 +43,19 @@ impl LogPanel {
         toast_overlay.set_child(Some(&scrolled));
 
         // Save button placed in the expander header.
+        let save_log = gettext("Save log to file");
         let save_button = gtk::Button::builder()
             .icon_name("document-save-symbolic")
-            .tooltip_text("Save log to file")
+            .tooltip_text(&save_log)
             .css_classes(vec!["flat", "circular"])
             .sensitive(false)
             .valign(gtk::Align::Center)
             .build();
-        save_button.update_property(&[gtk::accessible::Property::Label("Save log to file")]);
+        save_button.update_property(&[gtk::accessible::Property::Label(save_log.as_str())]);
 
         // Custom label widget: label text + save button in a horizontal box.
         let header_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let header_label = gtk::Label::new(Some("Terminal Output"));
+        let header_label = gtk::Label::new(Some(&gettext("Terminal Output")));
         header_box.append(&header_label);
         header_box.append(&save_button);
 
@@ -92,8 +94,8 @@ impl LogPanel {
                 let path = format!("{home}/{filename}");
 
                 let toast_msg = match std::fs::write(&path, text.as_str()) {
-                    Ok(_) => format!("Log saved to ~/{filename}"),
-                    Err(e) => format!("Failed to save log: {e}"),
+                    Ok(_) => gettext("Log saved to ~/{}").replace("{}", &filename),
+                    Err(e) => gettext("Failed to save log: {}").replace("{}", &e.to_string()),
                 };
 
                 toast_overlay_clone

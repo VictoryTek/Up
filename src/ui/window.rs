@@ -5,6 +5,7 @@ use crate::ui::update_row::UpdateRow;
 use crate::ui::upgrade_page::UpgradePage;
 use crate::upgrade;
 use adw::prelude::*;
+use gettextrs::{gettext, ngettext};
 use gtk::gio;
 use gtk::glib;
 use std::cell::{Cell, RefCell};
@@ -46,7 +47,7 @@ impl UpWindow {
         view_stack.add_titled_with_icon(
             &update_page,
             Some("update"),
-            "Update",
+            &gettext("Update"),
             "software-update-available-symbolic",
         );
 
@@ -55,7 +56,7 @@ impl UpWindow {
         let upgrade_stack_page = view_stack.add_titled_with_icon(
             &upgrade_widget,
             Some("upgrade"),
-            "Upgrade",
+            &gettext("Upgrade"),
             "software-update-urgent-symbolic",
         );
 
@@ -64,7 +65,7 @@ impl UpWindow {
         view_stack.add_titled_with_icon(
             &history_page,
             Some("history"),
-            "History",
+            &gettext("History"),
             "document-open-recent-symbolic",
         );
 
@@ -121,7 +122,7 @@ impl UpWindow {
 
         let refresh_button = gtk::Button::builder()
             .icon_name("view-refresh-symbolic")
-            .tooltip_text("Check for updates")
+            .tooltip_text(gettext("Check for updates"))
             .build();
         refresh_button.update_property(&[gtk::accessible::Property::Label("Refresh update list")]);
         refresh_button.connect_clicked(glib::clone!(
@@ -140,13 +141,13 @@ impl UpWindow {
 
         // Application overflow menu (three-dot button on the end/right slot).
         let app_menu = gio::Menu::new();
-        app_menu.append(Some("Clean Up"), Some("win.cleanup"));
-        app_menu.append(Some("Preferences"), Some("win.preferences"));
-        app_menu.append(Some("About Up"), Some("win.about"));
+        app_menu.append(Some(&gettext("Clean Up")), Some("win.cleanup"));
+        app_menu.append(Some(&gettext("Preferences")), Some("win.preferences"));
+        app_menu.append(Some(&gettext("About Up")), Some("win.about"));
         let menu_button = gtk::MenuButton::builder()
             .icon_name("open-menu-symbolic")
             .menu_model(&app_menu)
-            .tooltip_text("Main menu")
+            .tooltip_text(gettext("Main menu"))
             .build();
         menu_button.update_property(&[gtk::accessible::Property::Label("Application menu")]);
         header.pack_end(&menu_button);
@@ -236,13 +237,13 @@ impl UpWindow {
         hero_text_box.set_valign(gtk::Align::Center);
 
         let hero_title = gtk::Label::builder()
-            .label("System Updater")
+            .label(gettext("System Updater"))
             .halign(gtk::Align::Start)
             .css_classes(vec!["up-hero-title"])
             .build();
 
         let status_label = gtk::Label::builder()
-            .label("Detecting available updates across your system…")
+            .label(gettext("Detecting available updates across your system…"))
             .halign(gtk::Align::Start)
             .css_classes(vec!["up-hero-subtitle"])
             .wrap(true)
@@ -275,18 +276,18 @@ impl UpWindow {
 
         // System Information group (populated after background distro detection)
         let sys_info_group = adw::PreferencesGroup::builder()
-            .title("System Information")
+            .title(gettext("System Information"))
             .build();
 
         let distro_row = adw::ActionRow::builder()
-            .title("Distribution")
+            .title(gettext("Distribution"))
             .subtitle("Loading\u{2026}")
             .build();
         distro_row.add_prefix(&gtk::Image::from_icon_name("computer-symbolic"));
         sys_info_group.add(&distro_row);
 
         let version_row = adw::ActionRow::builder()
-            .title("Current Version")
+            .title(gettext("Current Version"))
             .subtitle("Loading\u{2026}")
             .build();
         sys_info_group.add(&version_row);
@@ -295,8 +296,8 @@ impl UpWindow {
 
         // Backend rows group
         let backends_group = adw::PreferencesGroup::builder()
-            .title("Sources")
-            .description("Package managers detected on this system")
+            .title(gettext("Sources"))
+            .description(gettext("Package managers detected on this system"))
             .css_classes(vec!["vex-sources-group"])
             .build();
 
@@ -306,7 +307,7 @@ impl UpWindow {
 
         // Placeholder row shown while background detection runs
         let placeholder_row = adw::ActionRow::builder()
-            .title("Detecting package managers\u{2026}")
+            .title(gettext("Detecting package managers\u{2026}"))
             .build();
         let placeholder_spinner = gtk::Spinner::new();
         placeholder_spinner.start();
@@ -332,7 +333,7 @@ impl UpWindow {
         // Restart notification banner, revealed only when Up itself is updated
         // inside the Flatpak sandbox (new deployment is available on next launch).
         let restart_banner = adw::Banner::builder()
-            .title("Up was updated \u{2014} restart to apply changes")
+            .title(gettext("Up was updated \u{2014} restart to apply changes"))
             .button_label("Close Up")
             .revealed(false)
             .build();
@@ -344,14 +345,14 @@ impl UpWindow {
 
         // Update All button
         let update_button = gtk::Button::builder()
-            .label("Update All")
+            .label(gettext("Update All"))
             .css_classes(vec!["suggested-action", "pill"])
             .valign(gtk::Align::Center)
             .sensitive(false)
             .build();
 
         let cancel_button = gtk::Button::builder()
-            .label("Cancel")
+            .label(gettext("Cancel"))
             .css_classes(vec!["pill", "up-cancel"])
             .valign(gtk::Align::Center)
             .visible(false)
@@ -413,8 +414,8 @@ impl UpWindow {
                         Some("Metered Connection"),
                         Some("You are on a metered connection. Downloading updates may use significant data.\n\nContinue anyway?"),
                     );
-                    dialog.add_response("cancel", "Cancel");
-                    dialog.add_response("update", "Update Anyway");
+                    dialog.add_response("cancel", &gettext("Cancel"));
+                    dialog.add_response("update", &gettext("Update Anyway"));
                     dialog.set_default_response(Some("cancel"));
                     dialog.set_close_response("cancel");
                     dialog.connect_response(None, glib::clone!(
@@ -442,8 +443,8 @@ impl UpWindow {
                                 bat.capacity
                             );
                             let dialog = adw::AlertDialog::new(Some("Low Battery"), Some(&msg));
-                            dialog.add_response("cancel", "Cancel");
-                            dialog.add_response("update", "Update Anyway");
+                            dialog.add_response("cancel", &gettext("Cancel"));
+                            dialog.add_response("update", &gettext("Update Anyway"));
                             dialog.set_default_response(Some("cancel"));
                             dialog.set_close_response("cancel");
                             dialog.connect_response(
@@ -477,7 +478,7 @@ impl UpWindow {
                     let borrowed = rows.borrow();
                     for (_, row) in borrowed.iter() {
                         if row.is_skipped() {
-                            row.set_status_skipped("Skipped by user");
+                            row.set_status_skipped(&gettext("Skipped by user"));
                         }
                     }
                 }
@@ -497,7 +498,7 @@ impl UpWindow {
                             }
                             match row.selected_items() {
                                 Some(items) if items.is_empty() => {
-                                    row.set_status_skipped("No packages selected");
+                                    row.set_status_skipped(&gettext("No packages selected"));
                                     None
                                 }
                                 selected => Some((b.clone(), selected)),
@@ -552,19 +553,19 @@ impl UpWindow {
                             match event {
                                 OrchestratorEvent::AuthStarted => {
                                     auth_started = true;
-                                    status_label.set_label("Authenticating\u{2026}");
+                                    status_label.set_label(&gettext("Authenticating\u{2026}"));
                                     log_panel
-                                        .append_line("Requesting administrator privileges\u{2026}");
+                                        .append_line(&gettext("Requesting administrator privileges\u{2026}"));
                                 }
                                 OrchestratorEvent::AuthSucceeded => {
                                     if auth_started {
-                                        log_panel.append_line("Authentication successful.");
+                                        log_panel.append_line(&gettext("Authentication successful."));
                                     }
-                                    status_label.set_label("Updating\u{2026}");
+                                    status_label.set_label(&gettext("Updating\u{2026}"));
                                 }
                                 OrchestratorEvent::AuthFailed(e) => {
-                                    log_panel.append_line(&format!("Authentication failed: {e}"));
-                                    status_label.set_label("Update cancelled.");
+                                    log_panel.append_line(&gettext("Authentication failed: {}").replace("{}", &e));
+                                    status_label.set_label(&gettext("Update cancelled."));
                                     progress_bar.set_visible(false);
                                     *cancel_handle.borrow_mut() = None;
                                     cancel_button.set_visible(false);
@@ -640,9 +641,9 @@ impl UpWindow {
                             restart_banner.set_revealed(true);
                         }
                         if has_error {
-                            status_label.set_label("Update completed with errors.");
+                            status_label.set_label(&gettext("Update completed with errors."));
                         } else {
-                            status_label.set_label("Update complete.");
+                            status_label.set_label(&gettext("Update complete."));
                         }
                         progress_bar.set_visible(false);
                         *cancel_handle.borrow_mut() = None;
@@ -718,7 +719,7 @@ impl UpWindow {
                 // Increment epoch to invalidate in-flight futures from the previous check.
                 check_epoch.set(check_epoch.get() + 1);
                 let my_epoch = check_epoch.get();
-                status_label_checks.set_label("Checking for updates...");
+                status_label_checks.set_label(&gettext("Checking for updates\u{2026}"));
 
                 for backend in detected.borrow().iter() {
                     let kind = backend.kind();
@@ -821,21 +822,25 @@ impl UpWindow {
                                     if non_skipped_total > 0 {
                                         update_button_checks.set_sensitive(true);
                                         let size_suffix = match estimated_size {
-                                            Some(bytes) if bytes > 0 => {
-                                                format!(" (~{})", crate::disk::format_bytes(bytes))
-                                            }
+                                            Some(bytes) if bytes > 0 => gettext(" (~{})")
+                                                .replace("{}", &crate::disk::format_bytes(bytes)),
                                             _ => String::new(),
                                         };
-                                        status_label_checks.set_label(&format!(
-                                            "{non_skipped_total} update{} available{size_suffix}",
-                                            if non_skipped_total == 1 { "" } else { "s" }
-                                        ));
+                                        let base = ngettext(
+                                            "{} update available",
+                                            "{} updates available",
+                                            non_skipped_total as u32,
+                                        )
+                                        .replace("{}", &non_skipped_total.to_string());
+                                        status_label_checks
+                                            .set_label(&format!("{base}{size_suffix}"));
                                         maybe_warn_low_space(&low_space_banner, estimated_size);
                                     } else if any_check_error {
                                         status_label_checks
-                                            .set_label("Could not check all sources.");
+                                            .set_label(&gettext("Could not check all sources."));
                                     } else {
-                                        status_label_checks.set_label("Everything is up to date.");
+                                        status_label_checks
+                                            .set_label(&gettext("Everything is up to date."));
                                     }
                                 }
                             }
@@ -864,13 +869,13 @@ impl UpWindow {
                     .cloned()
                     .collect();
                 if cleanup_backends.is_empty() {
-                    status_label.set_label("No cleanup available for detected backends.");
+                    status_label.set_label(&gettext("No cleanup available for detected backends."));
                     return;
                 }
                 updating.set(true);
                 update_button.set_sensitive(false);
                 log_panel.clear();
-                status_label.set_label("Starting cleanup\u{2026}");
+                status_label.set_label(&gettext("Starting cleanup\u{2026}"));
                 spawn_cleanup(
                     cleanup_backends,
                     log_panel.clone(),
@@ -973,7 +978,8 @@ impl UpWindow {
                                         updating_retry.set(true);
                                         update_button_retry.set_sensitive(false);
                                         log_panel_retry.append_line(&format!(
-                                            "\u{2500}\u{2500}\u{2500} Retrying {kind} \u{2500}\u{2500}\u{2500}"
+                                            "\u{2500}\u{2500}\u{2500} {} \u{2500}\u{2500}\u{2500}",
+                                            gettext("Retrying {}").replace("{}", &kind.to_string())
                                         ));
                                         let orchestrator =
                                             UpdateOrchestrator::new(vec![(backend, None)]);
@@ -1104,21 +1110,22 @@ fn spawn_cleanup(
         while let Ok(event) = event_rx.recv().await {
             match event {
                 OrchestratorEvent::AuthStarted => {
-                    log_panel.append_line("Requesting administrator privileges\u{2026}");
+                    log_panel.append_line(&gettext("Requesting administrator privileges\u{2026}"));
                 }
                 OrchestratorEvent::AuthSucceeded => {
-                    status_label.set_label("Cleaning up\u{2026}");
+                    status_label.set_label(&gettext("Cleaning up\u{2026}"));
                 }
                 OrchestratorEvent::AuthFailed(e) => {
-                    log_panel.append_line(&format!("Authentication failed: {e}"));
-                    status_label.set_label("Cleanup cancelled.");
+                    log_panel.append_line(&gettext("Authentication failed: {}").replace("{}", &e));
+                    status_label.set_label(&gettext("Cleanup cancelled."));
                     updating.set(false);
                     update_button.set_sensitive(true);
                     return;
                 }
                 OrchestratorEvent::BackendStarted(kind) => {
                     log_panel.append_line(&format!(
-                        "\u{2500}\u{2500}\u{2500} Cleaning {kind} \u{2500}\u{2500}\u{2500}"
+                        "\u{2500}\u{2500}\u{2500} {} \u{2500}\u{2500}\u{2500}",
+                        gettext("Cleaning {}").replace("{}", &kind.to_string())
                     ));
                 }
                 OrchestratorEvent::BackendLog(kind, line) => {
@@ -1128,18 +1135,26 @@ fn spawn_cleanup(
                     UpdateResult::Success { updated_count, .. }
                     | UpdateResult::SuccessWithSelfUpdate { updated_count, .. } => {
                         log_panel.append_line(&format!(
-                            "[{kind}] Cleanup finished ({updated_count} removed)"
+                            "[{kind}] {}",
+                            gettext("Cleanup finished ({} removed)")
+                                .replace("{}", &updated_count.to_string())
                         ));
                     }
                     UpdateResult::Error(msg) => {
-                        log_panel.append_line(&format!("[{kind}] Cleanup failed: {msg}"));
+                        log_panel.append_line(&format!(
+                            "[{kind}] {}",
+                            gettext("Cleanup failed: {}").replace("{}", &msg.to_string())
+                        ));
                         has_error = true;
                     }
                     UpdateResult::Skipped(msg) => {
-                        log_panel.append_line(&format!("[{kind}] Skipped: {msg}"));
+                        log_panel.append_line(&format!(
+                            "[{kind}] {}",
+                            gettext("Skipped: {}").replace("{}", msg)
+                        ));
                     }
                     UpdateResult::Cancelled => {
-                        log_panel.append_line(&format!("[{kind}] Cancelled"));
+                        log_panel.append_line(&format!("[{kind}] {}", gettext("Cancelled")));
                     }
                     UpdateResult::CacheMiss => {
                         log_panel.append_line(&format!(
@@ -1212,9 +1227,9 @@ fn apply_backend_finished(
                     outcome.is_error = true;
                 }
                 UpdateResult::Skipped(msg) => row.set_status_skipped(msg),
-                UpdateResult::Cancelled => row.set_status_skipped("Cancelled"),
+                UpdateResult::Cancelled => row.set_status_skipped(&gettext("Cancelled")),
                 UpdateResult::CacheMiss => {
-                    row.set_status_skipped("Binary cache syncing, try again later");
+                    row.set_status_skipped(&gettext("Binary cache syncing, try again later"));
                     show_cache_dialog = true;
                 }
             }
@@ -1340,13 +1355,13 @@ fn spawn_cache_bypass(
         while let Ok(event) = event_rx.recv().await {
             match event {
                 OrchestratorEvent::AuthStarted => {
-                    log_panel.append_line("Requesting administrator privileges\u{2026}");
+                    log_panel.append_line(&gettext("Requesting administrator privileges\u{2026}"));
                 }
                 OrchestratorEvent::AuthSucceeded => {
-                    status_label.set_label("Updating\u{2026}");
+                    status_label.set_label(&gettext("Updating\u{2026}"));
                 }
                 OrchestratorEvent::AuthFailed(e) => {
-                    log_panel.append_line(&format!("Authentication failed: {e}"));
+                    log_panel.append_line(&gettext("Authentication failed: {}").replace("{}", &e));
                     button.set_sensitive(true);
                     return;
                 }
@@ -1369,7 +1384,7 @@ fn spawn_cache_bypass(
                             } => {
                                 row.set_packages(updated_items);
                                 row.set_status_success(*updated_count);
-                                status_label.set_label("Update complete.");
+                                status_label.set_label(&gettext("Update complete."));
                             }
                             UpdateResult::SuccessWithSelfUpdate {
                                 updated_count,
@@ -1377,20 +1392,22 @@ fn spawn_cache_bypass(
                             } => {
                                 row.set_packages(updated_items);
                                 row.set_status_success(*updated_count);
-                                status_label.set_label("Update complete.");
+                                status_label.set_label(&gettext("Update complete."));
                             }
                             UpdateResult::Error(msg) => {
                                 row.set_status_error(&msg.to_string());
-                                status_label.set_label("Update failed.");
+                                status_label.set_label(&gettext("Update failed."));
                             }
                             UpdateResult::Skipped(msg) => {
                                 row.set_status_skipped(msg);
                             }
                             UpdateResult::Cancelled => {
-                                row.set_status_skipped("Cancelled");
+                                row.set_status_skipped(&gettext("Cancelled"));
                             }
                             UpdateResult::CacheMiss => {
-                                row.set_status_skipped("Binary cache syncing, try again later");
+                                row.set_status_skipped(&gettext(
+                                    "Binary cache syncing, try again later",
+                                ));
                             }
                         }
                     }

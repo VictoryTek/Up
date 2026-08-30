@@ -237,11 +237,15 @@ Checklist convention: `[ ]` open, `[x]` done.
   classifies on the first line only so the appended tail can't cause an
   `Exit`→`Spawn` misclassification (partial nibble at item 13B).
 
-- [ ] **25. Finish localization: initialize gettext and wrap remaining UI strings**
+- [x] **25. Finish localization: initialize gettext and wrap remaining UI strings**
   Source: ARCH L4, FEATURES 14.
-  Files: `src/main.rs` (no `bindtextdomain`/`textdomain` call anywhere), `src/ui/window.rs`, `update_row.rs`, `log_panel.rs` (raw string literals despite being listed in `po/POTFILES.in`).
-  The translation infrastructure (po/, meson i18n merge, gettext-rs dep) is
-  fully present and fully non-functional without this.
+  Files: `src/main.rs`, `src/ui/window.rs`, `src/ui/update_row.rs`, `src/ui/log_panel.rs`.
+  `main()` now binds the `io.github.up` text domain (`bindtextdomain` +
+  codeset + `textdomain`, `LOCALEDIR` via `option_env!`). ~60 user-visible
+  literals across the three files wrapped in `gettext`/`ngettext`. Action ids,
+  CSS classes, icon names, the app name, and `[{kind}]` log prefixes left
+  raw; pre-existing accessible `Property::Label` literals deferred to a
+  separate a11y pass.
 
 - [ ] **26. Flatpak packaging**
   Source: FEATURES 15.
