@@ -391,7 +391,6 @@ impl UpWindow {
             }
         });
 
-
         // Update All button
         let update_button = gtk::Button::builder()
             .label(gettext("Update All"))
