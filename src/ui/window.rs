@@ -25,11 +25,12 @@ pub struct UpWindow;
 
 impl UpWindow {
     pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
+        let (win_w, win_h) = Self::default_window_size();
         let window = adw::ApplicationWindow::builder()
             .application(app)
             .title("Up")
-            .default_width(760)
-            .default_height(730)
+            .default_width(win_w)
+            .default_height(win_h)
             .build();
         window.add_css_class("up-window");
 
@@ -158,6 +159,24 @@ impl UpWindow {
 
         window.set_content(Some(&main_box));
 
+        // Collapse to a tighter layout when the window is too short to show the
+        // whole Update page at its normal spacing (e.g. a 1280×800 display).
+        // The `.compact` class is styled in data/style.css.
+        if let Ok(condition) = adw::BreakpointCondition::parse("max-height: 740px") {
+            let breakpoint = adw::Breakpoint::new(condition);
+            breakpoint.connect_apply(glib::clone!(
+                #[weak]
+                window,
+                move |_| window.add_css_class("compact")
+            ));
+            breakpoint.connect_unapply(glib::clone!(
+                #[weak]
+                window,
+                move |_| window.remove_css_class("compact")
+            ));
+            window.add_breakpoint(breakpoint);
+        }
+
         // Register the "about" window action that opens the About dialog.
         let about_action = gio::SimpleAction::new("about", None);
         about_action.connect_activate(glib::clone!(
@@ -202,6 +221,31 @@ impl UpWindow {
         window
     }
 
+    /// Default window size, clamped so it never exceeds the monitor it will
+    /// most likely open on. The old fixed 760×730 default overflowed a
+    /// 1280×800 screen once the shell panel and header bar were subtracted,
+    /// forcing a scroll bar on the Update page at launch.
+    fn default_window_size() -> (i32, i32) {
+        const IDEAL_W: i32 = 760;
+        const IDEAL_H: i32 = 720;
+        const MIN_W: i32 = 600;
+        const MIN_H: i32 = 500;
+
+        let Some(geo) = gtk::gdk::Display::default()
+            .and_then(|d| d.monitors().item(0))
+            .and_then(|obj| obj.downcast::<gtk::gdk::Monitor>().ok())
+            .map(|m| m.geometry())
+        else {
+            return (IDEAL_W, IDEAL_H);
+        };
+
+        // Leave headroom for the shell panel and window decorations.
+        let max_w = (geo.width() * 95) / 100;
+        let max_h = (geo.height() * 90) / 100;
+
+        (IDEAL_W.min(max_w).max(MIN_W), IDEAL_H.min(max_h).max(MIN_H))
+    }
+
     fn build_update_page() -> UpdatePageResult {
         let page_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
@@ -213,13 +257,13 @@ impl UpWindow {
         let clamp = adw::Clamp::builder()
             .maximum_size(800)
             .tightening_threshold(600)
-            .margin_top(24)
-            .margin_bottom(24)
+            .margin_top(18)
+            .margin_bottom(18)
             .margin_start(12)
             .margin_end(12)
             .build();
 
-        let content_box = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        let content_box = gtk::Box::new(gtk::Orientation::Vertical, 14);
 
         // ── Hero area ────────────────────────────────────────────────
         let hero_box = gtk::Box::builder()
