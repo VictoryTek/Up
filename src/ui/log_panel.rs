@@ -32,9 +32,12 @@ impl LogPanel {
             .css_classes(vec!["card"])
             .build();
 
+        // Keep the collapsed footprint small — it expands with content up to
+        // max_content_height. A tall empty box was the main reason the Update
+        // page overflowed into a scroll bar on a 1280x800 screen.
         let scrolled = gtk::ScrolledWindow::builder()
-            .min_content_height(150)
-            .max_content_height(200)
+            .min_content_height(72)
+            .max_content_height(180)
             .child(&text_view)
             .build();
 
@@ -61,7 +64,6 @@ impl LogPanel {
 
         let expander = gtk::Expander::builder()
             .label_widget(&header_box)
-            .margin_top(12)
             .expanded(true)
             .child(&toast_overlay)
             .build();
