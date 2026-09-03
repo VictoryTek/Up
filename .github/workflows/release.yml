@@ -94,7 +94,7 @@ jobs:
           echo "BINARY_NAME=up-${VERSION}-linux-x86_64" >> "$GITHUB_ENV"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: ${{ env.BINARY_NAME }}
           generate_release_notes: true
