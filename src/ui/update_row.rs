@@ -426,6 +426,11 @@ impl UpdateRow {
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
+        // A clean update clears whatever was outstanding for this backend, so
+        // callers reading `last_available_count()` see zero rather than the
+        // pre-update figure.
+        self.last_available.set(Some(0));
+        self.check_errored.set(false);
         let msg = if count == 0 {
             gettext("Up to date")
         } else {

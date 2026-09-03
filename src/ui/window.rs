@@ -271,7 +271,10 @@ impl UpWindow {
         progress_bar.set_margin_bottom(4);
         progress_bar.set_margin_start(0);
         progress_bar.set_margin_end(0);
-        progress_bar.set_visible(false);
+        // Kept permanently visible so its footprint is reserved in the layout;
+        // opacity is toggled instead of visibility so revealing it on update
+        // start does not shift the page down and spawn a vertical scroll bar.
+        progress_bar.set_opacity(0.0);
         content_box.append(&progress_bar);
 
         // System Information group (populated after background distro detection)
@@ -343,6 +346,15 @@ impl UpWindow {
             }
         });
 
+        // Completion banner, revealed once an Update All run finishes so the
+        // result is obvious even if the user looked away. Hidden again when the
+        // next check or update starts.
+        let done_banner = adw::Banner::builder()
+            .title(gettext("System is up to date"))
+            .revealed(false)
+            .build();
+        done_banner.add_css_class("up-done-banner");
+
         // Update All button
         let update_button = gtk::Button::builder()
             .label(gettext("Update All"))
@@ -407,6 +419,8 @@ impl UpWindow {
             cancel_button,
             #[strong]
             cancel_handle,
+            #[weak]
+            done_banner,
             move |button| {
                 let monitor = gio::NetworkMonitor::default();
                 if monitor.is_network_metered() && !bypass_metered.get() {
@@ -470,6 +484,7 @@ impl UpWindow {
                 }
                 button.set_sensitive(false);
                 updating.set(true);
+                done_banner.set_revealed(false);
                 log_panel.clear();
                 cancel_button.set_visible(true);
 
@@ -511,7 +526,7 @@ impl UpWindow {
                 total_backends.set(n_backends);
                 finished_backends.set(0);
                 progress_bar.set_fraction(0.0);
-                progress_bar.set_visible(true);
+                progress_bar.set_opacity(1.0);
 
                 glib::spawn_future_local(glib::clone!(
                     #[strong]
@@ -536,6 +551,8 @@ impl UpWindow {
                     cancel_button,
                     #[strong]
                     cancel_handle,
+                    #[weak]
+                    done_banner,
                     async move {
                         use crate::orchestrator::{OrchestratorEvent, UpdateOrchestrator};
 
@@ -566,7 +583,7 @@ impl UpWindow {
                                 OrchestratorEvent::AuthFailed(e) => {
                                     log_panel.append_line(&gettext("Authentication failed: {}").replace("{}", &e));
                                     status_label.set_label(&gettext("Update cancelled."));
-                                    progress_bar.set_visible(false);
+                                    progress_bar.set_opacity(0.0);
                                     *cancel_handle.borrow_mut() = None;
                                     cancel_button.set_visible(false);
                                     cancel_button.set_sensitive(true);
@@ -642,15 +659,32 @@ impl UpWindow {
                         }
                         if has_error {
                             status_label.set_label(&gettext("Update completed with errors."));
+                            done_banner.set_title(&gettext(
+                                "Update finished with errors \u{2014} see the log below",
+                            ));
                         } else {
                             status_label.set_label(&gettext("Update complete."));
+                            done_banner.set_title(&gettext("System is up to date"));
                         }
-                        progress_bar.set_visible(false);
+                        done_banner.set_revealed(true);
+                        progress_bar.set_opacity(0.0);
                         *cancel_handle.borrow_mut() = None;
                         cancel_button.set_visible(false);
                         cancel_button.set_sensitive(true);
                         updating.set(false);
-                        button.set_sensitive(true);
+                        // Re-gate Update All: a backend that updated cleanly now
+                        // reports zero available, so the button only stays live
+                        // if an un-skipped backend still has outstanding updates
+                        // (e.g. one that errored out).
+                        let remaining: usize = {
+                            let borrowed = rows.borrow();
+                            borrowed
+                                .iter()
+                                .filter(|(_, r)| !r.is_skipped())
+                                .filter_map(|(_, r)| r.last_available_count())
+                                .sum()
+                        };
+                        button.set_sensitive(remaining > 0);
                         if !has_error {
                             // Check if reboot is actually required before prompting.
                             // reboot_required() performs fast filesystem/process checks
@@ -687,6 +721,7 @@ impl UpWindow {
         low_space_banner.set_revealed(false);
 
         page_box.append(&restart_banner);
+        page_box.append(&done_banner);
         page_box.append(&metered_banner);
         page_box.append(&low_space_banner);
         page_box.append(&scrolled);
@@ -706,6 +741,7 @@ impl UpWindow {
             let check_epoch = check_epoch.clone();
             let status_label_checks = status_label.clone();
             let low_space_banner = low_space_banner.clone();
+            let done_banner = done_banner.clone();
             Rc::new(move || {
                 let n = detected.borrow().len();
                 if n == 0 {
@@ -714,6 +750,7 @@ impl UpWindow {
                 // Disable button and reset counters at the start of each check cycle.
                 update_button_checks.set_sensitive(false);
                 low_space_banner.set_revealed(false);
+                done_banner.set_revealed(false);
                 *pending_checks.borrow_mut() = n;
                 *total_available.borrow_mut() = 0;
                 // Increment epoch to invalidate in-flight futures from the previous check.
