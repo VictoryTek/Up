@@ -28,7 +28,7 @@
   <releases>
     <release version="2.3.3" date="2026-09-03">
       <description translate="no">
-        <p>The Update All button now returns to its disabled state once every source is up to date, and a green banner confirms when an update run finishes. The progress bar no longer nudges the layout and spawns a scroll bar when an update starts.</p>
+        <p>The Update All button now returns to its disabled state once every source is up to date, and the status line turns green to confirm when an update run finishes. The progress bar no longer nudges the layout and spawns a scroll bar when an update starts, and the window sizes itself to the monitor with a tighter layout on short screens.</p>
       </description>
     </release>
     <release version="2.3.2" date="2026-08-29">

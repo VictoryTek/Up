@@ -54,6 +54,17 @@ headerbar viewswitcher button:checked {
   margin-top: 2px;
 }
 
+/* Outcome tint applied to the hero subtitle after an Update All run. */
+.up-hero-subtitle.done {
+  color: #2EC27E;
+  font-weight: 600;
+}
+
+.up-hero-subtitle.failed {
+  color: #E01B24;
+  font-weight: 600;
+}
+
 /* ── Compact layout (short windows — see Breakpoint in window.rs) ── */
 window.up-window.compact .up-hero {
   padding: 8px 12px 4px;
@@ -70,6 +81,12 @@ window.up-window.compact .up-hero-subtitle {
 /* Tighten the gap the toolkit puts above every PreferencesGroup title. */
 window.up-window.compact preferencesgroup > box {
   margin-top: 0;
+}
+
+/* Reclaim the outer padding around the scrolling content when short. */
+window.up-window.compact .up-clamp {
+  margin-top: 6px;
+  margin-bottom: 6px;
 }
 
 /* ── Suggested-action (Update All) ───────────────────────── */
@@ -173,14 +190,4 @@ banner {
 banner > revealer > widget > label {
   color: @vex_orange;
   font-weight: 600;
-}
-
-/* Update-complete banner — green, distinct from the orange warning banners */
-banner.up-done-banner {
-  background-color: alpha(#2EC27E, 0.15);
-  border-bottom: 1px solid alpha(#2EC27E, 0.15);
-}
-
-banner.up-done-banner > revealer > widget > label {
-  color: #2EC27E;
 }
