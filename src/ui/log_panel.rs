@@ -35,9 +35,16 @@ impl LogPanel {
         // Keep the collapsed footprint small — it expands with content up to
         // max_content_height. A tall empty box was the main reason the Update
         // page overflowed into a scroll bar on a 1280x800 screen.
+        //
+        // vexpand lets this panel claim any leftover vertical space in the
+        // page once the window is taller than the page's natural height,
+        // instead of leaving it as dead space below the panel. On a short
+        // window there is no leftover space to claim, so min_content_height
+        // still governs and the 1280x800 fix above is unaffected.
         let scrolled = gtk::ScrolledWindow::builder()
             .min_content_height(72)
             .max_content_height(180)
+            .vexpand(true)
             .child(&text_view)
             .build();
 
