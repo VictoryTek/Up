@@ -6,7 +6,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
@@ -22,6 +22,25 @@ const OUTPUT_TAIL_LINES: usize = 100;
 pub enum BackendEvent {
     /// A single line of log output produced by the named backend.
     LogLine(BackendKind, String),
+}
+
+/// Read one `\n`-terminated chunk from `reader`, decoded lossily.
+///
+/// Returns `Ok(None)` at EOF. Unlike `AsyncBufReadExt::read_line`, invalid
+/// UTF-8 bytes are replaced with U+FFFD rather than aborting the whole stream
+/// with `InvalidData` — subprocess build output (Nix progress redraws, fetched
+/// store-path names, non-UTF-8 locale diagnostics) is not guaranteed to be
+/// valid UTF-8, and one stray byte must not fail an update that succeeded.
+/// The returned string keeps its trailing newline, matching `read_line`.
+async fn read_line_lossy<R>(reader: &mut R) -> std::io::Result<Option<String>>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let mut buf = Vec::new();
+    if reader.read_until(b'\n', &mut buf).await? == 0 {
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
 }
 
 // ── Persistent privileged shell ──────────────────────────────────────────
@@ -84,14 +103,11 @@ impl PrivilegedShell {
             .await
             .map_err(|e| format!("Failed to flush shell: {e}"))?;
 
-        let mut line = String::new();
-        let n = shell
-            .reader
-            .read_line(&mut line)
+        let line = read_line_lossy(&mut shell.reader)
             .await
             .map_err(|e| format!("Failed to read from shell: {e}"))?;
 
-        if n == 0 {
+        let Some(line) = line else {
             // Process exited before responding — authentication was cancelled or denied.
             let status = shell.child.wait().await.ok();
             let code = status.and_then(|s| s.code()).unwrap_or(-1);
@@ -101,7 +117,7 @@ impl PrivilegedShell {
                 _ => format!("exit code {code}"),
             };
             return Err(format!("pkexec failed: {reason}"));
-        }
+        };
 
         if line.trim() != "___UP_READY___" {
             return Err(format!("Unexpected shell response: {:?}", line.trim()));
@@ -160,29 +176,29 @@ impl PrivilegedShell {
             let mut tail: VecDeque<String> = VecDeque::with_capacity(OUTPUT_TAIL_LINES + 1);
             let mut evicted = false;
             loop {
-                let mut line = String::new();
-                let n = self
-                    .reader
-                    .read_line(&mut line)
+                let line = match read_line_lossy(&mut self.reader)
                     .await
-                    .map_err(|e| format!("Failed to read output: {e}"))?;
-                if n == 0 {
-                    // The privileged shell can be terminated by the OS during
-                    // system activation (e.g. nixos-rebuild switch restarts
-                    // systemd services, killing the pkexec shell). If the
-                    // accumulated output contains NixOS activation markers,
-                    // treat the unexpected close as a successful completion.
-                    let tail_str = tail.into_iter().collect::<Vec<_>>().join("\n");
-                    if is_nixos_activation_success(&tail_str) {
-                        let output = if evicted {
-                            format!("...\n{tail_str}")
-                        } else {
-                            tail_str
-                        };
-                        return Ok(output);
+                    .map_err(|e| format!("Failed to read output: {e}"))?
+                {
+                    Some(line) => line,
+                    None => {
+                        // The privileged shell can be terminated by the OS during
+                        // system activation (e.g. nixos-rebuild switch restarts
+                        // systemd services, killing the pkexec shell). If the
+                        // accumulated output contains NixOS activation markers,
+                        // treat the unexpected close as a successful completion.
+                        let tail_str = tail.into_iter().collect::<Vec<_>>().join("\n");
+                        if is_nixos_activation_success(&tail_str) {
+                            let output = if evicted {
+                                format!("...\n{tail_str}")
+                            } else {
+                                tail_str
+                            };
+                            return Ok(output);
+                        }
+                        return Err("Privileged shell closed unexpectedly".to_string());
                     }
-                    return Err("Privileged shell closed unexpectedly".to_string());
-                }
+                };
                 let trimmed = line.trim();
                 if let Some(rest) = trimmed.strip_prefix(&rc_prefix) {
                     if let Some(code_str) = rest.strip_suffix(rc_suffix) {
@@ -331,8 +347,9 @@ impl CommandRunner {
             let mut tail: VecDeque<String> = VecDeque::with_capacity(OUTPUT_TAIL_LINES + 1);
             let mut evicted = false;
             if let Some(pipe) = stdout {
-                let mut reader = BufReader::new(pipe).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
+                let mut reader = BufReader::new(pipe);
+                while let Ok(Some(raw)) = read_line_lossy(&mut reader).await {
+                    let line = raw.trim_end_matches(['\n', '\r']).to_string();
                     if tail.len() >= OUTPUT_TAIL_LINES {
                         tail.pop_front();
                         evicted = true;
@@ -357,8 +374,9 @@ impl CommandRunner {
             let mut tail: VecDeque<String> = VecDeque::with_capacity(OUTPUT_TAIL_LINES + 1);
             let mut evicted = false;
             if let Some(pipe) = stderr {
-                let mut reader = BufReader::new(pipe).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
+                let mut reader = BufReader::new(pipe);
+                while let Ok(Some(raw)) = read_line_lossy(&mut reader).await {
+                    let line = raw.trim_end_matches(['\n', '\r']).to_string();
                     if tail.len() >= OUTPUT_TAIL_LINES {
                         tail.pop_front();
                         evicted = true;
@@ -448,5 +466,53 @@ impl CommandExecutor for CommandRunner {
                 env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
             crate::executor::spawn_probe(&program, &args_refs, &env_refs).await
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_line_lossy;
+    use tokio::io::BufReader;
+
+    #[tokio::test]
+    async fn decodes_valid_lines_keeping_newline() {
+        let mut r = BufReader::new(&b"hello\nworld\n"[..]);
+        assert_eq!(
+            read_line_lossy(&mut r).await.unwrap().as_deref(),
+            Some("hello\n")
+        );
+        assert_eq!(
+            read_line_lossy(&mut r).await.unwrap().as_deref(),
+            Some("world\n")
+        );
+        assert_eq!(read_line_lossy(&mut r).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn replaces_invalid_utf8_instead_of_erroring() {
+        // 0xFF is never valid UTF-8; strict read_line would return InvalidData here.
+        let mut r = BufReader::new(&b"ok\n\xff\xfebad\nnext\n"[..]);
+        assert_eq!(
+            read_line_lossy(&mut r).await.unwrap().as_deref(),
+            Some("ok\n")
+        );
+        let line = read_line_lossy(&mut r).await.unwrap().unwrap();
+        assert!(line.contains('\u{fffd}'));
+        assert!(line.ends_with("bad\n"));
+        assert_eq!(
+            read_line_lossy(&mut r).await.unwrap().as_deref(),
+            Some("next\n")
+        );
+        assert_eq!(read_line_lossy(&mut r).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn returns_final_unterminated_line() {
+        let mut r = BufReader::new(&b"tail-no-newline"[..]);
+        assert_eq!(
+            read_line_lossy(&mut r).await.unwrap().as_deref(),
+            Some("tail-no-newline")
+        );
+        assert_eq!(read_line_lossy(&mut r).await.unwrap(), None);
     }
 }
