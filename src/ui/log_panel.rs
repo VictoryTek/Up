@@ -35,9 +35,16 @@ impl LogPanel {
         // Keep the collapsed footprint small — it expands with content up to
         // max_content_height. A tall empty box was the main reason the Update
         // page overflowed into a scroll bar on a 1280x800 screen.
+        //
+        // vexpand lets this panel claim any leftover vertical space in the
+        // page once the window is taller than the page's natural height,
+        // instead of leaving it as dead space below the panel. On a short
+        // window there is no leftover space to claim, so min_content_height
+        // still governs and the 1280x800 fix above is unaffected.
         let scrolled = gtk::ScrolledWindow::builder()
             .min_content_height(72)
             .max_content_height(180)
+            .vexpand(true)
             .child(&text_view)
             .build();
 
@@ -137,6 +144,16 @@ impl LogPanel {
         self.schedule_scroll();
     }
 
+    /// Returns the last `max_lines` log lines emitted for `kind`, with the
+    /// `[<kind>] ` prefix stripped and joined by newlines. Empty when the
+    /// backend produced no output. Used to attach recent context to a failed
+    /// row's error-details dialog.
+    pub fn backend_tail(&self, kind: &crate::backends::BackendKind, max_lines: usize) -> String {
+        let buffer = self.text_view.buffer();
+        let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+        tail_for_backend(&text, &format!("[{kind}] "), max_lines)
+    }
+
     pub fn clear(&self) {
         let buffer = self.text_view.buffer();
         buffer.set_text("");
@@ -164,6 +181,17 @@ impl LogPanel {
             }
         });
     }
+}
+
+/// Return the last `max_lines` lines of `text` that start with `prefix`, with the
+/// prefix removed, joined by newlines. Empty when nothing matches.
+fn tail_for_backend(text: &str, prefix: &str, max_lines: usize) -> String {
+    let matching: Vec<&str> = text
+        .lines()
+        .filter_map(|l| l.strip_prefix(prefix))
+        .collect();
+    let start = matching.len().saturating_sub(max_lines);
+    matching[start..].join("\n")
 }
 
 /// Remove ANSI/VT100 escape sequences from `s`.
@@ -206,4 +234,26 @@ fn strip_ansi(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tail_for_backend;
+
+    #[test]
+    fn returns_matching_lines_without_prefix() {
+        let log = "[Nix] one\n[Flatpak] skip\n[Nix] two\n";
+        assert_eq!(tail_for_backend(log, "[Nix] ", 200), "one\ntwo");
+    }
+
+    #[test]
+    fn truncates_to_last_max_lines() {
+        let log = "[Nix] a\n[Nix] b\n[Nix] c\n";
+        assert_eq!(tail_for_backend(log, "[Nix] ", 2), "b\nc");
+    }
+
+    #[test]
+    fn empty_when_no_match() {
+        assert_eq!(tail_for_backend("[APT] x\n", "[Nix] ", 200), "");
+    }
 }

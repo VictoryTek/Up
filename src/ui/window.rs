@@ -1299,7 +1299,7 @@ fn apply_backend_finished(
                     outcome.is_self_update = true;
                 }
                 UpdateResult::Error(msg) => {
-                    row.set_status_error(&msg.to_string());
+                    row.set_status_error(&msg.to_string(), &log_panel.backend_tail(kind, 200));
                     outcome.is_error = true;
                 }
                 UpdateResult::Skipped(msg) => row.set_status_skipped(msg),
@@ -1471,7 +1471,10 @@ fn spawn_cache_bypass(
                                 status_label.set_label(&gettext("Update complete."));
                             }
                             UpdateResult::Error(msg) => {
-                                row.set_status_error(&msg.to_string());
+                                row.set_status_error(
+                                    &msg.to_string(),
+                                    &log_panel.backend_tail(&kind, 200),
+                                );
                                 status_label.set_label(&gettext("Update failed."));
                             }
                             UpdateResult::Skipped(msg) => {

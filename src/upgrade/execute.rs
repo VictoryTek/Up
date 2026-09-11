@@ -116,21 +116,24 @@ async fn upgrade_ubuntu(
         };
         let _ = file.seek(SeekFrom::End(0));
         let mut reader = BufReader::new(file);
-        let mut line = String::new();
+        let mut buf: Vec<u8> = Vec::new();
         loop {
             if cancel_flag_thread.load(Ordering::Relaxed) {
                 break;
             }
-            match reader.read_line(&mut line) {
+            buf.clear();
+            // Decode lossily: dist-upgrade log lines are not guaranteed UTF-8,
+            // and a strict read_line would abort the tail on the first bad byte.
+            match reader.read_until(b'\n', &mut buf) {
                 Ok(0) => {
                     std::thread::sleep(std::time::Duration::from_millis(500));
                 }
                 Ok(_) => {
-                    let trimmed = line.trim_end_matches('\n').to_string();
+                    let trimmed = String::from_utf8_lossy(&buf);
+                    let trimmed = trimmed.trim_end_matches('\n');
                     if !trimmed.is_empty() {
                         let _ = tx_tail.send_blocking(format!("[log] {}", trimmed));
                     }
-                    line.clear();
                 }
                 Err(_) => break,
             }

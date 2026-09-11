@@ -472,19 +472,28 @@ impl UpdateRow {
         self.status_label.set_css_classes(&["success"]);
     }
 
-    pub fn set_status_error(&self, msg: &str) {
+    pub fn set_status_error(&self, msg: &str, log_tail: &str) {
         self.retry_button.set_visible(true);
         self.skip_checkbox.set_sensitive(true);
         self.spinner.set_visible(false);
         self.spinner.set_spinning(false);
-        // The label shows only the first line; the full message (including the
-        // retained command-output tail) is available via the details button.
+        // The label shows only the first line; the full message plus the
+        // backend's recent terminal output is available via the details button,
+        // which is always offered on failure.
         let summary = msg.lines().next().unwrap_or(msg);
         self.status_label
             .set_label(&gettext("Error: {}").replace("{}", summary));
         self.status_label.set_css_classes(&["error"]);
-        *self.error_details.borrow_mut() = msg.to_string();
-        self.error_button.set_visible(msg.lines().count() > 1);
+        let mut details = msg.to_string();
+        let tail = log_tail.trim();
+        if !tail.is_empty() && !msg.contains(tail) {
+            details.push_str("\n\n");
+            details.push_str(&gettext("Recent output:"));
+            details.push('\n');
+            details.push_str(tail);
+        }
+        *self.error_details.borrow_mut() = details;
+        self.error_button.set_visible(true);
     }
 
     fn hide_error_button(&self) {
