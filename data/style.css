@@ -136,6 +136,25 @@ preferencesgroup > box {
   background-color: @vex_cyan_dim;
 }
 
+/* Hand-built row title/subtitle, used so the "What's new" button can sit
+   directly after the backend name (AdwActionRow cannot place a widget
+   between its title and its suffixes). Mirrors stock row typography. */
+.row-title {
+  font-weight: normal;
+}
+
+.row-subtitle {
+  font-size: 0.9em;
+}
+
+/* "What's new" button, sitting immediately after the backend name */
+.changelog-button {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 2px;
+  margin: 0;
+}
+
 /* Package-count pill button that opens the package list popover */
 .pkg-count-pill {
   border-radius: 999px;

@@ -95,10 +95,12 @@ impl UpdateRow {
         let backend_name = backend.display_name().to_string();
         let kind = backend.kind();
 
-        let row = adw::ActionRow::builder()
-            .title(backend.display_name())
-            .subtitle(backend.description())
-            .build();
+        // The title and subtitle are built by hand rather than using ActionRow's
+        // own properties: the changelog button has to sit immediately after the
+        // backend name, and ActionRow offers no way to place a widget between
+        // the title text and the trailing suffix area.
+        let row = adw::ActionRow::new();
+        row.update_property(&[gtk::accessible::Property::Label(backend.display_name())]);
 
         let retry_button = gtk::Button::from_icon_name("view-refresh-symbolic");
         retry_button.set_tooltip_text(Some(&gettext("Retry")));
@@ -125,6 +127,7 @@ impl UpdateRow {
         changelog_button.set_tooltip_text(Some(&gettext("What's new")));
         changelog_button.set_valign(gtk::Align::Center);
         changelog_button.add_css_class("flat");
+        changelog_button.add_css_class("changelog-button");
         changelog_button.set_visible(false);
         {
             let kind = kind.clone();
@@ -173,11 +176,40 @@ impl UpdateRow {
             .build();
         menu_button.set_popover(Some(&popover));
 
-        row.add_prefix(&icon);
+        // Project-owned classes rather than libadwaita's internal "title" /
+        // "subtitle" row classes, so the typography does not shift with the
+        // libadwaita version; see `data/style.css`.
+        let title_label = gtk::Label::builder()
+            .label(backend.display_name())
+            .halign(gtk::Align::Start)
+            .css_classes(vec!["row-title"])
+            .build();
+        let subtitle_label = gtk::Label::builder()
+            .label(backend.description())
+            .halign(gtk::Align::Start)
+            .visible(!backend.description().is_empty())
+            .css_classes(vec!["row-subtitle", "dim-label"])
+            .build();
+
+        let text_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .valign(gtk::Align::Center)
+            .build();
+        text_box.append(&title_label);
+        text_box.append(&subtitle_label);
+
+        let title_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(12)
+            .build();
+        title_box.append(&icon);
+        title_box.append(&text_box);
+        title_box.append(&changelog_button);
+
+        row.add_prefix(&title_box);
         row.add_suffix(&menu_button);
         row.add_suffix(&status_label);
         row.add_suffix(&spinner);
-        row.add_suffix(&changelog_button);
         row.add_suffix(&error_button);
         row.add_suffix(&retry_button);
         row.add_suffix(&skip_checkbox);

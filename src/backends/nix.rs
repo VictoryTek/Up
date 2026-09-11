@@ -241,33 +241,77 @@ pub(crate) fn parse_nix_build_items(output: &str) -> Vec<String> {
     items
 }
 
-/// Compare two flake.lock JSON values and return the names of inputs whose
-/// locked revision or `lastModified` timestamp changed between the two files.
-/// New inputs (present in `new` but absent in `old`) are also reported.
-pub(crate) fn compare_lock_nodes(old: &serde_json::Value, new: &serde_json::Value) -> Vec<String> {
-    let old_nodes = old["nodes"].as_object();
-    let new_nodes = new["nodes"].as_object();
+/// A flake input whose locked revision differs between two `flake.lock` files.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct InputDelta {
+    pub name: String,
+    pub old_rev: Option<String>,
+    pub new_rev: Option<String>,
+    /// `locked.lastModified` Unix timestamps.
+    pub old_modified: Option<i64>,
+    pub new_modified: Option<i64>,
+    /// `(owner, repo)` when the input is a GitHub flake, for a compare URL.
+    pub github: Option<(String, String)>,
+}
+
+/// Compare the `nodes` maps of two parsed `flake.lock` values and describe every
+/// input whose locked revision or timestamp moved.
+///
+/// This is the detailed form backing both update detection (names only, via
+/// `nixos_flake_tempdir_check`) and the Nix changelog viewer.
+pub(crate) fn diff_lock_nodes(old: &serde_json::Value, new: &serde_json::Value) -> Vec<InputDelta> {
+    let (Some(old_map), Some(new_map)) = (old["nodes"].as_object(), new["nodes"].as_object())
+    else {
+        return Vec::new();
+    };
+
     let mut changed = Vec::new();
-    if let (Some(old_map), Some(new_map)) = (old_nodes, new_nodes) {
-        for (name, new_val) in new_map {
-            if name == "root" {
+    for (name, new_val) in new_map {
+        if name == "root" {
+            continue;
+        }
+        let old_val = old_map.get(name);
+        // A missing old entry means the input was newly added in the update.
+        if let Some(old_val) = old_val {
+            let same_rev = old_val["locked"]["rev"] == new_val["locked"]["rev"];
+            let same_mod = old_val["locked"]["lastModified"] == new_val["locked"]["lastModified"];
+            if same_rev && same_mod {
                 continue;
             }
-            if let Some(old_val) = old_map.get(name) {
-                let old_rev = &old_val["locked"]["rev"];
-                let new_rev = &new_val["locked"]["rev"];
-                let old_mod = &old_val["locked"]["lastModified"];
-                let new_mod = &new_val["locked"]["lastModified"];
-                if old_rev != new_rev || old_mod != new_mod {
-                    changed.push(name.clone());
-                }
-            } else {
-                // Input newly added in the updated lock.
-                changed.push(name.clone());
-            }
         }
+        changed.push(InputDelta {
+            name: name.clone(),
+            old_rev: old_val.and_then(|v| locked_str(v, "rev")),
+            new_rev: locked_str(new_val, "rev"),
+            old_modified: old_val.and_then(|v| v["locked"]["lastModified"].as_i64()),
+            new_modified: new_val["locked"]["lastModified"].as_i64(),
+            github: github_slug(new_val),
+        });
     }
     changed
+}
+
+/// Read a string field out of a lock node's `locked` section.
+fn locked_str(node: &serde_json::Value, field: &str) -> Option<String> {
+    node["locked"][field].as_str().map(str::to_string)
+}
+
+/// `(owner, repo)` for GitHub-hosted flake inputs, so a compare URL can be built.
+fn github_slug(node: &serde_json::Value) -> Option<(String, String)> {
+    if node["locked"]["type"].as_str()? != "github" {
+        return None;
+    }
+    Some((locked_str(node, "owner")?, locked_str(node, "repo")?))
+}
+
+/// True when this host runs a flake-based NixOS configuration.
+///
+/// Cached for the session: the answer cannot change while the app runs, and the
+/// GTK main thread calls this on every status update — under a Flatpak sandbox
+/// the uncached probes spawn a `flatpak-spawn` subprocess each time.
+pub(crate) fn supports_lock_changelog() -> bool {
+    static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHED.get_or_init(|| is_nixos() && is_nixos_flake())
 }
 
 /// Try `nix flake update --dry-run /etc/nixos` (Nix ≥ 2.19).
@@ -334,6 +378,15 @@ async fn nixos_flake_dry_run_check(
 
 /// Fallback flake check that works on all Nix versions.
 ///
+/// Names-only projection of [`nixos_flake_lock_deltas`].
+async fn nixos_flake_tempdir_check() -> Result<Vec<String>, String> {
+    Ok(nixos_flake_lock_deltas()
+        .await?
+        .into_iter()
+        .map(|d| d.name)
+        .collect())
+}
+
 /// Copies `/etc/nixos/flake.nix` and `/etc/nixos/flake.lock` into a
 /// temporary directory, runs `nix flake update` there (no root required),
 /// and compares the resulting `flake.lock` against the original to determine
@@ -342,7 +395,7 @@ async fn nixos_flake_dry_run_check(
 /// Keeps a direct `tokio::process::Command`: it needs `.current_dir()` plus
 /// filesystem copies, which are outside the read-only `CommandExecutor::probe`
 /// abstraction.
-async fn nixos_flake_tempdir_check() -> Result<Vec<String>, String> {
+pub(crate) async fn nixos_flake_lock_deltas() -> Result<Vec<InputDelta>, String> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let ts = SystemTime::now()
@@ -405,7 +458,7 @@ async fn nixos_flake_tempdir_check() -> Result<Vec<String>, String> {
         .map_err(|e| cleanup(format!("Failed to parse updated flake.lock: {e}")))?;
 
     let _ = std::fs::remove_dir_all(&temp_dir);
-    Ok(compare_lock_nodes(&old_lock, &new_lock))
+    Ok(diff_lock_nodes(&old_lock, &new_lock))
 }
 
 /// Return the list of NixOS flake inputs that have pending upstream updates.
@@ -967,7 +1020,7 @@ pub(crate) fn count_nix_freed_paths(output: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        compare_lock_nodes, count_determinate_upgraded, count_nix_store_operations,
+        count_determinate_upgraded, count_nix_store_operations, diff_lock_nodes,
         extract_cache_block_message, is_determinate_nix, is_nixos, parse_configuration_names,
         parse_nix_build_items, upgrade_available_in_output, validate_flake_attr, NixBackend,
     };
@@ -1066,17 +1119,25 @@ mod tests {
         assert_eq!(parse_nix_build_items(output), vec!["vim-9.1".to_string()]);
     }
 
+    /// Names of the changed inputs, the projection `list_available` relies on.
+    fn changed_names(old: &serde_json::Value, new: &serde_json::Value) -> Vec<String> {
+        diff_lock_nodes(old, new)
+            .into_iter()
+            .map(|d| d.name)
+            .collect()
+    }
+
     #[test]
     fn test_compare_lock_nodes_no_change() {
         let json = serde_json::json!({"nodes": {"nixpkgs": {"locked": {"rev": "abc", "lastModified": 100}}}});
-        assert!(compare_lock_nodes(&json, &json).is_empty());
+        assert!(changed_names(&json, &json).is_empty());
     }
 
     #[test]
     fn test_compare_lock_nodes_changed_rev() {
         let old = serde_json::json!({"nodes": {"nixpkgs": {"locked": {"rev": "abc", "lastModified": 100}}}});
         let new = serde_json::json!({"nodes": {"nixpkgs": {"locked": {"rev": "def", "lastModified": 100}}}});
-        let changed = compare_lock_nodes(&old, &new);
+        let changed = changed_names(&old, &new);
         assert_eq!(changed, vec!["nixpkgs"]);
     }
 
@@ -1087,8 +1148,59 @@ mod tests {
             "nixpkgs": {"locked": {"rev": "abc", "lastModified": 100}},
             "home-manager": {"locked": {"rev": "xyz", "lastModified": 200}}
         }});
-        let changed = compare_lock_nodes(&old, &new);
+        let changed = changed_names(&old, &new);
         assert_eq!(changed, vec!["home-manager"]);
+    }
+
+    #[test]
+    fn diff_lock_nodes_captures_revs_dates_and_github_slug() {
+        let node = |rev: &str, modified: i64| {
+            serde_json::json!({"locked": {"rev": rev, "lastModified": modified,
+                "type": "github", "owner": "NixOS", "repo": "nixpkgs"}})
+        };
+        let old = serde_json::json!({"nodes": {"root": {}, "nixpkgs": node("a1b2c3d4e5f6", 100)}});
+        let new = serde_json::json!({"nodes": {"root": {}, "nixpkgs": node("f6e5d4c3b2a1", 200)}});
+        let deltas = diff_lock_nodes(&old, &new);
+        assert_eq!(deltas.len(), 1);
+        assert_eq!(deltas[0].old_rev.as_deref(), Some("a1b2c3d4e5f6"));
+        assert_eq!(deltas[0].new_rev.as_deref(), Some("f6e5d4c3b2a1"));
+        assert_eq!(deltas[0].old_modified, Some(100));
+        assert_eq!(deltas[0].new_modified, Some(200));
+        assert_eq!(
+            deltas[0].github,
+            Some(("NixOS".to_string(), "nixpkgs".to_string()))
+        );
+    }
+
+    #[test]
+    fn diff_lock_nodes_added_input_has_no_old_rev() {
+        let old = serde_json::json!({"nodes": {"root": {}}});
+        let new = serde_json::json!({"nodes": {"root": {},
+            "home-manager": {"locked": {"rev": "ccc", "lastModified": 3}}}});
+        let deltas = diff_lock_nodes(&old, &new);
+        assert_eq!(deltas.len(), 1);
+        assert!(deltas[0].old_rev.is_none());
+        assert_eq!(deltas[0].new_rev.as_deref(), Some("ccc"));
+        // Non-GitHub inputs get no compare URL.
+        assert!(deltas[0].github.is_none());
+    }
+
+    #[test]
+    fn diff_lock_nodes_tolerates_malformed_locks() {
+        let empty = serde_json::json!({});
+        assert!(diff_lock_nodes(&empty, &empty).is_empty());
+        assert!(diff_lock_nodes(
+            &serde_json::json!({"nodes": "not-an-object"}),
+            &serde_json::json!({"nodes": {}})
+        )
+        .is_empty());
+        // A node without a `locked` section must not panic.
+        let deltas = diff_lock_nodes(
+            &serde_json::json!({"nodes": {"root": {}}}),
+            &serde_json::json!({"nodes": {"root": {}, "weird": {}}}),
+        );
+        assert_eq!(deltas.len(), 1);
+        assert!(deltas[0].new_rev.is_none());
     }
 
     // validate_flake_attr tests (pure function, no system access)
