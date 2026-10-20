@@ -33,7 +33,21 @@
       "Bash(git rebase:*)",
       "Bash(git cherry-pick:*)",
       "Bash(rm -rf:*)",
-      "Bash(cargo clean:*)"
+      "Bash(cargo clean:*)",
+      "Bash(nix flake check:*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/verify.sh",
+            "timeout": 600
+          }
+        ]
+      }
     ]
   }
 }
