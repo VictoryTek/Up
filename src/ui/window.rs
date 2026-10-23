@@ -60,11 +60,13 @@ impl UpWindow {
             "software-update-urgent-symbolic",
         );
 
-        // ViewSwitcher lives in the header bar center slot.
+        // ViewSwitcher lives in the header bar center slot, but is only mounted
+        // on distros that support Upgrade; otherwise the Update page stands alone.
         let view_switcher = adw::ViewSwitcher::builder()
             .stack(&view_stack)
             .policy(adw::ViewSwitcherPolicy::Wide)
             .build();
+        let header = adw::HeaderBar::new();
 
         // Spawn single distro detection, fanning out to update-page sysinfo and upgrade page.
         {
@@ -85,19 +87,22 @@ impl UpWindow {
                 let _ = detect_tx.send((info, nixos_extra)).await;
             });
 
+            let header = header.clone();
             glib::spawn_future_local(async move {
                 if let Ok((info, nixos_extra)) = detect_rx.recv().await {
                     // 1. Populate update-page system info rows
                     sysinfo_distro_row.set_subtitle(&info.name);
                     sysinfo_version_row.set_subtitle(&info.version);
 
-                    // 2. Gate upgrade tab visibility — hide for unsupported distros.
+                    // 2. Gate the tab switcher and Upgrade page — hidden for
+                    //    unsupported distros, leaving only the Update page.
                     if !info.upgrade_supported {
                         upgrade_stack_page.set_visible(false);
                     }
 
-                    // 3. Forward to upgrade page
+                    // 3. Show the switcher and forward to the upgrade page
                     if info.upgrade_supported {
+                        header.set_title_widget(Some(&view_switcher));
                         let init = upgrade::UpgradePageInit {
                             distro: info,
                             nixos_extra,
@@ -107,9 +112,6 @@ impl UpWindow {
                 }
             });
         }
-
-        let header = adw::HeaderBar::new();
-        header.set_title_widget(Some(&view_switcher));
 
         let refresh_button = gtk::Button::builder()
             .icon_name("view-refresh-symbolic")
