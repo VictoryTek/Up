@@ -66,7 +66,10 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!(
             "up-config-test-{}-{}",
             std::process::id(),
-            crate::history::now_secs()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
         ));
         // SAFETY: single-threaded within this test; no other test reads/writes XDG_CONFIG_HOME.
         unsafe {

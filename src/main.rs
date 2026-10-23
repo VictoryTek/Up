@@ -6,7 +6,6 @@ mod check;
 mod config;
 mod disk;
 mod executor;
-mod history;
 mod orchestrator;
 mod plugins;
 mod progress;

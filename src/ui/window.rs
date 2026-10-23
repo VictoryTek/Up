@@ -1,5 +1,4 @@
 use crate::backends::{Backend, BackendKind, UpdateResult};
-use crate::ui::history_page::HistoryPage;
 use crate::ui::log_panel::LogPanel;
 use crate::ui::update_row::UpdateRow;
 use crate::ui::upgrade_page::UpgradePage;
@@ -59,15 +58,6 @@ impl UpWindow {
             Some("upgrade"),
             &gettext("Upgrade"),
             "software-update-urgent-symbolic",
-        );
-
-        // --- History Page ---
-        let history_page = HistoryPage::build();
-        view_stack.add_titled_with_icon(
-            &history_page,
-            Some("history"),
-            &gettext("History"),
-            "document-open-recent-symbolic",
         );
 
         // ViewSwitcher lives in the header bar center slot.
@@ -1261,8 +1251,7 @@ struct BackendFinishedOutcome {
 }
 
 /// Apply a `BackendFinished` result to its update row, surface the VexOS
-/// cache-block dialog when the update is on hold, and record the outcome to
-/// the history log.
+/// cache-block dialog when the update is on hold.
 ///
 /// Shared by the "Update All" event loop and the per-row retry loop so that a
 /// new [`UpdateResult`] variant only needs handling in one place. The caller
@@ -1353,7 +1342,6 @@ fn apply_backend_finished(
             ),
         );
     }
-    record_history_entry(kind, result);
     outcome
 }
 
@@ -1382,32 +1370,6 @@ fn maybe_warn_low_space(banner: &adw::Banner, needed: Option<u64>) {
             }
         }
     });
-}
-
-/// Records a finished backend's outcome to the persistent update history log.
-///
-/// Best-effort: write failures are discarded, matching the existing
-/// convention for non-critical history I/O (see `history_page.rs`'s
-/// clear-history handler).
-fn record_history_entry(kind: &BackendKind, result: &UpdateResult) {
-    let (result_str, updated_count, error) = match result {
-        UpdateResult::Success { updated_count, .. } => ("success", Some(*updated_count), None),
-        UpdateResult::SuccessWithSelfUpdate { updated_count, .. } => {
-            ("success_self_update", Some(*updated_count), None)
-        }
-        UpdateResult::Error(msg) => ("error", None, Some(msg.to_string())),
-        UpdateResult::Skipped(_) | UpdateResult::Cancelled | UpdateResult::CacheMiss => {
-            ("skipped", None, None)
-        }
-    };
-    let entry = crate::history::HistoryEntry {
-        timestamp: crate::history::now_secs(),
-        backend: kind.to_string(),
-        result: result_str.to_string(),
-        updated_count,
-        error,
-    };
-    let _ = crate::history::append_entry(&entry);
 }
 
 /// Runs a VexOS cache-bypass command (`just deploy` / `just update-all`)
